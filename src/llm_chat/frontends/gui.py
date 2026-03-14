@@ -4,6 +4,12 @@ from typing import Optional
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
 
 try:
+    import markdown
+    MARKDOWN_AVAILABLE = True
+except ImportError:
+    MARKDOWN_AVAILABLE = False
+
+try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QTextEdit, QPushButton, QLabel, QFrame, QMessageBox
@@ -29,6 +35,27 @@ except ImportError:
     QFont = None
     QTextCursor = None
     QKeyEvent = None
+
+
+MARKDOWN_CSS = """
+<style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; }
+    h1 { color: #2196F3; border-bottom: 2px solid #2196F3; padding-bottom: 5px; }
+    h2 { color: #1976D2; border-bottom: 1px solid #1976D2; padding-bottom: 5px; }
+    h3 { color: #1565C0; }
+    code { background-color: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; }
+    pre { background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    pre code { background-color: transparent; padding: 0; }
+    blockquote { border-left: 4px solid #4CAF50; margin-left: 0; padding-left: 15px; color: #666; }
+    ul, ol { padding-left: 20px; }
+    li { margin: 5px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f5f5f5; }
+    a { color: #2196F3; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+</style>
+"""
 
 
 class InputTextEdit(QTextEdit):
@@ -119,6 +146,7 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setReadOnly(True)
         self._chat_display.setFont(QFont("Arial", 11))
         self._chat_display.setFrameStyle(QFrame.Shape.StyledPanel)
+        self._chat_display.setOpenExternalLinks(True)
         main_layout.addWidget(self._chat_display, stretch=1)
         
         input_container = QVBoxLayout()
@@ -292,6 +320,13 @@ class GUIFrontend(BaseFrontend):
         if self._app:
             self._app.quit()
     
+    def _render_markdown(self, text: str) -> str:
+        if MARKDOWN_AVAILABLE:
+            md = markdown.Markdown(extensions=['tables', 'fenced_code', 'codehilite'])
+            html = md.convert(text)
+            return f"{MARKDOWN_CSS}{html}"
+        return text.replace('\n', '<br>')
+    
     def display_message(self, message: Message):
         if self._chat_display is None:
             return
@@ -304,8 +339,9 @@ class GUIFrontend(BaseFrontend):
             cursor.insertText(f" {message.content}\n")
         elif message.role == "assistant":
             cursor.insertHtml('<p style="color: #4CAF50; font-weight: bold;">AI:</p>')
-            cursor.insertText(f" {message.content}\n")
-            cursor.insertHtml('<p style="color: #9E9E9E;">' + "-" * 40 + "</p>")
+            html_content = self._render_markdown(message.content)
+            cursor.insertHtml(f'<div>{html_content}</div>')
+            cursor.insertHtml('<hr style="border: none; border-top: 1px solid #e0e0e0; margin: 10px 0;">')
         
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
