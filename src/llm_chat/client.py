@@ -55,7 +55,14 @@ class LLMClient:
                 return self.protocol.parse_chat_response(result)
             except requests.RequestException as e:
                 if i == self.config.llm.max_retries - 1:
-                    raise
+                    error_msg = str(e)
+                    if hasattr(e, 'response') and e.response is not None:
+                        try:
+                            error_detail = e.response.json()
+                            error_msg = f"{error_msg}\n详情: {error_detail}"
+                        except:
+                            error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+                    raise Exception(f"API 请求失败: {error_msg}")
                 print(f"请求失败，{i+1}秒后重试: {e}")
                 time.sleep(1)
     
@@ -81,6 +88,13 @@ class LLMClient:
                 return self.protocol.parse_generate_response(result)
             except requests.RequestException as e:
                 if i == self.config.llm.max_retries - 1:
-                    raise
+                    error_msg = str(e)
+                    if hasattr(e, 'response') and e.response is not None:
+                        try:
+                            error_detail = e.response.json()
+                            error_msg = f"{error_msg}\n详情: {error_detail}"
+                        except:
+                            error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+                    raise Exception(f"API 请求失败: {error_msg}")
                 print(f"请求失败，{i+1}秒后重试: {e}")
                 time.sleep(1)
