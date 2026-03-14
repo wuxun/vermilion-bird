@@ -1,46 +1,47 @@
 import sys
 import threading
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
-
-if TYPE_CHECKING:
-    pass
 
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QTextEdit, QPushButton, QLabel, QSplitter, QFrame
+        QTextEdit, QPushButton, QLabel, QFrame
     )
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
-    from PyQt6.QtGui import QFont, QTextCursor, QColor, QKeyEvent
+    from PyQt6.QtCore import Qt, QTimer, QSize
+    from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
-
-
-class MessageHandlerThread(QThread):
-    message_handled = pyqtSignal()
-    
-    def __init__(self, handler_func, message, context):
-        super().__init__()
-        self.handler_func = handler_func
-        self.message = message
-        self.context = context
-    
-    def run(self):
-        self.handler_func(self.message, self.context)
-        self.message_handled.emit()
+    QApplication = None
+    QMainWindow = None
+    QWidget = None
+    QVBoxLayout = None
+    QHBoxLayout = None
+    QTextEdit = None
+    QPushButton = None
+    QLabel = None
+    QFrame = None
+    Qt = None
+    QTimer = None
+    QSize = None
+    QFont = None
+    QTextCursor = None
+    QKeyEvent = None
 
 
 class InputTextEdit(QTextEdit):
-    send_requested = pyqtSignal()
+    if PYQT_AVAILABLE:
+        from PyQt6.QtCore import pyqtSignal
+        send_requested = pyqtSignal()
     
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.send_requested.emit()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
+    def keyPressEvent(self, event):
+        if PYQT_AVAILABLE:
+            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.send_requested.emit()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class GUIFrontend(BaseFrontend):
@@ -62,9 +63,7 @@ class GUIFrontend(BaseFrontend):
         self._input_field: Optional[InputTextEdit] = None
         self._send_button: Optional[QPushButton] = None
         self._clear_button: Optional[QPushButton] = None
-        self._mcp_button: Optional[QPushButton] = None
-        self._mcp_dialog = None
-        self._worker_thread: Optional[QThread] = None
+        self._worker_thread: Optional[threading.Thread] = None
     
     def start(self):
         self._app = QApplication(sys.argv)
@@ -100,11 +99,6 @@ class GUIFrontend(BaseFrontend):
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
-        
-        self._mcp_button = QPushButton("MCP Tools")
-        self._mcp_button.setFixedWidth(100)
-        self._mcp_button.clicked.connect(self._on_mcp_config)
-        header_layout.addWidget(self._mcp_button)
         
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
@@ -200,18 +194,6 @@ class GUIFrontend(BaseFrontend):
                 background-color: #e0e0e0;
             }
         """)
-        
-        self._mcp_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-        """)
     
     def _on_send(self):
         if self._input_field is None:
@@ -244,7 +226,6 @@ class GUIFrontend(BaseFrontend):
                 self._worker_thread.join(timeout=0.1)
                 if self._worker_thread.is_alive():
                     if self._app:
-                        from PyQt6.QtCore import QTimer
                         QTimer.singleShot(100, check_thread)
                 else:
                     self._set_input_state(True)
@@ -252,7 +233,6 @@ class GUIFrontend(BaseFrontend):
                 self._set_input_state(True)
         
         if self._app:
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(100, check_thread)
     
     def _on_clear(self):
@@ -263,12 +243,6 @@ class GUIFrontend(BaseFrontend):
             self._chat_display.clear()
         
         self.display_info("Conversation cleared")
-    
-    def _on_mcp_config(self):
-        if self._mcp_dialog is None:
-            from llm_chat.frontends.mcp_dialog import MCPConfigDialog
-            self._mcp_dialog = MCPConfigDialog(self._main_window)
-        self._mcp_dialog.exec()
     
     def _on_close(self):
         self._handle_exit()
