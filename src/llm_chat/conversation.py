@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from typing import List, Dict, Optional
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
@@ -16,7 +17,7 @@ class Conversation:
             conversation_id: 对话 ID，用于持久化
         """
         self.client = client
-        self.conversation_id = conversation_id or f"conv_{int(os.time())}"
+        self.conversation_id = conversation_id or f"conv_{int(time.time())}"
         self.history: List[Dict[str, str]] = []
         self._load_history()
     
