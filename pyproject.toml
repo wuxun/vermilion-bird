@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "llm-chat"
+version = "0.1.0"
+description = "A simple LLM chat client with configurable settings"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+
+[tool.poetry.scripts]
+llm-chat = "llm_chat.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+pyyaml = "^6.0.0"
+requests = "^2.31.0"
+click = "^8.1.7"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-cov = "^4.1.0"
+black = "^23.11.0"
+flake8 = "^6.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
