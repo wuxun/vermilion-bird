@@ -1,12 +1,13 @@
 import os
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import yaml
 
+from llm_chat.mcp import MCPConfig, MCPServerConfig
+
 
 class LLMConfig(BaseSettings):
-    """LLM 配置类"""
     base_url: str = Field(default="https://api.openai.com/v1", description="模型 API 基础 URL")
     model: str = Field(default="gpt-3.5-turbo", description="模型名称")
     api_key: Optional[str] = Field(default=None, description="API 密钥")
@@ -20,8 +21,9 @@ class LLMConfig(BaseSettings):
 
 
 class Config(BaseSettings):
-    """全局配置类"""
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
+    enable_tools: bool = Field(default=True, description="是否启用工具调用")
 
     class Config:
         env_prefix = ""
@@ -29,12 +31,37 @@ class Config(BaseSettings):
 
     @classmethod
     def from_yaml(cls, config_path: str = "config.yaml") -> "Config":
-        """从 YAML 文件加载配置"""
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = yaml.safe_load(f)
-            return cls(**config_data)
+            
+            if config_data is None:
+                return cls()
+            
+            llm_data = config_data.get("llm", {})
+            llm_config = LLMConfig(**llm_data)
+            
+            mcp_data = config_data.get("mcp", {})
+            mcp_config = MCPConfig.from_dict(mcp_data)
+            
+            enable_tools = config_data.get("enable_tools", True)
+            
+            return cls(
+                llm=llm_config,
+                mcp=mcp_config,
+                enable_tools=enable_tools
+            )
         return cls()
+    
+    def to_yaml(self, config_path: str = "config.yaml"):
+        config_data = {
+            "llm": self.llm.model_dump(),
+            "mcp": self.mcp.to_dict(),
+            "enable_tools": self.enable_tools
+        }
+        
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
 
 
 config = Config.from_yaml()

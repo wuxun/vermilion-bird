@@ -1,10 +1,10 @@
+import json
+import uuid
 from typing import Dict, Any, List, Optional
-from .base import BaseProtocol
+from .base import BaseProtocol, ToolCall
 
 
 class AnthropicProtocol(BaseProtocol):
-    """Anthropic Claude 协议适配器"""
-    
     def get_headers(self) -> Dict[str, str]:
         headers = {
             "Content-Type": "application/json",
@@ -47,3 +47,73 @@ class AnthropicProtocol(BaseProtocol):
     
     def parse_generate_response(self, response: Dict[str, Any]) -> str:
         return response["completion"].strip()
+    
+    def supports_tools(self) -> bool:
+        return True
+    
+    def build_chat_request_with_tools(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: List[Dict[str, Any]],
+        **kwargs
+    ) -> Dict[str, Any]:
+        data = self.build_chat_request(messages, **kwargs)
+        if tools:
+            data["tools"] = tools
+        return data
+    
+    def has_tool_calls(self, response: Dict[str, Any]) -> bool:
+        for block in response.get("content", []):
+            if block.get("type") == "tool_use":
+                return True
+        return False
+    
+    def parse_tool_calls(self, response: Dict[str, Any]) -> List[ToolCall]:
+        result = []
+        for block in response.get("content", []):
+            if block.get("type") == "tool_use":
+                result.append(ToolCall(
+                    id=block["id"],
+                    name=block["name"],
+                    arguments=block.get("input", {})
+                ))
+        return result
+    
+    def build_tool_result_message(
+        self, 
+        tool_call: ToolCall, 
+        result: str,
+        is_error: bool = False
+    ) -> Dict[str, Any]:
+        content = []
+        if is_error:
+            content.append({
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": result,
+                "is_error": True
+            })
+        else:
+            content.append({
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": result
+            })
+        
+        return {
+            "role": "user",
+            "content": content
+        }
+    
+    def get_assistant_message_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        content = []
+        for block in response.get("content", []):
+            if block.get("type") == "text":
+                content.append({"type": "text", "text": block["text"]})
+            elif block.get("type") == "tool_use":
+                content.append(block)
+        
+        return {
+            "role": "assistant",
+            "content": content
+        }

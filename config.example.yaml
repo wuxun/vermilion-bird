@@ -1,27 +1,26 @@
-# 大模型对话工具配置示例
-
-# LLM 配置
 llm:
-  # 模型 API 基础 URL
   base_url: "https://api.openai.com/v1"
-  
-  # 模型名称
   model: "gpt-3.5-turbo"
-  
-  # API 密钥
   api_key: "your-api-key"
-  
-  # 请求超时时间（秒）
   timeout: 30
-  
-  # 最大重试次数
   max_retries: 3
-  
-  # API 协议类型: openai, anthropic, gemini
   protocol: "openai"
 
+enable_tools: true
+
+mcp:
+  servers:
+    - name: "weather"
+      transport: "stdio"
+      command: "npx"
+      args:
+        - "-y"
+        - "@modelcontextprotocol/server-weather"
+      enabled: true
+      description: "天气查询服务"
+
 # ============================================================
-# 不同协议配置示例
+# LLM 配置示例
 # ============================================================
 
 # OpenAI 配置示例
@@ -65,3 +64,28 @@ llm:
 #   model: "glm-4"
 #   api_key: "your-zhipu-api-key"
 #   protocol: "openai"
+
+# ============================================================
+# MCP 服务器配置示例
+# ============================================================
+
+# Brave Search 搜索服务
+# mcp:
+#   servers:
+#     - name: "brave-search"
+#       transport: "stdio"
+#       command: "npx"
+#       args:
+#         - "-y"
+#         - "@modelcontextprotocol/server-brave-search"
+#       env:
+#         BRAVE_API_KEY: "your-brave-api-key"
+#       enabled: true
+
+# 远程 SSE MCP 服务器
+# mcp:
+#   servers:
+#     - name: "remote-server"
+#       transport: "sse"
+#       url: "http://localhost:8080/sse"
+#       enabled: true

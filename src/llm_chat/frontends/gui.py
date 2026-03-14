@@ -4,158 +4,224 @@ from typing import Optional, TYPE_CHECKING
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
 
 if TYPE_CHECKING:
-    from llm_chat.frontends.cli import CLIFrontend
+    pass
+
+try:
+    from PyQt6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QTextEdit, QPushButton, QLabel, QSplitter, QFrame
+    )
+    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
+    from PyQt6.QtGui import QFont, QTextCursor, QColor, QKeyEvent
+    PYQT_AVAILABLE = True
+except ImportError:
+    PYQT_AVAILABLE = False
+
+
+class MessageHandlerThread(QThread):
+    message_handled = pyqtSignal()
+    
+    def __init__(self, handler_func, message, context):
+        super().__init__()
+        self.handler_func = handler_func
+        self.message = message
+        self.context = context
+    
+    def run(self):
+        self.handler_func(self.message, self.context)
+        self.message_handled.emit()
+
+
+class InputTextEdit(QTextEdit):
+    send_requested = pyqtSignal()
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.send_requested.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
 
 class GUIFrontend(BaseFrontend):
-    """GUI 图形界面前端
-    
-    使用 tkinter 实现，支持跨平台。
-    如果 tkinter 不可用，会抛出 ImportError 并提示安装方法。
-    """
-    
     def __init__(self, conversation_id: str = "default", title: str = "Vermilion Bird"):
-        super().__init__("gui")
+        BaseFrontend.__init__(self, "gui")
         self.conversation_id = conversation_id
         self.title = title
-        self._root: Optional[object] = None
-        self._chat_display: Optional[object] = None
-        self._input_field: Optional[object] = None
-        self._send_button: Optional[object] = None
-        self._clear_button: Optional[object] = None
-        self._tk = None
-        self._ttk = None
-        self._scrolledtext = None
-    
-    def _check_tkinter(self) -> bool:
-        try:
-            import tkinter as tk
-            from tkinter import ttk, scrolledtext
-            self._tk = tk
-            self._ttk = ttk
-            self._scrolledtext = scrolledtext
-            return True
-        except ImportError:
-            return False
-    
-    def start(self):
-        """启动 GUI"""
-        if not self._check_tkinter():
+        
+        if not PYQT_AVAILABLE:
             raise ImportError(
-                "tkinter 未安装。GUI 前端需要 tkinter。\n"
-                "在 macOS 上: tkinter 通常随 Python 一起安装。\n"
-                "在 Linux 上: 请运行: sudo apt-get install python3-tk\n"
-                "在 Windows 上: tkinter 通常已包含在 Python 安装中。"
+                "PyQt6 未安装。GUI 前端需要 PyQt6。\n"
+                "请运行: pip install PyQt6\n"
+                "或使用 Poetry: poetry add PyQt6"
             )
         
-        self._root = self._tk.Tk()
-        self._root.title(self.title)
-        self._root.geometry("800x600")
-        self._root.minsize(600, 400)
-        
-        self._setup_ui()
-        self._setup_styles()
-        
-        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._root.mainloop()
+        self._app: Optional[QApplication] = None
+        self._main_window: Optional[QMainWindow] = None
+        self._chat_display: Optional[QTextEdit] = None
+        self._input_field: Optional[InputTextEdit] = None
+        self._send_button: Optional[QPushButton] = None
+        self._clear_button: Optional[QPushButton] = None
+        self._mcp_button: Optional[QPushButton] = None
+        self._mcp_dialog = None
+        self._worker_thread: Optional[QThread] = None
     
-    def _setup_styles(self):
-        """设置样式"""
-        style = self._ttk.Style()
-        style.configure("Send.TButton", padding=5)
-        style.configure("Clear.TButton", padding=5)
-    
-    def _setup_ui(self):
-        """设置 UI 组件"""
-        main_frame = self._ttk.Frame(self._root, padding="10")
-        main_frame.pack(fill=self._tk.BOTH, expand=True)
+    def start(self):
+        self._app = QApplication(sys.argv)
+        self._app.setStyle("Fusion")
         
-        header_frame = self._ttk.Frame(main_frame)
-        header_frame.pack(fill=self._tk.X, pady=(0, 10))
+        self._main_window = QMainWindow()
+        self._main_window.setWindowTitle(self.title)
+        self._main_window.setMinimumSize(QSize(800, 600))
         
-        title_label = self._ttk.Label(
-            header_frame, 
-            text="Vermilion Bird", 
-            font=("Arial", 16, "bold")
-        )
-        title_label.pack(side=self._tk.LEFT)
+        central_widget = QWidget()
+        self._main_window.setCentralWidget(central_widget)
         
-        self._clear_button = self._ttk.Button(
-            header_frame, 
-            text="Clear", 
-            command=self._on_clear,
-            style="Clear.TButton"
-        )
-        self._clear_button.pack(side=self._tk.RIGHT, padx=5)
+        self._setup_ui(central_widget)
+        self._apply_styles()
         
-        chat_frame = self._ttk.LabelFrame(main_frame, text="Chat", padding="5")
-        chat_frame.pack(fill=self._tk.BOTH, expand=True, pady=(0, 10))
-        
-        self._chat_display = self._scrolledtext.ScrolledText(
-            chat_frame,
-            wrap=self._tk.WORD,
-            state=self._tk.DISABLED,
-            font=("Arial", 11),
-            padx=10,
-            pady=10
-        )
-        self._chat_display.pack(fill=self._tk.BOTH, expand=True)
-        self._chat_display.tag_configure("user", foreground="#2196F3", font=("Arial", 11, "bold"))
-        self._chat_display.tag_configure("assistant", foreground="#4CAF50", font=("Arial", 11, "bold"))
-        self._chat_display.tag_configure("system", foreground="#9E9E9E", font=("Arial", 10, "italic"))
-        self._chat_display.tag_configure("error", foreground="#F44336", font=("Arial", 11))
-        
-        input_frame = self._ttk.Frame(main_frame)
-        input_frame.pack(fill=self._tk.X)
-        
-        input_label = self._ttk.Label(input_frame, text="Message:")
-        input_label.pack(anchor=self._tk.W)
-        
-        input_container = self._ttk.Frame(input_frame)
-        input_container.pack(fill=self._tk.X, pady=(5, 0))
-        
-        self._input_field = self._tk.Text(
-            input_container,
-            height=3,
-            font=("Arial", 11),
-            wrap=self._tk.WORD,
-            padx=5,
-            pady=5
-        )
-        self._input_field.pack(side=self._tk.LEFT, fill=self._tk.BOTH, expand=True)
-        self._input_field.bind("<Control-Return>", lambda e: self._on_send())
-        
-        button_frame = self._ttk.Frame(input_container)
-        button_frame.pack(side=self._tk.RIGHT, fill=self._tk.Y, padx=(10, 0))
-        
-        self._send_button = self._ttk.Button(
-            button_frame,
-            text="Send",
-            command=self._on_send,
-            style="Send.TButton"
-        )
-        self._send_button.pack(fill=self._tk.X, pady=(0, 5))
-        
-        exit_button = self._ttk.Button(
-            button_frame,
-            text="Exit",
-            command=self._on_close,
-            style="Clear.TButton"
-        )
-        exit_button.pack(fill=self._tk.X)
+        self._main_window.closeEvent = self._on_close_event
         
         self.display_info("Welcome to Vermilion Bird!")
         self.display_info("Press Ctrl+Enter to send message")
+        
+        self._main_window.show()
+        sys.exit(self._app.exec())
+    
+    def _setup_ui(self, parent: QWidget):
+        main_layout = QVBoxLayout(parent)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        header_layout = QHBoxLayout()
+        
+        title_label = QLabel("Vermilion Bird")
+        title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        self._mcp_button = QPushButton("MCP Tools")
+        self._mcp_button.setFixedWidth(100)
+        self._mcp_button.clicked.connect(self._on_mcp_config)
+        header_layout.addWidget(self._mcp_button)
+        
+        self._clear_button = QPushButton("Clear")
+        self._clear_button.setFixedWidth(80)
+        self._clear_button.clicked.connect(self._on_clear)
+        header_layout.addWidget(self._clear_button)
+        
+        main_layout.addLayout(header_layout)
+        
+        self._chat_display = QTextEdit()
+        self._chat_display.setReadOnly(True)
+        self._chat_display.setFont(QFont("Arial", 11))
+        self._chat_display.setFrameStyle(QFrame.Shape.StyledPanel)
+        main_layout.addWidget(self._chat_display, stretch=1)
+        
+        input_container = QVBoxLayout()
+        input_container.setSpacing(5)
+        
+        input_label = QLabel("Message:")
+        input_container.addWidget(input_label)
+        
+        input_row = QHBoxLayout()
+        
+        self._input_field = InputTextEdit()
+        self._input_field.setMaximumHeight(100)
+        self._input_field.setFont(QFont("Arial", 11))
+        self._input_field.setPlaceholderText("Type your message here...")
+        self._input_field.send_requested.connect(self._on_send)
+        input_row.addWidget(self._input_field, stretch=1)
+        
+        button_column = QVBoxLayout()
+        button_column.setSpacing(5)
+        
+        self._send_button = QPushButton("Send")
+        self._send_button.setFixedSize(80, 35)
+        self._send_button.clicked.connect(self._on_send)
+        self._send_button.setDefault(True)
+        button_column.addWidget(self._send_button)
+        
+        exit_button = QPushButton("Exit")
+        exit_button.setFixedSize(80, 35)
+        exit_button.clicked.connect(self._on_close)
+        button_column.addWidget(exit_button)
+        
+        input_row.addLayout(button_column)
+        input_container.addLayout(input_row)
+        
+        main_layout.addLayout(input_container)
+    
+    def _apply_styles(self):
+        self._chat_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #fafafa;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 10px;
+            }
+        """)
+        
+        self._input_field.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QTextEdit:focus {
+                border: 1px solid #2196F3;
+            }
+        """)
+        
+        self._send_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #bbb;
+            }
+        """)
+        
+        self._clear_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f5f5f5;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        
+        self._mcp_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #388E3C;
+            }
+        """)
     
     def _on_send(self):
-        """Send message"""
         if self._input_field is None:
             return
         
-        content = self._input_field.get("1.0", self._tk.END).strip()
+        content = self._input_field.toPlainText().strip()
         if not content:
             return
         
-        self._input_field.delete("1.0", self._tk.END)
+        self._input_field.clear()
         
         message = Message(
             content=content,
@@ -169,75 +235,94 @@ class GUIFrontend(BaseFrontend):
         
         def send_and_display():
             self._handle_message(message, ctx)
-            self._root.after(0, lambda: self._set_input_state(True))
         
-        thread = threading.Thread(target=send_and_display, daemon=True)
-        thread.start()
+        self._worker_thread = threading.Thread(target=send_and_display, daemon=True)
+        self._worker_thread.start()
+        
+        def check_thread():
+            if self._worker_thread and self._worker_thread.is_alive():
+                self._worker_thread.join(timeout=0.1)
+                if self._worker_thread.is_alive():
+                    if self._app:
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(100, check_thread)
+                else:
+                    self._set_input_state(True)
+            else:
+                self._set_input_state(True)
+        
+        if self._app:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, check_thread)
     
     def _on_clear(self):
-        """Clear conversation"""
         ctx = ConversationContext(conversation_id=self.conversation_id)
         self._handle_clear(ctx)
         
         if self._chat_display:
-            self._chat_display.config(state=self._tk.NORMAL)
-            self._chat_display.delete("1.0", self._tk.END)
-            self._chat_display.config(state=self._tk.DISABLED)
+            self._chat_display.clear()
         
         self.display_info("Conversation cleared")
     
+    def _on_mcp_config(self):
+        if self._mcp_dialog is None:
+            from llm_chat.frontends.mcp_dialog import MCPConfigDialog
+            self._mcp_dialog = MCPConfigDialog(self._main_window)
+        self._mcp_dialog.exec()
+    
     def _on_close(self):
-        """Close window"""
         self._handle_exit()
-        if self._root:
-            self._root.destroy()
+        if self._app:
+            self._app.quit()
+    
+    def _on_close_event(self, event):
+        self._handle_exit()
+        event.accept()
     
     def _set_input_state(self, enabled: bool):
-        """Set input state"""
         if self._send_button:
-            self._send_button.config(state=self._tk.NORMAL if enabled else self._tk.DISABLED)
+            self._send_button.setEnabled(enabled)
         if self._input_field:
-            self._input_field.config(state=self._tk.NORMAL if enabled else self._tk.DISABLED)
+            self._input_field.setEnabled(enabled)
     
     def stop(self):
-        """Stop GUI"""
-        if self._root:
-            self._root.quit()
+        if self._app:
+            self._app.quit()
     
     def display_message(self, message: Message):
-        """Display message"""
         if self._chat_display is None:
             return
         
-        self._chat_display.config(state=self._tk.NORMAL)
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         
         if message.role == "user":
-            self._chat_display.insert(self._tk.END, "\nYou: ", "user")
-            self._chat_display.insert(self._tk.END, f"{message.content}\n")
+            cursor.insertHtml('<p style="color: #2196F3; font-weight: bold;">You:</p>')
+            cursor.insertText(f" {message.content}\n")
         elif message.role == "assistant":
-            self._chat_display.insert(self._tk.END, "\nAI: ", "assistant")
-            self._chat_display.insert(self._tk.END, f"{message.content}\n")
-            self._chat_display.insert(self._tk.END, "-" * 40 + "\n", "system")
+            cursor.insertHtml('<p style="color: #4CAF50; font-weight: bold;">AI:</p>')
+            cursor.insertText(f" {message.content}\n")
+            cursor.insertHtml('<p style="color: #9E9E9E;">' + "-" * 40 + "</p>")
         
-        self._chat_display.see(self._tk.END)
-        self._chat_display.config(state=self._tk.DISABLED)
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
     
     def display_error(self, error: str):
-        """Display error"""
         if self._chat_display is None:
             return
         
-        self._chat_display.config(state=self._tk.NORMAL)
-        self._chat_display.insert(self._tk.END, f"\nError: {error}\n", "error")
-        self._chat_display.see(self._tk.END)
-        self._chat_display.config(state=self._tk.DISABLED)
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(f'<p style="color: #F44336;">Error: {error}</p>')
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
     
     def display_info(self, info: str):
-        """Display info"""
         if self._chat_display is None:
             return
         
-        self._chat_display.config(state=self._tk.NORMAL)
-        self._chat_display.insert(self._tk.END, f"[{info}]\n", "system")
-        self._chat_display.see(self._tk.END)
-        self._chat_display.config(state=self._tk.DISABLED)
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(f'<p style="color: #9E9E9E; font-style: italic;">[{info}]</p>')
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
