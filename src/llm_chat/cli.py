@@ -10,11 +10,12 @@ from llm_chat.frontends import get_frontend
 @click.option('--api-key', help='API 密钥')
 @click.option('--protocol', type=click.Choice(['openai', 'anthropic', 'gemini']), help='API 协议类型')
 @click.option('--frontend', type=click.Choice(['cli', 'gui']), default='cli', help='前端类型 (cli 或 gui)')
+@click.option('--gui', is_flag=True, help='启动 GUI 界面 (等同于 --frontend gui)')
 @click.option('--conversation-id', help='对话 ID')
 @click.option('--timeout', type=int, help='请求超时时间（秒）')
 @click.option('--max-retries', type=int, help='最大重试次数')
-def main(base_url, model, api_key, protocol, frontend, conversation_id, timeout, max_retries):
-    """Vermilion Bird - 大模型对话工具"""
+@click.option('--no-tools', is_flag=True, help='禁用工具调用')
+def main(base_url, model, api_key, protocol, frontend, gui, conversation_id, timeout, max_retries, no_tools):
     config = Config()
     
     if base_url:
@@ -29,14 +30,20 @@ def main(base_url, model, api_key, protocol, frontend, conversation_id, timeout,
         config.llm.timeout = timeout
     if max_retries:
         config.llm.max_retries = max_retries
+    if no_tools:
+        config.enable_tools = False
+    
+    if gui:
+        frontend = 'gui'
     
     app = App(config)
     
-    print(f"协议: {config.llm.protocol}")
-    print(f"模型: {config.llm.model}")
-    print(f"API URL: {config.llm.base_url}")
-    print(f"前端: {frontend}")
-    print("=" * 50)
+    if frontend == 'cli':
+        print(f"协议: {config.llm.protocol}")
+        print(f"模型: {config.llm.model}")
+        print(f"API URL: {config.llm.base_url}")
+        print(f"工具调用: {'启用' if config.enable_tools else '禁用'}")
+        print("=" * 50)
     
     frontend_instance = get_frontend(
         frontend,

@@ -1,13 +1,10 @@
+import json
+import uuid
 from typing import Dict, Any, List, Optional
-from .base import BaseProtocol
+from .base import BaseProtocol, ToolCall
 
 
 class OpenAIProtocol(BaseProtocol):
-    """OpenAI 协议适配器
-    
-    兼容: OpenAI, Azure OpenAI, Ollama, vLLM, 智谱 GLM 等
-    """
-    
     def get_headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -46,3 +43,66 @@ class OpenAIProtocol(BaseProtocol):
     
     def parse_generate_response(self, response: Dict[str, Any]) -> str:
         return response["choices"][0]["text"].strip()
+    
+    def supports_tools(self) -> bool:
+        return True
+    
+    def build_chat_request_with_tools(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: List[Dict[str, Any]],
+        **kwargs
+    ) -> Dict[str, Any]:
+        data = self.build_chat_request(messages, **kwargs)
+        if tools:
+            data["tools"] = tools
+            data["tool_choice"] = kwargs.get("tool_choice", "auto")
+        return data
+    
+    def has_tool_calls(self, response: Dict[str, Any]) -> bool:
+        message = response["choices"][0]["message"]
+        return message.get("tool_calls") is not None and len(message["tool_calls"]) > 0
+    
+    def parse_tool_calls(self, response: Dict[str, Any]) -> List[ToolCall]:
+        message = response["choices"][0]["message"]
+        tool_calls = message.get("tool_calls", [])
+        
+        result = []
+        for tc in tool_calls:
+            if tc["type"] == "function":
+                try:
+                    arguments = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    arguments = {}
+                
+                result.append(ToolCall(
+                    id=tc["id"],
+                    name=tc["function"]["name"],
+                    arguments=arguments
+                ))
+        
+        return result
+    
+    def build_tool_result_message(
+        self, 
+        tool_call: ToolCall, 
+        result: str,
+        is_error: bool = False
+    ) -> Dict[str, Any]:
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": result
+        }
+    
+    def get_assistant_message_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        message = response["choices"][0]["message"]
+        msg = {"role": "assistant"}
+        
+        if message.get("content"):
+            msg["content"] = message["content"]
+        
+        if message.get("tool_calls"):
+            msg["tool_calls"] = message["tool_calls"]
+        
+        return msg
