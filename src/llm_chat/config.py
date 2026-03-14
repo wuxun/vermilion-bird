@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Literal
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import yaml
@@ -12,6 +12,7 @@ class LLMConfig(BaseSettings):
     api_key: Optional[str] = Field(default=None, description="API 密钥")
     timeout: int = Field(default=30, description="请求超时时间（秒）")
     max_retries: int = Field(default=3, description="最大重试次数")
+    protocol: str = Field(default="openai", description="API 协议类型: openai, anthropic, gemini")
 
     class Config:
         env_prefix = "LLM_"
@@ -36,5 +37,4 @@ class Config(BaseSettings):
         return cls()
 
 
-# 创建默认配置实例
 config = Config.from_yaml()

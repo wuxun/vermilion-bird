@@ -8,42 +8,41 @@ from llm_chat.conversation import Conversation
 @click.option('--base-url', help='模型 API 基础 URL')
 @click.option('--model', help='模型名称')
 @click.option('--api-key', help='API 密钥')
+@click.option('--protocol', type=click.Choice(['openai', 'anthropic', 'gemini']), help='API 协议类型')
 @click.option('--conversation-id', help='对话 ID')
 @click.option('--timeout', type=int, help='请求超时时间（秒）')
 @click.option('--max-retries', type=int, help='最大重试次数')
-def main(base_url, model, api_key, conversation_id, timeout, max_retries):
+def main(base_url, model, api_key, protocol, conversation_id, timeout, max_retries):
     """大模型对话命令行工具"""
-    # 加载配置
     config = Config()
     
-    # 覆盖配置
     if base_url:
         config.llm.base_url = base_url
     if model:
         config.llm.model = model
     if api_key:
         config.llm.api_key = api_key
+    if protocol:
+        config.llm.protocol = protocol
     if timeout:
         config.llm.timeout = timeout
     if max_retries:
         config.llm.max_retries = max_retries
     
-    # 创建客户端和对话
     client = LLMClient(config)
     conversation = Conversation(client, conversation_id)
     
-    # 打印欢迎信息
+    print(f"协议: {config.llm.protocol}")
+    print(f"模型: {config.llm.model}")
+    print(f"API URL: {config.llm.base_url}")
     print("大模型对话工具")
     print("输入 'exit' 退出，输入 'clear' 清空对话历史")
     print("=" * 50)
     
-    # 交互式聊天
     while True:
         try:
-            # 获取用户输入
             user_input = input("你: ")
             
-            # 处理特殊命令
             if user_input.lower() == 'exit':
                 print("再见！")
                 break
@@ -54,7 +53,6 @@ def main(base_url, model, api_key, conversation_id, timeout, max_retries):
             elif not user_input.strip():
                 continue
             
-            # 发送消息并获取回复
             print("AI: ", end="")
             response = conversation.send_message(user_input)
             print(response)

@@ -16,3 +16,52 @@ llm:
   
   # 最大重试次数
   max_retries: 3
+  
+  # API 协议类型: openai, anthropic, gemini
+  protocol: "openai"
+
+# ============================================================
+# 不同协议配置示例
+# ============================================================
+
+# OpenAI 配置示例
+# llm:
+#   base_url: "https://api.openai.com/v1"
+#   model: "gpt-4"
+#   api_key: "sk-xxx"
+#   protocol: "openai"
+
+# Azure OpenAI 配置示例
+# llm:
+#   base_url: "https://your-resource.openai.azure.com/openai/deployments/your-deployment"
+#   model: "gpt-4"
+#   api_key: "your-azure-key"
+#   protocol: "openai"
+
+# Ollama 本地模型配置示例
+# llm:
+#   base_url: "http://localhost:11434/v1"
+#   model: "llama2"
+#   api_key: ""
+#   protocol: "openai"
+
+# Anthropic Claude 配置示例
+# llm:
+#   base_url: "https://api.anthropic.com/v1"
+#   model: "claude-3-opus-20240229"
+#   api_key: "sk-ant-xxx"
+#   protocol: "anthropic"
+
+# Google Gemini 配置示例
+# llm:
+#   base_url: "https://generativelanguage.googleapis.com/v1beta"
+#   model: "gemini-pro"
+#   api_key: "your-google-api-key"
+#   protocol: "gemini"
+
+# 智谱 GLM 配置示例 (兼容 OpenAI 协议)
+# llm:
+#   base_url: "https://open.bigmodel.cn/api/paas/v4"
+#   model: "glm-4"
+#   api_key: "your-zhipu-api-key"
+#   protocol: "openai"
