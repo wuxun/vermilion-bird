@@ -1,7 +1,7 @@
 import click
 from llm_chat.config import Config
-from llm_chat.client import LLMClient
-from llm_chat.conversation import Conversation
+from llm_chat.app import App
+from llm_chat.frontends import get_frontend
 
 
 @click.command()
@@ -9,11 +9,12 @@ from llm_chat.conversation import Conversation
 @click.option('--model', help='模型名称')
 @click.option('--api-key', help='API 密钥')
 @click.option('--protocol', type=click.Choice(['openai', 'anthropic', 'gemini']), help='API 协议类型')
+@click.option('--frontend', type=click.Choice(['cli', 'gui']), default='cli', help='前端类型 (cli 或 gui)')
 @click.option('--conversation-id', help='对话 ID')
 @click.option('--timeout', type=int, help='请求超时时间（秒）')
 @click.option('--max-retries', type=int, help='最大重试次数')
-def main(base_url, model, api_key, protocol, conversation_id, timeout, max_retries):
-    """大模型对话命令行工具"""
+def main(base_url, model, api_key, protocol, frontend, conversation_id, timeout, max_retries):
+    """Vermilion Bird - 大模型对话工具"""
     config = Config()
     
     if base_url:
@@ -29,41 +30,20 @@ def main(base_url, model, api_key, protocol, conversation_id, timeout, max_retri
     if max_retries:
         config.llm.max_retries = max_retries
     
-    client = LLMClient(config)
-    conversation = Conversation(client, conversation_id)
+    app = App(config)
     
     print(f"协议: {config.llm.protocol}")
     print(f"模型: {config.llm.model}")
     print(f"API URL: {config.llm.base_url}")
-    print("Vermilion Bird - 大模型对话工具")
-    print("输入 'exit' 退出，输入 'clear' 清空对话历史")
+    print(f"前端: {frontend}")
     print("=" * 50)
     
-    while True:
-        try:
-            user_input = input("你: ")
-            
-            if user_input.lower() == 'exit':
-                print("再见！")
-                break
-            elif user_input.lower() == 'clear':
-                conversation.clear_history()
-                print("对话历史已清空")
-                continue
-            elif not user_input.strip():
-                continue
-            
-            print("AI: ", end="")
-            response = conversation.send_message(user_input)
-            print(response)
-            print("=" * 50)
-            
-        except KeyboardInterrupt:
-            print("\n再见！")
-            break
-        except Exception as e:
-            print(f"错误: {e}")
-            print("=" * 50)
+    frontend_instance = get_frontend(
+        frontend,
+        conversation_id=conversation_id or "default"
+    )
+    
+    app.run(frontend_instance)
 
 
 if __name__ == '__main__':
