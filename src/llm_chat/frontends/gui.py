@@ -12,7 +12,7 @@ except ImportError:
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QTextEdit, QPushButton, QLabel, QFrame, QMessageBox
+        QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox
     )
     from PyQt6.QtCore import Qt, QTimer, QSize
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
@@ -25,6 +25,7 @@ except ImportError:
     QVBoxLayout = None
     QHBoxLayout = None
     QTextEdit = None
+    QTextBrowser = None
     QPushButton = None
     QLabel = None
     QFrame = None
@@ -87,7 +88,7 @@ class GUIFrontend(BaseFrontend):
         
         self._app: Optional[QApplication] = None
         self._main_window: Optional[QMainWindow] = None
-        self._chat_display: Optional[QTextEdit] = None
+        self._chat_display: Optional[QTextBrowser] = None
         self._input_field: Optional[InputTextEdit] = None
         self._send_button: Optional[QPushButton] = None
         self._clear_button: Optional[QPushButton] = None
@@ -142,7 +143,7 @@ class GUIFrontend(BaseFrontend):
         
         main_layout.addLayout(header_layout)
         
-        self._chat_display = QTextEdit()
+        self._chat_display = QTextBrowser()
         self._chat_display.setReadOnly(True)
         self._chat_display.setFont(QFont("Arial", 11))
         self._chat_display.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -185,7 +186,7 @@ class GUIFrontend(BaseFrontend):
     
     def _apply_styles(self):
         self._chat_display.setStyleSheet("""
-            QTextEdit {
+            QTextBrowser {
                 background-color: #fafafa;
                 border: 1px solid #ddd;
                 border-radius: 5px;
