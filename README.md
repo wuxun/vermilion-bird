@@ -1,4 +1,4 @@
-# LLM Chat
+# Vermilion Bird
 
 一个简单的大模型对话客户端，支持多种 API 协议，可配置化设置。
 
@@ -108,7 +108,7 @@ export LLM_MAX_RETRIES="3"
 ### 方式三：命令行参数
 
 ```bash
-llm-chat --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-key
+vermilion-bird --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-key
 ```
 
 ## 使用方法
@@ -118,20 +118,20 @@ llm-chat --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-
 #### 基本使用
 
 ```bash
-llm-chat
+vermilion-bird
 ```
 
 #### 使用命令行参数
 
 ```bash
 # 指定协议和模型
-llm-chat --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-key
+vermilion-bird --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-key
 
 # 使用本地 Ollama 模型
-llm-chat --base-url http://localhost:11434/v1 --model llama2 --protocol openai
+vermilion-bird --base-url http://localhost:11434/v1 --model llama2 --protocol openai
 
 # 指定对话 ID（用于恢复之前的对话）
-llm-chat --conversation-id conv_1234567890
+vermilion-bird --conversation-id conv_1234567890
 ```
 
 #### 交互命令

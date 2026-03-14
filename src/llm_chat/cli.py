@@ -35,7 +35,7 @@ def main(base_url, model, api_key, protocol, conversation_id, timeout, max_retri
     print(f"协议: {config.llm.protocol}")
     print(f"模型: {config.llm.model}")
     print(f"API URL: {config.llm.base_url}")
-    print("大模型对话工具")
+    print("Vermilion Bird - 大模型对话工具")
     print("输入 'exit' 退出，输入 'clear' 清空对话历史")
     print("=" * 50)
     

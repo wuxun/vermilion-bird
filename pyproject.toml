@@ -1,12 +1,13 @@
 [tool.poetry]
-name = "llm-chat"
+name = "vermilion-bird"
 version = "0.1.0"
-description = "A simple LLM chat client with configurable settings"
+description = "A simple LLM chat client with configurable settings and multi-protocol support"
 authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
+packages = [{include = "llm_chat", from = "src"}]
 
 [tool.poetry.scripts]
-llm-chat = "llm_chat.cli:main"
+vermilion-bird = "llm_chat.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.9"
