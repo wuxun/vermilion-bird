@@ -6,7 +6,7 @@ from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, 
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QTextEdit, QPushButton, QLabel, QFrame
+        QTextEdit, QPushButton, QLabel, QFrame, QMessageBox
     )
     from PyQt6.QtCore import Qt, QTimer, QSize
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
@@ -22,6 +22,7 @@ except ImportError:
     QPushButton = None
     QLabel = None
     QFrame = None
+    QMessageBox = None
     Qt = None
     QTimer = None
     QSize = None
@@ -37,7 +38,7 @@ class InputTextEdit(QTextEdit):
     
     def keyPressEvent(self, event):
         if PYQT_AVAILABLE:
-            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_Return and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 self.send_requested.emit()
                 event.accept()
                 return
@@ -63,6 +64,8 @@ class GUIFrontend(BaseFrontend):
         self._input_field: Optional[InputTextEdit] = None
         self._send_button: Optional[QPushButton] = None
         self._clear_button: Optional[QPushButton] = None
+        self._mcp_button: Optional[QPushButton] = None
+        self._mcp_dialog = None
         self._worker_thread: Optional[threading.Thread] = None
     
     def start(self):
@@ -82,7 +85,7 @@ class GUIFrontend(BaseFrontend):
         self._main_window.closeEvent = self._on_close_event
         
         self.display_info("Welcome to Vermilion Bird!")
-        self.display_info("Press Ctrl+Enter to send message")
+        self.display_info("Press Enter to send, Shift+Enter for new line")
         
         self._main_window.show()
         sys.exit(self._app.exec())
@@ -99,6 +102,11 @@ class GUIFrontend(BaseFrontend):
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
+        
+        self._mcp_button = QPushButton("MCP Tools")
+        self._mcp_button.setFixedWidth(100)
+        self._mcp_button.clicked.connect(self._on_mcp_config)
+        header_layout.addWidget(self._mcp_button)
         
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
@@ -194,6 +202,18 @@ class GUIFrontend(BaseFrontend):
                 background-color: #e0e0e0;
             }
         """)
+        
+        self._mcp_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #388E3C;
+            }
+        """)
     
     def _on_send(self):
         if self._input_field is None:
@@ -243,6 +263,15 @@ class GUIFrontend(BaseFrontend):
             self._chat_display.clear()
         
         self.display_info("Conversation cleared")
+    
+    def _on_mcp_config(self):
+        try:
+            from llm_chat.frontends.mcp_dialog import MCPConfigDialog
+            if self._mcp_dialog is None:
+                self._mcp_dialog = MCPConfigDialog(self._main_window)
+            self._mcp_dialog.exec()
+        except ImportError as e:
+            QMessageBox.warning(self._main_window, "Error", f"MCP module not available: {e}")
     
     def _on_close(self):
         self._handle_exit()
