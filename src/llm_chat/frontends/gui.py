@@ -18,7 +18,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit, QInputDialog,
-        QAbstractItemView
+        QAbstractItemView, QScrollArea, QSizePolicy
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
@@ -42,6 +42,8 @@ except ImportError:
     QLineEdit = None
     QInputDialog = None
     QAbstractItemView = None
+    QScrollArea = None
+    QSizePolicy = None
     Qt = None
     QTimer = None
     QSize = None
@@ -72,32 +74,181 @@ MARKDOWN_CSS = """
 </style>
 """
 
-
-class InputTextEdit(QTextEdit):
-    if PYQT_AVAILABLE:
+if PYQT_AVAILABLE:
+    class InputTextEdit(QTextEdit):
         send_requested = pyqtSignal()
-    
-    def keyPressEvent(self, event):
-        if PYQT_AVAILABLE:
+        
+        def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_Return and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 self.send_requested.emit()
                 event.accept()
                 return
-        super().keyPressEvent(event)
+            super().keyPressEvent(event)
 
+    class CollapsibleToolCall(QFrame):
+        toggled = pyqtSignal(bool)
+        
+        def __init__(self, tool_id: str, tool_name: str, tool_args: str, parent=None):
+            super().__init__(parent)
+            self._tool_id = tool_id
+            self._tool_name = tool_name
+            self._tool_args = tool_args
+            self._result = None
+            self._is_expanded = True
+            self._is_completed = False
+            self._setup_ui()
+        
+        def _setup_ui(self):
+            self.setFrameShape(QFrame.Shape.StyledPanel)
+            self.setStyleSheet("""
+                CollapsibleToolCall {
+                    background-color: #F3E5F5;
+                    border: 1px solid #9C27B0;
+                    border-radius: 8px;
+                    margin: 4px 0px;
+                }
+            """)
+            
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            
+            self._header = QPushButton()
+            self._header.setStyleSheet("""
+                QPushButton {
+                    background-color: #E1BEE7;
+                    border: none;
+                    border-radius: 8px 8px 0 0;
+                    padding: 8px 12px;
+                    text-align: left;
+                    font-weight: bold;
+                    color: #7B1FA2;
+                }
+                QPushButton:hover {
+                    background-color: #CE93D8;
+                }
+            """)
+            self._header.clicked.connect(self._toggle)
+            self._update_header_text()
+            layout.addWidget(self._header)
+            
+            self._content = QWidget()
+            self._content.setStyleSheet("background-color: #FFFFFF; border-radius: 0 0 8px 8px;")
+            content_layout = QVBoxLayout(self._content)
+            content_layout.setContentsMargins(12, 10, 12, 10)
+            content_layout.setSpacing(8)
+            
+            args_label = QLabel("参数:")
+            args_label.setStyleSheet("color: #7B1FA2; font-weight: bold; border: none; background: transparent;")
+            content_layout.addWidget(args_label)
+            
+            self._args_text = QTextEdit()
+            self._args_text.setPlainText(self._tool_args)
+            self._args_text.setReadOnly(True)
+            self._args_text.setMaximumHeight(120)
+            self._args_text.setStyleSheet("""
+                QTextEdit {
+                    background-color: #F5F5F5;
+                    border-radius: 4px;
+                    border: none;
+                    padding: 8px;
+                    font-family: Consolas, monospace;
+                    font-size: 12px;
+                    color: #4A148C;
+                }
+            """)
+            content_layout.addWidget(self._args_text)
+            
+            self._result_label = QLabel("结果:")
+            self._result_label.setStyleSheet("color: #2E7D32; font-weight: bold; border: none; background: transparent;")
+            self._result_label.hide()
+            content_layout.addWidget(self._result_label)
+            
+            self._result_text = QTextEdit()
+            self._result_text.setReadOnly(True)
+            self._result_text.setMaximumHeight(150)
+            self._result_text.setStyleSheet("""
+                QTextEdit {
+                    background-color: #E8F5E9;
+                    border-radius: 4px;
+                    border-left: 3px solid #4CAF50;
+                    padding: 8px;
+                    font-family: Consolas, monospace;
+                    font-size: 11px;
+                    color: #2E7D32;
+                }
+            """)
+            self._result_text.hide()
+            content_layout.addWidget(self._result_text)
+            
+            layout.addWidget(self._content)
+        
+        def _update_header_text(self):
+            if self._is_completed:
+                icon = "✅"
+                status = ""
+            else:
+                icon = "🔧"
+                status = " ▼ 执行中..."
+            
+            expand_icon = "▼" if self._is_expanded else "▶"
+            self._header.setText(f"{expand_icon} {icon} 工具调用: {self._tool_name}{status}")
+        
+        def _toggle(self):
+            self._is_expanded = not self._is_expanded
+            self._content.setVisible(self._is_expanded)
+            self._update_header_text()
+            self.toggled.emit(self._is_expanded)
+            logger.info(f"工具调用控件折叠状态切换: {self._tool_name}, expanded={self._is_expanded}")
+        
+        def set_result(self, result: str):
+            self._result = result
+            self._is_completed = True
+            self._result_text.setPlainText(result)
+            self._result_label.show()
+            self._result_text.show()
+            self._update_header_text()
+            self.collapse()
+            logger.info(f"工具调用完成并自动折叠: {self._tool_name}")
+        
+        def collapse(self):
+            self._is_expanded = False
+            self._content.setVisible(False)
+            self._update_header_text()
+        
+        def expand(self):
+            self._is_expanded = True
+            self._content.setVisible(True)
+            self._update_header_text()
+        
+        @property
+        def tool_id(self) -> str:
+            return self._tool_id
+        
+        @property
+        def tool_name(self) -> str:
+            return self._tool_name
+        
+        @property
+        def result(self) -> str:
+            return self._result or ""
+else:
+    InputTextEdit = None
+    CollapsibleToolCall = None
 
-class StreamSignals(QObject):
-    if PYQT_AVAILABLE:
+if PYQT_AVAILABLE:
+    class StreamSignals(QObject):
         text_received = pyqtSignal(str)
         stream_finished = pyqtSignal(str, str)
         error_occurred = pyqtSignal(str, str)
         tool_call_started = pyqtSignal(str, str)
         tool_call_finished = pyqtSignal(str, str, str)
 
-
-class ConversationListSignals(QObject):
-    if PYQT_AVAILABLE:
+    class ConversationListSignals(QObject):
         conversations_updated = pyqtSignal()
+else:
+    StreamSignals = None
+    ConversationListSignals = None
 
 
 class GUIFrontend(BaseFrontend):
@@ -116,6 +267,9 @@ class GUIFrontend(BaseFrontend):
         self._app: Optional[QApplication] = None
         self._main_window: Optional[QMainWindow] = None
         self._chat_display: Optional[QTextBrowser] = None
+        self._chat_scroll_area: Optional[QScrollArea] = None
+        self._chat_container: Optional[QWidget] = None
+        self._chat_layout: Optional[QVBoxLayout] = None
         self._input_field: Optional[InputTextEdit] = None
         self._send_button: Optional[QPushButton] = None
         self._clear_button: Optional[QPushButton] = None
@@ -125,9 +279,10 @@ class GUIFrontend(BaseFrontend):
         self._stream_signals: Optional[StreamSignals] = None
         self._conv_list_signals: Optional[ConversationListSignals] = None
         self._current_stream_text: str = ""
-        self._stream_start_position: int = 0
+        self._streaming_label: Optional[QLabel] = None
         self._messages: list = []
         self._current_tool_calls: list = []
+        self._current_tool_call_widgets: Dict[str, CollapsibleToolCall] = {}
         self._is_streaming: bool = False
         self._streaming_conversation_id: Optional[str] = None
         self._storage: Optional[Any] = None
@@ -283,12 +438,27 @@ class GUIFrontend(BaseFrontend):
         self._context_label.setStyleSheet("color: #666; padding: 2px;")
         layout.addWidget(self._context_label)
         
+        self._chat_scroll_area = QScrollArea()
+        self._chat_scroll_area.setWidgetResizable(True)
+        self._chat_scroll_area.setFrameShape(QFrame.Shape.StyledPanel)
+        self._chat_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        self._chat_container = QWidget()
+        self._chat_layout = QVBoxLayout(self._chat_container)
+        self._chat_layout.setContentsMargins(10, 10, 10, 10)
+        self._chat_layout.setSpacing(10)
+        self._chat_layout.addStretch()
+        
+        self._chat_scroll_area.setWidget(self._chat_container)
+        layout.addWidget(self._chat_scroll_area, stretch=1)
+        
         self._chat_display = QTextBrowser()
         self._chat_display.setReadOnly(True)
         self._chat_display.setFont(QFont("Arial", 11))
-        self._chat_display.setFrameStyle(QFrame.Shape.StyledPanel)
+        self._chat_display.setFrameShape(QFrame.Shape.NoFrame)
         self._chat_display.setOpenExternalLinks(True)
-        layout.addWidget(self._chat_display, stretch=1)
+        self._chat_display.setMaximumHeight(0)
+        self._chat_display.hide()
         
         input_container = QVBoxLayout()
         input_container.setSpacing(5)
@@ -340,10 +510,20 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setStyleSheet("""
             QTextBrowser {
                 background-color: #FFF8F0;
-                border: 1px solid #E8D5C4;
-                border-radius: 8px;
+                border: none;
                 padding: 10px;
                 color: #3D2C2E;
+            }
+        """)
+        
+        self._chat_scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: #FFF8F0;
+                border: 1px solid #E8D5C4;
+                border-radius: 8px;
+            }
+            QWidget {
+                background-color: #FFF8F0;
             }
         """)
         
@@ -575,7 +755,6 @@ class GUIFrontend(BaseFrontend):
         self._current_tool_calls = []
         self._is_streaming = True
         self._streaming_conversation_id = self.conversation_id
-        self._stream_start_position = self._chat_display.textCursor().position()
         
         self._display_ai_prefix()
         
@@ -625,36 +804,49 @@ class GUIFrontend(BaseFrontend):
         self._worker_thread.start()
     
     def _display_user_message(self, content: str):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
-        cursor.insertText(f" {content}\n")
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        user_label = QLabel(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{content}</span>")
+        user_label.setWordWrap(True)
+        user_label.setTextFormat(Qt.TextFormat.RichText)
+        user_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #3D2C2E;")
+        self._add_widget_to_chat(user_label)
+        self._scroll_to_bottom()
     
     def _display_ai_prefix(self):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
-        self._chat_display.setTextCursor(cursor)
+        ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
+        ai_label.setStyleSheet("margin-top: 5px; color: #3D2C2E;")
+        self._add_widget_to_chat(ai_label)
+        
+        self._streaming_label = None
+    
+    def _ensure_streaming_label(self):
+        if self._streaming_label is not None:
+            return
+        
+        self._streaming_label = QLabel()
+        self._streaming_label.setWordWrap(True)
+        self._streaming_label.setTextFormat(Qt.TextFormat.RichText)
+        self._streaming_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; color: #3D2C2E;")
+        self._add_widget_to_chat(self._streaming_label)
     
     def _on_stream_text(self, text: str):
-        if self._chat_display is None or not self._is_streaming:
+        if not self._is_streaming:
             return
+        
+        self._ensure_streaming_label()
         
         self._current_stream_text += text
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        if self._streaming_label:
+            html_content = self._render_markdown(self._current_stream_text)
+            self._streaming_label.setText(html_content)
+        
+        self._scroll_to_bottom()
     
     def _on_stream_finished(self, conv_id: str, full_text: str):
         if conv_id != self.conversation_id:
@@ -671,6 +863,7 @@ class GUIFrontend(BaseFrontend):
         })
         
         self._current_tool_calls = []
+        self._current_tool_call_widgets.clear()
         
         self._update_context_status()
         
@@ -692,7 +885,7 @@ class GUIFrontend(BaseFrontend):
         self._set_input_state(True)
     
     def _on_tool_call_started(self, tool_name: str, tool_args: str):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
         
         import uuid
@@ -713,109 +906,141 @@ class GUIFrontend(BaseFrontend):
         }
         self._current_tool_calls.append(tool_call_info)
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
+        tool_widget = CollapsibleToolCall(tool_id, tool_name, args_formatted)
+        self._current_tool_call_widgets[tool_id] = tool_widget
         
-        html = self._render_tool_call_expanded(tool_id, tool_name, args_formatted)
-        cursor.insertHtml(html)
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        stretch_index = self._chat_layout.count() - 1
+        if stretch_index >= 0:
+            stretch_item = self._chat_layout.itemAt(stretch_index)
+            if stretch_item and stretch_item.spacerItem():
+                self._chat_layout.insertWidget(stretch_index, tool_widget)
+            else:
+                self._chat_layout.addWidget(tool_widget)
+        else:
+            self._chat_layout.addWidget(tool_widget)
+        
+        self._scroll_to_bottom()
         logger.info(f"工具调用开始: {tool_name}, args={args_formatted[:100]}")
     
     def _on_tool_call_finished(self, tool_name: str, tool_args: str, result: str):
-        if self._chat_display is None:
-            return
-        
         for tc in self._current_tool_calls:
             if tc["name"] == tool_name and tc["result"] is None:
                 tc["result"] = result
+                tool_id = tc["id"]
+                
+                if tool_id in self._current_tool_call_widgets:
+                    widget = self._current_tool_call_widgets[tool_id]
+                    widget.set_result(result)
+                
                 break
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        
-        result_html = f'<div style="margin-top: 5px; padding: 8px; background-color: #E8F5E9; border-radius: 4px; border-left: 3px solid #4CAF50; font-family: Consolas, monospace; font-size: 11px; color: #2E7D32;"><b>结果:</b><br><pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word;">{self._escape_html(result)}</pre></div>'
-        cursor.insertHtml(result_html)
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        self._scroll_to_bottom()
         logger.info(f"工具调用完成: {tool_name}, result_length={len(result)}")
-    
-    def _render_tool_call_expanded(self, tool_id: str, tool_name: str, tool_args: str) -> str:
-        return f'''
-<div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
-    <div style="padding: 8px 12px; background-color: #E1BEE7;">
-        <span style="margin-right: 8px;">🔧</span>
-        <span style="font-weight: bold; color: #7B1FA2;">调用工具: {tool_name}</span>
-        <span style="margin-left: 10px; font-size: 12px; color: #7B1FA2;">▼ 执行中...</span>
-    </div>
-    <div style="padding: 10px 12px; background-color: #FFFFFF;">
-        <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
-        <pre style="margin: 0; padding: 8px; background-color: #F5F5F5; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; color: #4A148C; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(tool_args)}</pre>
-    </div>
-</div>
-'''
-    
-    def _render_tool_call_collapsed(self, tool_id: str, tool_name: str, tool_args: str, result: str) -> str:
-        return f'''
-<div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
-    <details style="margin: 0;">
-        <summary style="display: list-item; padding: 8px 12px; background-color: #E1BEE7; cursor: pointer; color: #7B1FA2; font-weight: bold; list-style: disclosure-closed inside;">
-            <span style="margin-right: 8px;">✅</span>工具调用: {tool_name}
-        </summary>
-        <div style="padding: 10px 12px; background-color: #FFFFFF;">
-            <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
-            <pre style="margin: 0 0 10px 0; padding: 8px; background-color: #F5F5F5; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; color: #4A148C; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(tool_args)}</pre>
-            <div style="color: #2E7D32; font-weight: bold; margin-bottom: 5px;">结果:</div>
-            <pre style="margin: 0; padding: 8px; background-color: #E8F5E9; border-radius: 4px; border-left: 3px solid #4CAF50; font-family: Consolas, monospace; font-size: 11px; color: #2E7D32; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(result)}</pre>
-        </div>
-    </details>
-</div>
-'''
     
     def _escape_html(self, text: str) -> str:
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#39;')
     
-    def _refresh_chat_display(self):
-        if self._chat_display is None:
+    def _scroll_to_bottom(self):
+        if self._chat_scroll_area:
+            from PyQt6.QtCore import QCoreApplication
+            QCoreApplication.processEvents()
+            scrollbar = self._chat_scroll_area.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+    
+    def _clear_chat_widgets(self):
+        if self._chat_layout is None:
             return
         
-        self._chat_display.clear()
+        while self._chat_layout.count() > 0:
+            item = self._chat_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        self._chat_layout.addStretch()
+        self._current_tool_call_widgets.clear()
+    
+    def _refresh_chat_display(self):
+        if self._chat_layout is None:
+            return
+        
+        self._clear_chat_widgets()
         
         for msg in self._messages:
-            cursor = self._chat_display.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            
             if msg["role"] == "user":
-                cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
-                cursor.insertText(f" {msg['content']}\n")
+                user_label = QLabel(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{msg['content']}</span>")
+                user_label.setWordWrap(True)
+                user_label.setTextFormat(Qt.TextFormat.RichText)
+                user_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #3D2C2E;")
+                self._add_widget_to_chat(user_label)
             elif msg["role"] == "assistant":
                 tool_calls = msg.get("tool_calls", [])
                 if tool_calls:
-                    cursor.insertHtml('<div style="margin-bottom: 10px; padding: 5px 10px; background-color: #F3E5F5; border-left: 3px solid #9C27B0; border-radius: 4px;"><span style="color: #7B1FA2; font-weight: bold;">🔧 工具调用记录</span></div>')
+                    tool_header = QLabel("🔧 工具调用记录")
+                    tool_header.setStyleSheet("""
+                        QLabel {
+                            padding: 5px 10px;
+                            background-color: #F3E5F5;
+                            border-left: 3px solid #9C27B0;
+                            border-radius: 4px;
+                            color: #7B1FA2;
+                            font-weight: bold;
+                            margin: 5px 0;
+                        }
+                    """)
+                    self._add_widget_to_chat(tool_header)
+                    
                     for tc in tool_calls:
                         tc_id = tc.get("id", "")
                         tc_name = tc.get("name", "unknown")
                         tc_args = tc.get("args", "{}")
                         tc_result = tc.get("result", "")
-                        html = self._render_tool_call_collapsed(tc_id, tc_name, tc_args, tc_result)
-                        cursor.insertHtml(html)
-                    cursor.insertHtml('<div style="margin: 10px 0;"></div>')
+                        
+                        tool_widget = CollapsibleToolCall(tc_id, tc_name, tc_args)
+                        tool_widget.set_result(tc_result)
+                        self._add_widget_to_chat(tool_widget)
                 
-                cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
+                ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
+                ai_label.setStyleSheet("margin-top: 10px; color: #3D2C2E;")
+                self._add_widget_to_chat(ai_label)
+                
                 html_content = self._render_markdown(msg["content"])
-                cursor.insertHtml(f'<div>{html_content}</div>')
-                cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
+                content_label = QLabel()
+                content_label.setWordWrap(True)
+                content_label.setTextFormat(Qt.TextFormat.RichText)
+                content_label.setText(html_content)
+                content_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; color: #3D2C2E;")
+                content_label.setOpenExternalLinks(True)
+                self._add_widget_to_chat(content_label)
+                
+                separator = QFrame()
+                separator.setFrameShape(QFrame.Shape.HLine)
+                separator.setStyleSheet("background-color: #D4A574; max-height: 1px; margin: 10px 0;")
+                self._add_widget_to_chat(separator)
         
-        self._chat_display.ensureCursorVisible()
+        self._scroll_to_bottom()
+    
+    def _add_widget_to_chat(self, widget: QWidget):
+        if self._chat_layout is None:
+            return
+        
+        stretch_index = self._chat_layout.count() - 1
+        if stretch_index >= 0:
+            stretch_item = self._chat_layout.itemAt(stretch_index)
+            if stretch_item and stretch_item.spacerItem():
+                self._chat_layout.insertWidget(stretch_index, widget)
+                return
+        
+        self._chat_layout.addWidget(widget)
     
     def _on_clear(self):
         ctx = ConversationContext(conversation_id=self.conversation_id)
         self._handle_clear(ctx)
         
         self._messages = []
+        self._current_tool_call_widgets.clear()
         
-        if self._chat_display:
-            self._chat_display.clear()
+        if self._chat_layout:
+            self._clear_chat_widgets()
         
         self.display_info("Conversation cleared")
     
@@ -855,40 +1080,54 @@ class GUIFrontend(BaseFrontend):
         return text.replace('\n', '<br>')
     
     def display_message(self, message: Message):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
-        
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
         
         if message.role == "user":
-            cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
-            cursor.insertText(f" {message.content}\n")
+            user_label = QLabel(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{message.content}</span>")
+            user_label.setWordWrap(True)
+            user_label.setTextFormat(Qt.TextFormat.RichText)
+            user_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #3D2C2E;")
+            self._add_widget_to_chat(user_label)
         elif message.role == "assistant":
-            cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
+            ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
+            ai_label.setStyleSheet("margin-top: 10px; color: #3D2C2E;")
+            self._add_widget_to_chat(ai_label)
+            
             html_content = self._render_markdown(message.content)
-            cursor.insertHtml(f'<div>{html_content}</div>')
-            cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
+            content_label = QLabel()
+            content_label.setWordWrap(True)
+            content_label.setTextFormat(Qt.TextFormat.RichText)
+            content_label.setText(html_content)
+            content_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; color: #3D2C2E;")
+            content_label.setOpenExternalLinks(True)
+            self._add_widget_to_chat(content_label)
+            
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setStyleSheet("background-color: #D4A574; max-height: 1px; margin: 10px 0;")
+            self._add_widget_to_chat(separator)
         
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        self._scroll_to_bottom()
     
     def display_error(self, error: str):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml(f'<p style="color: #8B0000;">Error: {error}</p>')
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        error_label = QLabel(f"<span style='color: #8B0000;'>Error: {error}</span>")
+        error_label.setWordWrap(True)
+        error_label.setTextFormat(Qt.TextFormat.RichText)
+        error_label.setStyleSheet("padding: 5px; background-color: #FFEBEE; border-radius: 4px; margin: 2px 0; color: #8B0000;")
+        self._add_widget_to_chat(error_label)
+        self._scroll_to_bottom()
     
     def display_info(self, info: str):
-        if self._chat_display is None:
+        if self._chat_layout is None:
             return
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml(f'<p style="color: #6B4423; font-style: italic;">[{info}]</p>')
-        self._chat_display.setTextCursor(cursor)
-        self._chat_display.ensureCursorVisible()
+        info_label = QLabel(f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>")
+        info_label.setWordWrap(True)
+        info_label.setTextFormat(Qt.TextFormat.RichText)
+        info_label.setStyleSheet("padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #6B4423;")
+        self._add_widget_to_chat(info_label)
+        self._scroll_to_bottom()
