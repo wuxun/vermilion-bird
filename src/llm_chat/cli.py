@@ -1,7 +1,22 @@
 import click
+import logging
+import sys
 from llm_chat.config import Config
 from llm_chat.app import App
 from llm_chat.frontends import get_frontend
+
+
+def setup_logging(level=logging.INFO, log_file: str = None):
+    handlers = [logging.StreamHandler(sys.stdout)]
+    
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+    
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
 
 
 @click.command()
@@ -15,7 +30,11 @@ from llm_chat.frontends import get_frontend
 @click.option('--timeout', type=int, help='请求超时时间（秒）')
 @click.option('--max-retries', type=int, help='最大重试次数')
 @click.option('--no-tools', is_flag=True, help='禁用工具调用')
-def main(base_url, model, api_key, protocol, frontend, gui, conversation_id, timeout, max_retries, no_tools):
+@click.option('--log-file', default=None, help='日志文件路径')
+@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), default='INFO', help='日志级别')
+def main(base_url, model, api_key, protocol, frontend, gui, conversation_id, timeout, max_retries, no_tools, log_file, log_level):
+    setup_logging(getattr(logging, log_level), log_file)
+    
     config = Config()
     
     if base_url:
