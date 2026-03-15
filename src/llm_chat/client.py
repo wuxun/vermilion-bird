@@ -48,6 +48,16 @@ class LLMClient:
             self._skill_manager.discover_skills(self.config.external_skill_dirs)
         
         skill_configs = self.config.skills.get_all_skill_configs()
+        
+        if "web_search" in skill_configs:
+            web_search_config = skill_configs["web_search"]
+            if "http_proxy" not in web_search_config:
+                web_search_config["http_proxy"] = self.config.llm.http_proxy
+            if "https_proxy" not in web_search_config:
+                web_search_config["https_proxy"] = self.config.llm.https_proxy
+            if "timeout" not in web_search_config:
+                web_search_config["timeout"] = self.config.llm.timeout
+        
         self._skill_manager.load_from_config(skill_configs)
         
         logger.info(f"Skills setup complete. Loaded: {self._skill_manager.list_skill_names()}")
