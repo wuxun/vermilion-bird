@@ -5,11 +5,14 @@
 ## 功能特性
 
 - 支持多种大模型 API 协议（OpenAI、Anthropic、Gemini）
-- **MCP (Model Context Protocol) 工具支持** - 连接外部 MCP 服务器，- **图形化界面 (PyQt6)** - 提供友好的 GUI 交互
+- **MCP (Model Context Protocol) 工具支持** - 连接外部 MCP 服务器
+- **图形化界面 (PyQt6)** - 提供友好的 GUI 交互
+- **会话历史管理** - SQLite 持久化存储，支持会话切换、重命名、删除
 - 配置化模型设置（base URL、模型名称、协议类型等）
 - 支持多种配置方式（YAML 文件、环境变量、命令行参数）
 - 命令行交互式聊天界面
-- 对话历史管理与持久化
+- 流式输出支持，实时显示 AI 回复
+- Markdown 渲染，代码高亮显示
 - 多轮对话上下文保持
 - 工具调用支持（Function Calling / Tool Use）
 
