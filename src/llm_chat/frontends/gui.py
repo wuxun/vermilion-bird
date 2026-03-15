@@ -134,6 +134,8 @@ class GUIFrontend(BaseFrontend):
         self._new_conv_button: Optional[QPushButton] = None
         self._delete_conv_button: Optional[QPushButton] = None
         self._rename_conv_button: Optional[QPushButton] = None
+        self._context_label: Optional[QLabel] = None
+        self._current_model: str = "gpt-3.5-turbo"
         
         self._on_new_conversation: Optional[Callable] = None
         self._on_delete_conversation: Optional[Callable] = None
@@ -272,6 +274,11 @@ class GUIFrontend(BaseFrontend):
         header_layout.addWidget(self._clear_button)
         
         layout.addLayout(header_layout)
+        
+        self._context_label = QLabel("上下文: 0 / 4096 tokens (0.0%)")
+        self._context_label.setFont(QFont("Arial", 10))
+        self._context_label.setStyleSheet("color: #666; padding: 2px;")
+        layout.addWidget(self._context_label)
         
         self._chat_display = QTextBrowser()
         self._chat_display.setReadOnly(True)
@@ -507,11 +514,32 @@ class GUIFrontend(BaseFrontend):
                 "content": msg.get("content")
             })
         
+        self._update_context_status()
         self._refresh_chat_display()
         self._refresh_conversation_list()
     
     def is_current_conversation_empty(self) -> bool:
         return len(self._messages) == 0
+    
+    def _update_context_status(self):
+        from llm_chat.utils.token_counter import calculate_context_usage, format_context_usage_short
+        
+        history = [{"role": m["role"], "content": m["content"]} for m in self._messages]
+        usage = calculate_context_usage(history, self._current_model)
+        status_text = format_context_usage_short(usage)
+        
+        if self._context_label:
+            self._context_label.setText(status_text)
+            
+            percent = usage["usage_percent"]
+            if percent < 50:
+                color = "#28a745"
+            elif percent < 80:
+                color = "#ffc107"
+            else:
+                color = "#dc3545"
+            
+            self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
     
     def _on_send(self):
         if self._input_field is None:
@@ -524,6 +552,8 @@ class GUIFrontend(BaseFrontend):
         self._input_field.clear()
         
         self._messages.append({"role": "user", "content": content})
+        
+        self._update_context_status()
         
         if self._storage:
             self._storage.add_message(self.conversation_id, "user", content)
@@ -626,6 +656,8 @@ class GUIFrontend(BaseFrontend):
         self._is_streaming = False
         self._streaming_conversation_id = None
         self._messages.append({"role": "assistant", "content": full_text})
+        
+        self._update_context_status()
         
         if self._storage:
             self._storage.add_message(conv_id, "assistant", full_text)
