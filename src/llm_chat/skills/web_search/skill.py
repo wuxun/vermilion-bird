@@ -43,6 +43,11 @@ class WebSearchTool(BaseTool):
                     "type": "integer",
                     "description": "返回结果数量，默认为5",
                     "default": 5
+                },
+                "region": {
+                    "type": "string",
+                    "description": "搜索区域，如 cn-zh(中文)、us-en(英文)、默认自动检测",
+                    "default": "auto"
                 }
             },
             "required": ["query"]
@@ -53,12 +58,14 @@ class WebSearchTool(BaseTool):
         engine: str = "duckduckgo",
         api_key: Optional[str] = None,
         http_proxy: Optional[str] = None,
-        https_proxy: Optional[str] = None
+        https_proxy: Optional[str] = None,
+        timeout: int = 30
     ):
         self.engine = engine
         self.api_key = api_key
         self.http_proxy = http_proxy
         self.https_proxy = https_proxy
+        self.timeout = timeout
     
     def _get_proxy_string(self) -> Optional[str]:
         if self.https_proxy:
@@ -75,15 +82,28 @@ class WebSearchTool(BaseTool):
             proxies["https"] = self.https_proxy
         return proxies if proxies else None
     
-    def execute(self, query: str, num_results: int = 5) -> str:
+    def _detect_chinese(self, text: str) -> bool:
+        for char in text:
+            if '\u4e00' <= char <= '\u9fff':
+                return True
+        return False
+    
+    def _get_region(self, query: str, region: str) -> str:
+        if region != "auto":
+            return region
+        if self._detect_chinese(query):
+            return "cn-zh"
+        return "us-en"
+    
+    def execute(self, query: str, num_results: int = 5, region: str = "auto") -> str:
         if self.engine == "duckduckgo":
-            return self._search_duckduckgo(query, num_results)
+            return self._search_duckduckgo(query, num_results, region)
         elif self.engine == "brave":
             return self._search_brave(query, num_results)
         else:
             return f"不支持的搜索引擎: {self.engine}"
     
-    def _search_duckduckgo(self, query: str, num_results: int) -> str:
+    def _search_duckduckgo(self, query: str, num_results: int, region: str = "auto") -> str:
         if not DUCKDUCKGO_AVAILABLE:
             logger.error("duckduckgo-search 或 ddgs 未安装")
             return "错误: 搜索库未安装。请运行: pip install ddgs"
@@ -91,16 +111,39 @@ class WebSearchTool(BaseTool):
         try:
             results = []
             proxy = self._get_proxy_string()
+            detected_region = self._get_region(query, region)
             
-            logger.info(f"开始 DuckDuckGo 搜索: query={query}, num_results={num_results}")
+            logger.info(f"开始 DuckDuckGo 搜索: query={query}, num_results={num_results}, region={detected_region}")
             logger.info(f"代理配置: proxy={proxy}")
             
             if USING_DDGS:
-                ddgs = DDGS(proxy=proxy)
-                search_results = list(ddgs.text(query, max_results=num_results))
+                ddgs = DDGS(proxy=proxy, timeout=self.timeout)
+                
+                if self._detect_chinese(query):
+                    backends = ["yandex", "duckduckgo", "brave"]
+                    for backend in backends:
+                        try:
+                            logger.info(f"尝试后端: {backend}")
+                            search_results = list(ddgs.text(
+                                query,
+                                region=detected_region,
+                                max_results=num_results,
+                                backend=backend
+                            ))
+                            if search_results:
+                                break
+                        except Exception as e:
+                            logger.warning(f"后端 {backend} 失败: {e}")
+                            search_results = []
+                else:
+                    search_results = list(ddgs.text(
+                        query,
+                        region=detected_region,
+                        max_results=num_results
+                    ))
             else:
                 proxies = self._get_proxies()
-                with DDGS(proxies=proxies) as ddgs:
+                with DDGS(proxies=proxies, timeout=self.timeout) as ddgs:
                     search_results = list(ddgs.text(query, max_results=num_results))
             
             logger.info(f"搜索返回结果数量: {len(search_results) if search_results else 0}")
@@ -148,7 +191,7 @@ class WebSearchTool(BaseTool):
             }
             
             proxies = self._get_proxies()
-            response = requests.get(url, headers=headers, params=params, proxies=proxies)
+            response = requests.get(url, headers=headers, params=params, proxies=proxies, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             
@@ -186,6 +229,7 @@ class WebSearchSkill(BaseSkill):
         self._api_key = None
         self._http_proxy = None
         self._https_proxy = None
+        self._timeout = 30
     
     def get_tools(self) -> List[BaseTool]:
         return [
@@ -193,7 +237,8 @@ class WebSearchSkill(BaseSkill):
                 engine=self._engine,
                 api_key=self._api_key,
                 http_proxy=self._http_proxy,
-                https_proxy=self._https_proxy
+                https_proxy=self._https_proxy,
+                timeout=self._timeout
             )
         ]
     
@@ -202,9 +247,11 @@ class WebSearchSkill(BaseSkill):
         self._api_key = config.get("api_key")
         self._http_proxy = config.get("http_proxy")
         self._https_proxy = config.get("https_proxy")
+        self._timeout = config.get("timeout", 30)
         
         self.logger.info(
             f"WebSearchSkill loaded: engine={self._engine}, "
             f"api_key={'*' * 8 if self._api_key else 'None'}, "
-            f"http_proxy={self._http_proxy}, https_proxy={self._https_proxy}"
+            f"http_proxy={self._http_proxy}, https_proxy={self._https_proxy}, "
+            f"timeout={self._timeout}"
         )
