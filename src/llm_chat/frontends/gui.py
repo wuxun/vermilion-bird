@@ -551,6 +551,10 @@ class GUIFrontend(BaseFrontend):
             try:
                 from llm_chat.config import Config
                 from llm_chat.client import LLMClient
+                from llm_chat.cli import setup_logging
+                
+                setup_logging(logging.INFO)
+                
                 config = Config()
                 client = LLMClient(config)
                 

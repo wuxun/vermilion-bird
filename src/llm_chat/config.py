@@ -1,10 +1,10 @@
 import os
-from typing import Optional, Literal, List, Dict, Any
+from typing import Optional, List, Dict, Any
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import yaml
 
-from llm_chat.mcp import MCPConfig, MCPServerConfig
+from llm_chat.mcp import MCPConfig
 
 
 class LLMConfig(BaseSettings):
@@ -19,32 +19,6 @@ class LLMConfig(BaseSettings):
 
     class Config:
         env_prefix = "LLM_"
-        case_sensitive = False
-
-
-class WebSearchToolConfig(BaseSettings):
-    enabled: bool = Field(default=True, description="是否启用网络搜索工具")
-    engine: str = Field(default="duckduckgo", description="搜索引擎: duckduckgo, brave")
-    api_key: Optional[str] = Field(default=None, description="搜索引擎 API Key (brave 需要)")
-
-    class Config:
-        env_prefix = "WEB_SEARCH_"
-        case_sensitive = False
-
-
-class CalculatorToolConfig(BaseSettings):
-    enabled: bool = Field(default=True, description="是否启用计算器工具")
-
-    class Config:
-        env_prefix = "CALCULATOR_"
-        case_sensitive = False
-
-
-class BuiltinToolsConfig(BaseSettings):
-    web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
-    calculator: CalculatorToolConfig = Field(default_factory=CalculatorToolConfig)
-
-    class Config:
         case_sensitive = False
 
 
@@ -83,7 +57,6 @@ class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
-    builtin_tools: BuiltinToolsConfig = Field(default_factory=BuiltinToolsConfig, description="内置工具配置（已废弃，请使用 skills）")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills 配置")
     external_skill_dirs: List[str] = Field(default_factory=list, description="外部 Skill 目录列表")
 
@@ -108,9 +81,6 @@ class Config(BaseSettings):
             
             enable_tools = config_data.get("enable_tools", True)
             
-            builtin_tools_data = config_data.get("builtin_tools", {})
-            builtin_tools_config = cls._parse_builtin_tools(builtin_tools_data)
-            
             skills_data = config_data.get("skills", {})
             skills_config = cls._parse_skills(skills_data)
             
@@ -120,7 +90,6 @@ class Config(BaseSettings):
                 llm=llm_config,
                 mcp=mcp_config,
                 enable_tools=enable_tools,
-                builtin_tools=builtin_tools_config,
                 skills=skills_config,
                 external_skill_dirs=external_skill_dirs
             )
@@ -141,19 +110,6 @@ class Config(BaseSettings):
             skill_configs["calculator"] = SkillConfig(enabled=True)
         
         return SkillsConfig(**skill_configs)
-    
-    @classmethod
-    def _parse_builtin_tools(cls, data: Dict[str, Any]) -> BuiltinToolsConfig:
-        web_search_data = data.get("web_search", {})
-        web_search_config = WebSearchToolConfig(**web_search_data)
-        
-        calculator_data = data.get("calculator", {})
-        calculator_config = CalculatorToolConfig(**calculator_data)
-        
-        return BuiltinToolsConfig(
-            web_search=web_search_config,
-            calculator=calculator_config
-        )
     
     def to_yaml(self, config_path: str = "config.yaml"):
         skills_dict = {}
