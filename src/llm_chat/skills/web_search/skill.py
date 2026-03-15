@@ -120,7 +120,7 @@ class WebSearchTool(BaseTool):
                 ddgs = DDGS(proxy=proxy, timeout=self.timeout)
                 
                 if self._detect_chinese(query):
-                    backends = ["bing", "yandex", "duckduckgo"]
+                    backends = ["yandex", "mojeek", "duckduckgo"]
                     for backend in backends:
                         try:
                             logger.info(f"尝试后端: {backend}")
