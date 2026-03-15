@@ -15,6 +15,8 @@
 - Markdown 渲染，代码高亮显示
 - 多轮对话上下文保持
 - 工具调用支持（Function Calling / Tool Use）
+- **多层记忆系统** - 短期/中期/长期记忆，让AI更懂你
+- **人格设定** - 自定义AI助手的性格和行为准则
 
 ## 安装
 
@@ -173,10 +175,10 @@ vermilion-bird --protocol anthropic --model claude-3-opus-20240229 --api-key you
 
 ```bash
 # 启动 GUI
-vermilion-bird --gui
+vermilion-bird chat --gui
 
 # 或使用 --frontend 参数
-vermilion-bird --frontend gui
+vermilion-bird chat --frontend gui
 ```
 
 #### GUI 功能
@@ -217,6 +219,65 @@ vermilion-bird --no-tools
 - 输入消息后按回车发送
 - 输入 `exit` 退出程序
 - 输入 `clear` 清空对话历史
+
+### 记忆系统
+
+Vermilion Bird 支持多层记忆系统，让AI助手能够记住你的偏好和重要信息。
+
+#### 记忆层次
+
+| 层次 | 文件 | 内容 |
+|------|------|------|
+| 短期记忆 | `short_term.md` | 当前任务、待办事项 |
+| 中期记忆 | `mid_term.md` | 近期摘要、事件时间线 |
+| 长期记忆 | `long_term.md` | 用户画像、重要事实 |
+| 人格设定 | `soul.md` | AI助手的性格和行为准则 |
+
+#### 记忆管理命令
+
+```bash
+# 查看记忆状态
+vermilion-bird memory status
+
+# 查看人格设定
+vermilion-bird memory soul
+
+# 查看各层记忆
+vermilion-bird memory short-term
+vermilion-bird memory mid-term
+vermilion-bird memory long-term
+
+# 备份记忆
+vermilion-bird memory backup
+
+# 清空记忆（危险操作）
+vermilion-bird memory clear
+```
+
+#### 记忆文件位置
+
+记忆文件存储在 `~/.vermilion-bird/memory/` 目录下，可以直接编辑 Markdown 文件来修改记忆内容。
+
+#### 配置
+
+```yaml
+memory:
+  enabled: true
+  storage_dir: "~/.vermilion-bird/memory"
+  short_term:
+    max_items: 10
+  mid_term:
+    max_days: 30
+    compress_after_days: 7
+  long_term:
+    auto_evolve: true
+    evolve_interval_days: 7
+  exclude_patterns:
+    - "密码"
+    - "password"
+    - "token"
+    - "api_key"
+```
 
 ### Python API
 

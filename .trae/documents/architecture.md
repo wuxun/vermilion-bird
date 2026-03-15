@@ -54,6 +54,13 @@ src/llm_chat/
     ├── config.py
     ├── manager.py
     └── types.py
+
+└── memory/                # 记忆系统
+    ├── __init__.py
+    ├── storage.py         # Markdown 存储管理
+    ├── manager.py         # 记忆管理器
+    ├── extractor.py       # 记忆提取器
+    └── templates.py       # 模板定义
 ```
 
 ---
@@ -198,6 +205,51 @@ class Storage:
     def search_messages(self, query: str, conversation_id: str) -> List[Dict]
 ```
 
+### 8. Memory System（记忆系统）
+
+三层记忆架构，使用 Markdown 格式存储。
+
+```
+~/.vermilion-bird/memory/
+├── short_term.md   # 短期记忆（当前任务、待办事项）
+├── mid_term.md     # 中期记忆（近期摘要、时间线）
+├── long_term.md    # 长期记忆（用户画像、重要事实）
+└── soul.md         # 人格设定
+```
+
+```python
+class MemoryStorage:
+    """Markdown 格式记忆存储"""
+    def load_short_term() -> str
+    def save_short_term(content: str)
+    def load_mid_term() -> str
+    def save_mid_term(content: str)
+    def load_long_term() -> str
+    def save_long_term(content: str)
+    def load_soul() -> Optional[str]
+    def save_soul(content: str)
+    def backup_memory() -> str
+    def search_memories(query: str) -> List[Dict]
+
+class MemoryManager:
+    """记忆系统核心管理器"""
+    def extract_memories_from_messages(messages: List[Dict]) -> Dict
+    def consolidate_to_short_term(info: Dict)
+    def consolidate_to_mid_term(summary: str)
+    def consolidate_to_long_term(facts: List[str])
+    def build_system_prompt() -> str  # 构建注入 LLM 的系统提示
+    def evolve_understanding()        # 进化对用户的理解
+    def get_soul() -> str             # 获取人格设定
+    def update_soul(content: str)     # 更新人格设定
+
+class MemoryExtractor:
+    """从对话中提取记忆"""
+    def extract(messages: List[Dict]) -> Dict
+    def summarize_day(messages: List[Dict]) -> str
+    def detect_user_preferences(messages: List[Dict]) -> Dict
+    def calculate_importance(info: Dict) -> float
+```
+
 ---
 
 ## 数据流
@@ -253,6 +305,39 @@ LLMClient.__init__()
     └─→ Skills 可用
 ```
 
+### 4. 记忆系统流程
+
+```
+用户发送消息
+    │
+    ├─→ Conversation.send_message()
+    │       │
+    │       ├─→ MemoryManager.build_system_prompt()
+    │       │       │
+    │       │       ├─→ 加载人格设定 (soul.md)
+    │       │       ├─→ 加载长期记忆 (long_term.md)
+    │       │       ├─→ 加载中期记忆 (mid_term.md)
+    │       │       └─→ 加载短期记忆 (short_term.md)
+    │       │
+    │       ├─→ LLMClient.chat(message, history, system_context)
+    │       │       │
+    │       │       └─→ 注入系统提示到 LLM
+    │       │
+    │       └─→ MemoryManager.extract_memories_from_messages()
+    │               │
+    │               ├─→ 提取用户偏好
+    │               ├─→ 提取重要事实
+    │               ├─→ 提取当前任务
+    │       │
+    │       └─→ MemoryManager.consolidate_*()
+    │               │
+    │               ├─→ 更新短期记忆
+    │               ├─→ 更新中期记忆（每日摘要）
+    │               └─→ 更新长期记忆（用户画像）
+    │
+    └─→ 返回响应
+```
+
 ---
 
 ## 配置文件
@@ -287,6 +372,24 @@ skills:
 
 external_skill_dirs:
   - "~/.vermilion-bird/skills"
+
+# 记忆系统配置
+memory:
+  enabled: true
+  storage_dir: "~/.vermilion-bird/memory"
+  short_term:
+    max_items: 10
+  mid_term:
+    max_days: 30
+    compress_after_days: 7
+  long_term:
+    auto_evolve: true
+    evolve_interval_days: 7
+  exclude_patterns:
+    - "密码"
+    - "password"
+    - "token"
+    - "api_key"
 ```
 
 ---
@@ -354,3 +457,6 @@ python -m llm_chat.app --log-file app.log --log-level DEBUG
 | 2024-01 | 1.1.0 | 添加 Skills 扩展系统 |
 | 2024-01 | 1.2.0 | 移除废弃的 BuiltinToolsConfig |
 | 2024-01 | 1.3.0 | 添加完整日志系统 |
+| 2024-03 | 1.4.0 | 添加记忆系统（短期/中期/长期记忆） |
+| 2024-03 | 1.4.1 | 添加人格设定功能 |
+| 2024-03 | 1.5.0 | 重构 CLI，支持子命令结构 |
