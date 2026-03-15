@@ -229,12 +229,14 @@ class LLMClient:
             
             for result in tool_results:
                 tool_name = "unknown"
+                tool_args = "{}"
                 for tc in tool_calls:
                     if tc["id"] == result["tool_call_id"]:
                         tool_name = tc["function"]["name"]
+                        tool_args = tc["function"].get("arguments", "{}")
                         break
                 
-                yield ("tool_call", tool_name, result.get("content", "")[:100])
+                yield ("tool_call_start", tool_name, tool_args)
                 
                 tool_message = {
                     "role": "tool",
@@ -242,6 +244,8 @@ class LLMClient:
                     "content": result["content"]
                 }
                 current_messages.append(tool_message)
+                
+                yield ("tool_call_end", tool_name, tool_args, result.get("content", "")[:500])
     
     def _parse_stream_tool_calls(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
         choices = chunk.get("choices", [])
