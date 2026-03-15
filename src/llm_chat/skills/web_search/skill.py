@@ -119,29 +119,22 @@ class WebSearchTool(BaseTool):
             if USING_DDGS:
                 ddgs = DDGS(proxy=proxy, timeout=self.timeout)
                 
-                if self._detect_chinese(query):
-                    backends = ["yandex", "mojeek", "duckduckgo"]
-                    for backend in backends:
-                        try:
-                            logger.info(f"尝试后端: {backend}")
-                            search_results = list(ddgs.text(
-                                query,
-                                region=detected_region,
-                                max_results=num_results,
-                                backend=backend
-                            ))
-                            if search_results:
-                                logger.info(f"后端 {backend} 返回 {len(search_results)} 个结果")
-                                break
-                        except Exception as e:
-                            logger.warning(f"后端 {backend} 失败: {e}")
-                            search_results = []
-                else:
-                    search_results = list(ddgs.text(
-                        query,
-                        region=detected_region,
-                        max_results=num_results
-                    ))
+                backends = ["google", "bing", "yahoo", "brave"]
+                for backend in backends:
+                    try:
+                        logger.info(f"尝试后端: {backend}")
+                        search_results = list(ddgs.text(
+                            query,
+                            region=detected_region,
+                            max_results=num_results,
+                            backend=backend
+                        ))
+                        if search_results:
+                            logger.info(f"后端 {backend} 返回 {len(search_results)} 个结果")
+                            break
+                    except Exception as e:
+                        logger.warning(f"后端 {backend} 失败: {e}")
+                        search_results = []
             else:
                 proxies = self._get_proxies()
                 with DDGS(proxies=proxies, timeout=self.timeout) as ddgs:
