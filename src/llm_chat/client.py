@@ -27,6 +27,8 @@ class LLMClient:
                 proxies["https"] = config.llm.https_proxy
             self.session.proxies = proxies
         
+        logger.info(f"初始化 LLMClient: protocol={config.llm.protocol}, model={config.llm.model}, base_url={config.llm.base_url}")
+        
         self.protocol = get_protocol(
             protocol=config.llm.protocol,
             base_url=config.llm.base_url,
@@ -84,6 +86,8 @@ class LLMClient:
         messages = history.copy()
         messages.append({"role": "user", "content": message})
         
+        logger.info(f"发送聊天请求: message_length={len(message)}, history_count={len(history)}")
+        
         return self._send_chat_request(messages, **kwargs)
     
     def chat_stream(
@@ -98,6 +102,8 @@ class LLMClient:
         messages = history.copy()
         messages.append({"role": "user", "content": message})
         
+        logger.info(f"发送流式聊天请求: message_length={len(message)}, history_count={len(history)}")
+        
         yield from self._send_chat_request_stream(messages, **kwargs)
     
     def chat_stream_with_tools(
@@ -109,6 +115,7 @@ class LLMClient:
         **kwargs
     ) -> Generator[Any, None, None]:
         if not self.protocol.supports_tools():
+            logger.warning("当前协议不支持工具调用，使用普通流式聊天")
             yield from self.chat_stream(message, history, **kwargs)
             return
         
@@ -117,6 +124,8 @@ class LLMClient:
         
         current_messages = history.copy()
         current_messages.append({"role": "user", "content": message})
+        
+        logger.info(f"开始带工具的流式聊天: tools={[t['function']['name'] for t in tools]}, max_iterations={max_iterations}")
         
         for iteration in range(max_iterations):
             url = self.protocol.get_chat_url()
@@ -127,6 +136,8 @@ class LLMClient:
                 stream=True,
                 **kwargs
             )
+            
+            logger.debug(f"迭代 {iteration + 1}: 发送请求到 {url}")
             
             full_text = ""
             tool_calls_data = []
@@ -140,6 +151,8 @@ class LLMClient:
                 )
                 response.raise_for_status()
                 
+                logger.debug(f"响应状态码: {response.status_code}")
+                
                 for line in response.iter_lines():
                     if not line:
                         continue
@@ -150,6 +163,7 @@ class LLMClient:
                         data_str = line_text[6:]
                         
                         if data_str == '[DONE]':
+                            logger.debug("流式响应结束")
                             break
                         
                         try:
@@ -174,12 +188,16 @@ class LLMClient:
                         error_msg = f"{error_msg}\n详情: {error_detail}"
                     except:
                         error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+                logger.error(f"API 请求失败: {error_msg}")
                 raise Exception(f"API 请求失败: {error_msg}")
             
             if not tool_calls_data:
+                logger.info(f"流式聊天完成: response_length={len(full_text)}")
                 return
             
             tool_calls = self._merge_tool_calls(tool_calls_data)
+            
+            logger.info(f"检测到 {len(tool_calls)} 个工具调用")
             
             assistant_message = {
                 "role": "assistant",
@@ -192,22 +210,29 @@ class LLMClient:
                 tool_name = tool_call["function"]["name"]
                 tool_args = tool_call["function"]["arguments"]
                 
+                logger.info(f"工具调用: {tool_name}, 参数: {tool_args[:100]}...")
+                
                 yield ("tool_call", tool_name, tool_args)
                 
                 if self._tool_registry.has_tool(tool_name):
                     try:
                         args = json.loads(tool_args)
                         tool_result = self.execute_builtin_tool(tool_name, args)
+                        logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(tool_result)}")
                     except Exception as e:
                         tool_result = f"Error: {str(e)}"
+                        logger.error(f"工具 {tool_name} 执行失败: {e}")
                 elif self._tool_executor:
                     try:
                         args = json.loads(tool_args)
                         tool_result = self._tool_executor(tool_name, args)
+                        logger.info(f"工具 {tool_name} 执行成功(外部执行器), 结果长度: {len(tool_result)}")
                     except Exception as e:
                         tool_result = f"Error: {str(e)}"
+                        logger.error(f"工具 {tool_name} 执行失败(外部执行器): {e}")
                 else:
                     tool_result = f"Error: No tool executor for {tool_name}"
+                    logger.error(f"没有找到工具 {tool_name} 的执行器")
                 
                 tool_message = {
                     "role": "tool",
@@ -265,6 +290,8 @@ class LLMClient:
         messages = history.copy()
         messages.append({"role": "user", "content": message})
         
+        logger.info(f"发送带工具的聊天请求: tools={[t['function']['name'] for t in tools]}")
+        
         return self._send_chat_request_with_tools(messages, tools, **kwargs)
     
     def _send_chat_request(self, messages: List[Dict[str, str]], **kwargs) -> str:
@@ -272,12 +299,18 @@ class LLMClient:
         headers = self.protocol.get_headers()
         data = self.protocol.build_chat_request(messages, **kwargs)
         
+        logger.debug(f"发送请求: url={url}, model={data.get('model')}, messages_count={len(messages)}")
+        
         for i in range(self.config.llm.max_retries):
             try:
                 response = self.session.post(url, json=data, headers=headers)
                 response.raise_for_status()
                 result = response.json()
-                return self.protocol.parse_chat_response(result)
+                
+                response_text = self.protocol.parse_chat_response(result)
+                logger.info(f"聊天响应: length={len(response_text)}")
+                
+                return response_text
             except requests.RequestException as e:
                 if i == self.config.llm.max_retries - 1:
                     error_msg = str(e)
@@ -287,8 +320,9 @@ class LLMClient:
                             error_msg = f"{error_msg}\n详情: {error_detail}"
                         except:
                             error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+                    logger.error(f"API 请求失败(重试 {i+1}/{self.config.llm.max_retries}): {error_msg}")
                     raise Exception(f"API 请求失败: {error_msg}")
-                print(f"请求失败，{i+1}秒后重试: {e}")
+                logger.warning(f"请求失败，{i+1}秒后重试: {e}")
                 time.sleep(1)
         
         return ""
@@ -302,6 +336,8 @@ class LLMClient:
         headers = self.protocol.get_headers()
         data = self.protocol.build_chat_request(messages, stream=True, **kwargs)
         
+        logger.debug(f"发送流式请求: url={url}, model={data.get('model')}, messages_count={len(messages)}")
+        
         try:
             response = self.session.post(
                 url, 
@@ -311,6 +347,9 @@ class LLMClient:
             )
             response.raise_for_status()
             
+            logger.debug(f"流式响应开始: status_code={response.status_code}")
+            
+            chunk_count = 0
             for line in response.iter_lines():
                 if not line:
                     continue
@@ -321,12 +360,14 @@ class LLMClient:
                     data_str = line_text[6:]
                     
                     if data_str == '[DONE]':
+                        logger.info(f"流式响应完成: chunks={chunk_count}")
                         break
                     
                     try:
                         chunk = json.loads(data_str)
                         content = self.protocol.parse_stream_chunk(chunk)
                         if content:
+                            chunk_count += 1
                             yield content
                     except json.JSONDecodeError:
                         continue
@@ -339,6 +380,7 @@ class LLMClient:
                     error_msg = f"{error_msg}\n详情: {error_detail}"
                 except:
                     error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+            logger.error(f"流式请求失败: {error_msg}")
             raise Exception(f"API 请求失败: {error_msg}")
     
     def _send_chat_request_with_tools(
@@ -349,6 +391,7 @@ class LLMClient:
         **kwargs
     ) -> str:
         if not self.protocol.supports_tools():
+            logger.warning("当前协议不支持工具调用，使用普通聊天")
             return self._send_chat_request(messages, **kwargs)
         
         url = self.protocol.get_chat_url()
@@ -356,12 +399,16 @@ class LLMClient:
         
         current_messages = messages.copy()
         
+        logger.info(f"开始带工具的聊天迭代: max_iterations={max_iterations}")
+        
         for iteration in range(max_iterations):
             data = self.protocol.build_chat_request_with_tools(
                 current_messages, 
                 tools, 
                 **kwargs
             )
+            
+            logger.debug(f"迭代 {iteration + 1}: 发送请求")
             
             for i in range(self.config.llm.max_retries):
                 try:
@@ -371,38 +418,50 @@ class LLMClient:
                     break
                 except requests.RequestException as e:
                     if i == self.config.llm.max_retries - 1:
+                        logger.error(f"请求失败(重试耗尽): {e}")
                         raise
-                    print(f"请求失败，{i+1}秒后重试: {e}")
+                    logger.warning(f"请求失败，{i+1}秒后重试: {e}")
                     time.sleep(1)
             else:
                 continue
             
             if not self.protocol.has_tool_calls(result):
-                return self.protocol.parse_chat_response(result)
+                response_text = self.protocol.parse_chat_response(result)
+                logger.info(f"聊天完成: iterations={iteration + 1}, response_length={len(response_text)}")
+                return response_text
             
             assistant_message = self.protocol.get_assistant_message_from_response(result)
             current_messages.append(assistant_message)
             
             tool_calls = self.protocol.parse_tool_calls(result)
             
+            logger.info(f"迭代 {iteration + 1}: 检测到 {len(tool_calls)} 个工具调用")
+            
             for tool_call in tool_calls:
+                logger.info(f"工具调用: {tool_call.name}, 参数: {json.dumps(tool_call.arguments, ensure_ascii=False)[:100]}...")
+                
                 if self._tool_registry.has_tool(tool_call.name):
                     try:
                         tool_result = self.execute_builtin_tool(tool_call.name, tool_call.arguments)
                         is_error = False
+                        logger.info(f"工具 {tool_call.name} 执行成功, 结果长度: {len(tool_result)}")
                     except Exception as e:
                         tool_result = str(e)
                         is_error = True
+                        logger.error(f"工具 {tool_call.name} 执行失败: {e}")
                 elif self._tool_executor:
                     try:
                         tool_result = self._tool_executor(tool_call.name, tool_call.arguments)
                         is_error = False
+                        logger.info(f"工具 {tool_call.name} 执行成功(外部执行器)")
                     except Exception as e:
                         tool_result = str(e)
                         is_error = True
+                        logger.error(f"工具 {tool_call.name} 执行失败(外部执行器): {e}")
                 else:
                     tool_result = f"Error: No tool executor configured for {tool_call.name}"
                     is_error = True
+                    logger.error(f"没有找到工具 {tool_call.name} 的执行器")
                 
                 tool_message = self.protocol.build_tool_result_message(
                     tool_call, 
@@ -411,6 +470,7 @@ class LLMClient:
                 )
                 current_messages.append(tool_message)
         
+        logger.warning(f"达到最大迭代次数 {max_iterations}")
         return self.protocol.parse_chat_response(result)
     
     def generate(self, prompt: str, **kwargs) -> str:
@@ -418,12 +478,16 @@ class LLMClient:
         headers = self.protocol.get_headers()
         data = self.protocol.build_generate_request(prompt, **kwargs)
         
+        logger.info(f"发送生成请求: prompt_length={len(prompt)}")
+        
         for i in range(self.config.llm.max_retries):
             try:
                 response = self.session.post(url, json=data, headers=headers)
                 response.raise_for_status()
                 result = response.json()
-                return self.protocol.parse_generate_response(result)
+                response_text = self.protocol.parse_generate_response(result)
+                logger.info(f"生成响应: length={len(response_text)}")
+                return response_text
             except requests.RequestException as e:
                 if i == self.config.llm.max_retries - 1:
                     error_msg = str(e)
@@ -433,8 +497,9 @@ class LLMClient:
                             error_msg = f"{error_msg}\n详情: {error_detail}"
                         except:
                             error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+                    logger.error(f"生成请求失败: {error_msg}")
                     raise Exception(f"API 请求失败: {error_msg}")
-                print(f"请求失败，{i+1}秒后重试: {e}")
+                logger.warning(f"请求失败，{i+1}秒后重试: {e}")
                 time.sleep(1)
         
         return ""
