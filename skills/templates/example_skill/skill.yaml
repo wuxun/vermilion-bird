@@ -1,0 +1,5 @@
+name: "example_skill"
+version: "1.0.0"
+description: "示例技能，用于演示如何创建自定义 Skill"
+author: "Your Name"
+dependencies: []

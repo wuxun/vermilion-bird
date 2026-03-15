@@ -5,6 +5,7 @@ from llm_chat.conversation import Conversation, ConversationManager
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
 from llm_chat.mcp import MCPManager, MCPServerStatus
 from llm_chat.storage import Storage
+from llm_chat.skills import SkillManager
 
 
 class App:
@@ -17,6 +18,9 @@ class App:
         self._mcp_manager: Optional[MCPManager] = None
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
+    
+    def get_skill_manager(self) -> SkillManager:
+        return self.client.get_skill_manager()
     
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:

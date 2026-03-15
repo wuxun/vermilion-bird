@@ -5,7 +5,10 @@ from typing import List, Dict, Any, Optional, Callable, Generator
 import requests
 from llm_chat.config import Config
 from llm_chat.protocols import get_protocol, ToolCall
-from llm_chat.tools import get_tool_registry, WebSearchTool, CalculatorTool
+from llm_chat.tools import get_tool_registry
+from llm_chat.skills import SkillManager
+from llm_chat.skills.web_search import WebSearchSkill
+from llm_chat.skills.calculator import CalculatorSkill
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +37,26 @@ class LLMClient:
         )
         self._tool_executor: Optional[Callable[[str, Dict[str, Any]], str]] = None
         self._tool_registry = get_tool_registry()
-        self._setup_builtin_tools()
+        self._skill_manager = SkillManager(self._tool_registry)
+        self._setup_skills()
     
-    def _setup_builtin_tools(self):
-        builtin_config = self.config.builtin_tools
+    def _setup_skills(self):
+        self._skill_manager.register_skill_class(WebSearchSkill)
+        self._skill_manager.register_skill_class(CalculatorSkill)
         
-        if builtin_config.web_search.enabled:
-            search_tool = WebSearchTool(
-                engine=builtin_config.web_search.engine,
-                api_key=builtin_config.web_search.api_key,
-                http_proxy=self.config.llm.http_proxy,
-                https_proxy=self.config.llm.https_proxy,
-                timeout=self.config.llm.timeout
-            )
-            self._tool_registry.register(search_tool)
+        if self.config.external_skill_dirs:
+            self._skill_manager.discover_skills(self.config.external_skill_dirs)
         
-        if builtin_config.calculator.enabled:
-            calc_tool = CalculatorTool()
-            self._tool_registry.register(calc_tool)
+        skill_configs = self.config.skills.get_all_skill_configs()
+        self._skill_manager.load_from_config(skill_configs)
+        
+        logger.info(f"Skills setup complete. Loaded: {self._skill_manager.list_skill_names()}")
     
     def set_tool_executor(self, executor: Callable[[str, Dict[str, Any]], str]):
         self._tool_executor = executor
+    
+    def get_skill_manager(self) -> SkillManager:
+        return self._skill_manager
     
     def get_builtin_tools(self) -> List[Dict[str, Any]]:
         return self._tool_registry.get_tools_for_openai()
