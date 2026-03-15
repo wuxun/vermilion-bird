@@ -1,19 +1,22 @@
 from typing import Optional, Dict, Any, List
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
-from llm_chat.conversation import Conversation
+from llm_chat.conversation import Conversation, ConversationManager
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
 from llm_chat.mcp import MCPManager, MCPServerStatus
+from llm_chat.storage import Storage
 
 
 class App:
     def __init__(self, config: Optional[Config] = None):
         self.config = config or Config()
         self.client = LLMClient(self.config)
-        self.conversations: Dict[str, Conversation] = {}
+        self.storage = Storage()
+        self.conversation_manager = ConversationManager(self.client, self.storage)
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None
         self._tools_enabled = False
+        self._current_conversation_id: str = "default"
     
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:
@@ -67,12 +70,22 @@ class App:
         return manager.get_tools_for_openai()
     
     def get_conversation(self, conversation_id: str) -> Conversation:
-        if conversation_id not in self.conversations:
-            self.conversations[conversation_id] = Conversation(self.client, conversation_id)
-        return self.conversations[conversation_id]
+        return self.conversation_manager.get_conversation(conversation_id)
     
     def set_frontend(self, frontend: BaseFrontend):
         self.current_frontend = frontend
+        
+        if hasattr(frontend, 'set_storage'):
+            frontend.set_storage(self.storage)
+        
+        if hasattr(frontend, 'set_conversation_callbacks'):
+            frontend.set_conversation_callbacks(
+                on_new=self._on_new_conversation,
+                on_delete=self._on_delete_conversation,
+                on_rename=self._on_rename_conversation,
+                on_switch=self._on_switch_conversation,
+                on_list=self._on_list_conversations
+            )
         
         def handle_message(message: Message, ctx: ConversationContext):
             conversation = self.get_conversation(ctx.conversation_id)
@@ -111,8 +124,81 @@ class App:
         frontend.set_on_clear(handle_clear)
         frontend.set_on_exit(handle_exit)
     
+    def _on_new_conversation(self):
+        if hasattr(self.current_frontend, 'is_current_conversation_empty'):
+            if self.current_frontend.is_current_conversation_empty():
+                return
+        
+        conv = self.conversation_manager.create_conversation()
+        self._current_conversation_id = conv.conversation_id
+        
+        if hasattr(self.current_frontend, 'set_current_conversation'):
+            self.current_frontend.set_current_conversation(conv.conversation_id, [])
+        
+        if hasattr(self.current_frontend, 'request_conversation_list_refresh'):
+            self.current_frontend.request_conversation_list_refresh()
+    
+    def _on_delete_conversation(self, conversation_id: str):
+        if hasattr(self.current_frontend, 'conversation_id'):
+            if conversation_id == self.current_frontend.conversation_id:
+                conversations = self.conversation_manager.list_conversations()
+                if conversations:
+                    next_conv = conversations[0]
+                    self._current_conversation_id = next_conv.get("id")
+                    messages = self.storage.get_messages(self._current_conversation_id)
+                    if hasattr(self.current_frontend, 'set_current_conversation'):
+                        self.current_frontend.set_current_conversation(self._current_conversation_id, messages)
+                else:
+                    self._on_new_conversation()
+                    return
+        
+        self.conversation_manager.delete_conversation(conversation_id)
+        
+        if hasattr(self.current_frontend, 'request_conversation_list_refresh'):
+            self.current_frontend.request_conversation_list_refresh()
+    
+    def _on_rename_conversation(self, conversation_id: str):
+        if hasattr(self.current_frontend, '_main_window'):
+            from PyQt6.QtWidgets import QInputDialog
+            conv = self.storage.get_conversation(conversation_id)
+            current_title = conv.get("title", "") if conv else ""
+            
+            new_title, ok = QInputDialog.getText(
+                self.current_frontend._main_window,
+                "Rename Conversation",
+                "Enter new title:",
+                text=current_title
+            )
+            
+            if ok and new_title:
+                self.storage.update_conversation(conversation_id, title=new_title)
+                if hasattr(self.current_frontend, 'request_conversation_list_refresh'):
+                    self.current_frontend.request_conversation_list_refresh()
+    
+    def _on_switch_conversation(self, conversation_id: str):
+        self._current_conversation_id = conversation_id
+        messages = self.storage.get_messages(conversation_id)
+        
+        if hasattr(self.current_frontend, 'set_current_conversation'):
+            self.current_frontend.set_current_conversation(conversation_id, messages)
+    
+    def _on_list_conversations(self):
+        conversations = self.conversation_manager.list_conversations()
+        
+        if hasattr(self.current_frontend, 'update_conversation_list'):
+            self.current_frontend.update_conversation_list(conversations)
+    
     def run(self, frontend: BaseFrontend):
         self.set_frontend(frontend)
+        
+        self.storage.migrate_from_json()
+        
+        conversations = self.conversation_manager.list_conversations()
+        if conversations:
+            self._current_conversation_id = conversations[0].get("id")
+            messages = self.storage.get_messages(self._current_conversation_id)
+            if hasattr(frontend, 'set_current_conversation'):
+                frontend.set_current_conversation(self._current_conversation_id, messages)
         
         if self.config.enable_tools and self.config.mcp.servers:
             self.enable_tools()

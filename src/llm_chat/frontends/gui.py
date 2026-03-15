@@ -1,6 +1,7 @@
 import sys
 import threading
-from typing import Optional
+import time
+from typing import Optional, List, Dict, Any, Callable
 from llm_chat.frontends.base import BaseFrontend, Message, ConversationContext, MessageType
 
 try:
@@ -12,7 +13,9 @@ except ImportError:
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox
+        QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox,
+        QListWidget, QListWidgetItem, QSplitter, QLineEdit, QInputDialog,
+        QAbstractItemView
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
@@ -30,6 +33,12 @@ except ImportError:
     QLabel = None
     QFrame = None
     QMessageBox = None
+    QListWidget = None
+    QListWidgetItem = None
+    QSplitter = None
+    QLineEdit = None
+    QInputDialog = None
+    QAbstractItemView = None
     Qt = None
     QTimer = None
     QSize = None
@@ -77,8 +86,13 @@ class InputTextEdit(QTextEdit):
 class StreamSignals(QObject):
     if PYQT_AVAILABLE:
         text_received = pyqtSignal(str)
-        stream_finished = pyqtSignal(str)
-        error_occurred = pyqtSignal(str)
+        stream_finished = pyqtSignal(str, str)
+        error_occurred = pyqtSignal(str, str)
+
+
+class ConversationListSignals(QObject):
+    if PYQT_AVAILABLE:
+        conversations_updated = pyqtSignal()
 
 
 class GUIFrontend(BaseFrontend):
@@ -104,10 +118,41 @@ class GUIFrontend(BaseFrontend):
         self._mcp_dialog = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
+        self._conv_list_signals: Optional[ConversationListSignals] = None
         self._current_stream_text: str = ""
         self._stream_start_position: int = 0
         self._messages: list = []
         self._is_streaming: bool = False
+        self._streaming_conversation_id: Optional[str] = None
+        self._storage: Optional[Any] = None
+        
+        self._conversation_list: Optional[QListWidget] = None
+        self._new_conv_button: Optional[QPushButton] = None
+        self._delete_conv_button: Optional[QPushButton] = None
+        self._rename_conv_button: Optional[QPushButton] = None
+        
+        self._on_new_conversation: Optional[Callable] = None
+        self._on_delete_conversation: Optional[Callable] = None
+        self._on_rename_conversation: Optional[Callable] = None
+        self._on_switch_conversation: Optional[Callable] = None
+        self._on_list_conversations: Optional[Callable] = None
+    
+    def set_storage(self, storage: Any):
+        self._storage = storage
+    
+    def set_conversation_callbacks(
+        self,
+        on_new: Callable,
+        on_delete: Callable,
+        on_rename: Callable,
+        on_switch: Callable,
+        on_list: Callable
+    ):
+        self._on_new_conversation = on_new
+        self._on_delete_conversation = on_delete
+        self._on_rename_conversation = on_rename
+        self._on_switch_conversation = on_switch
+        self._on_list_conversation = on_list
     
     def start(self):
         self._app = QApplication(sys.argv)
@@ -118,9 +163,12 @@ class GUIFrontend(BaseFrontend):
         self._stream_signals.stream_finished.connect(self._on_stream_finished)
         self._stream_signals.error_occurred.connect(self._on_stream_error)
         
+        self._conv_list_signals = ConversationListSignals()
+        self._conv_list_signals.conversations_updated.connect(self._refresh_conversation_list)
+        
         self._main_window = QMainWindow()
         self._main_window.setWindowTitle(self.title)
-        self._main_window.setMinimumSize(QSize(800, 600))
+        self._main_window.setMinimumSize(QSize(1000, 600))
         
         central_widget = QWidget()
         self._main_window.setCentralWidget(central_widget)
@@ -130,6 +178,8 @@ class GUIFrontend(BaseFrontend):
         
         self._main_window.closeEvent = self._on_close_event
         
+        self._refresh_conversation_list()
+        
         self.display_info("Welcome to Vermilion Bird!")
         self.display_info("Press Enter to send, Shift+Enter for new line")
         
@@ -137,9 +187,66 @@ class GUIFrontend(BaseFrontend):
         sys.exit(self._app.exec())
     
     def _setup_ui(self, parent: QWidget):
-        main_layout = QVBoxLayout(parent)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout = QHBoxLayout(parent)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        sidebar = self._create_sidebar()
+        main_layout.addWidget(sidebar)
+        
+        chat_area = self._create_chat_area()
+        main_layout.addWidget(chat_area, stretch=1)
+    
+    def _create_sidebar(self) -> QWidget:
+        sidebar = QFrame()
+        sidebar.setFixedWidth(220)
+        sidebar.setObjectName("sidebar")
+        
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        title_label = QLabel("Conversations")
+        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        layout.addWidget(title_label)
+        
+        button_layout = QHBoxLayout()
+        
+        self._new_conv_button = QPushButton("+")
+        self._new_conv_button.setFixedSize(30, 30)
+        self._new_conv_button.setToolTip("New Conversation")
+        self._new_conv_button.clicked.connect(self._on_new_conv)
+        button_layout.addWidget(self._new_conv_button)
+        
+        self._rename_conv_button = QPushButton("✎")
+        self._rename_conv_button.setFixedSize(30, 30)
+        self._rename_conv_button.setToolTip("Rename")
+        self._rename_conv_button.clicked.connect(self._on_rename_conv)
+        button_layout.addWidget(self._rename_conv_button)
+        
+        self._delete_conv_button = QPushButton("🗑")
+        self._delete_conv_button.setFixedSize(30, 30)
+        self._delete_conv_button.setToolTip("Delete")
+        self._delete_conv_button.clicked.connect(self._on_delete_conv)
+        button_layout.addWidget(self._delete_conv_button)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self._conversation_list = QListWidget()
+        self._conversation_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._conversation_list.itemClicked.connect(self._on_conversation_selected)
+        layout.addWidget(self._conversation_list, stretch=1)
+        
+        return sidebar
+    
+    def _create_chat_area(self) -> QWidget:
+        chat_area = QFrame()
+        chat_area.setObjectName("chatArea")
+        
+        layout = QVBoxLayout(chat_area)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
         
         header_layout = QHBoxLayout()
         
@@ -159,14 +266,14 @@ class GUIFrontend(BaseFrontend):
         self._clear_button.clicked.connect(self._on_clear)
         header_layout.addWidget(self._clear_button)
         
-        main_layout.addLayout(header_layout)
+        layout.addLayout(header_layout)
         
         self._chat_display = QTextBrowser()
         self._chat_display.setReadOnly(True)
         self._chat_display.setFont(QFont("Arial", 11))
         self._chat_display.setFrameStyle(QFrame.Shape.StyledPanel)
         self._chat_display.setOpenExternalLinks(True)
-        main_layout.addWidget(self._chat_display, stretch=1)
+        layout.addWidget(self._chat_display, stretch=1)
         
         input_container = QVBoxLayout()
         input_container.setSpacing(5)
@@ -200,14 +307,26 @@ class GUIFrontend(BaseFrontend):
         input_row.addLayout(button_column)
         input_container.addLayout(input_row)
         
-        main_layout.addLayout(input_container)
+        layout.addLayout(input_container)
+        
+        return chat_area
     
     def _apply_styles(self):
+        self._main_window.setStyleSheet("""
+            QFrame#sidebar {
+                background-color: #2c3e50;
+                border-right: 1px solid #1a252f;
+            }
+            QFrame#chatArea {
+                background-color: #fff;
+            }
+        """)
+        
         self._chat_display.setStyleSheet("""
             QTextBrowser {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 5px;
+                background-color: #f5f5f5;
+                border: 1px solid #ddd;
+                border-radius: 8px;
                 padding: 10px;
                 color: #333;
             }
@@ -215,55 +334,179 @@ class GUIFrontend(BaseFrontend):
         
         self._input_field.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                padding: 5px;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                padding: 8px;
                 background-color: #fff;
                 color: #333;
             }
             QTextEdit:focus {
-                border: 1px solid #1976D2;
+                border: 2px solid #3498db;
             }
         """)
         
         self._send_button.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3;
+                background-color: #3498db;
                 color: white;
                 border: none;
-                border-radius: 5px;
+                border-radius: 8px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #1976D2;
+                background-color: #2980b9;
             }
             QPushButton:disabled {
-                background-color: #bbb;
+                background-color: #bdc3c7;
             }
         """)
         
         self._clear_button.setStyleSheet("""
             QPushButton {
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 5px;
+                background-color: #ecf0f1;
+                border: 1px solid #bdc3c7;
+                border-radius: 8px;
+                color: #2c3e50;
             }
             QPushButton:hover {
-                background-color: #e0e0e0;
+                background-color: #bdc3c7;
             }
         """)
         
         self._mcp_button.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #27ae60;
                 color: white;
                 border: none;
-                border-radius: 5px;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #388E3C;
+                background-color: #219a52;
             }
         """)
+        
+        self._conversation_list.setStyleSheet("""
+            QListWidget {
+                border: none;
+                border-radius: 8px;
+                background-color: #34495e;
+                color: #ecf0f1;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                padding: 12px 8px;
+                border-bottom: 1px solid #2c3e50;
+                color: #ecf0f1;
+            }
+            QListWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            QListWidget::item:hover:!selected {
+                background-color: #3d566e;
+                color: #ecf0f1;
+            }
+        """)
+        
+        sidebar_title = self._main_window.findChild(QLabel, "sidebar_title")
+        
+        for btn in [self._new_conv_button, self._rename_conv_button, self._delete_conv_button]:
+            if btn:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #34495e;
+                        border: 1px solid #4a6278;
+                        border-radius: 5px;
+                        font-size: 14px;
+                        color: #ecf0f1;
+                    }
+                    QPushButton:hover {
+                        background-color: #4a6278;
+                    }
+                """)
+    
+    def _on_new_conv(self):
+        if self._is_streaming:
+            self.display_info("Please wait for the current response to finish")
+            return
+        
+        if self._on_new_conversation:
+            self._on_new_conversation()
+    
+    def _on_delete_conv(self):
+        if self._is_streaming:
+            self.display_info("Please wait for the current response to finish")
+            return
+        
+        if self._on_delete_conversation:
+            self._on_delete_conversation(self.conversation_id)
+    
+    def _on_rename_conv(self):
+        if self._on_rename_conversation:
+            self._on_rename_conversation(self.conversation_id)
+    
+    def _on_conversation_selected(self, item: QListWidgetItem):
+        if self._is_streaming:
+            self.display_info("Please wait for the current response to finish")
+            for i in range(self._conversation_list.count()):
+                list_item = self._conversation_list.item(i)
+                if list_item.data(Qt.ItemDataRole.UserRole) == self.conversation_id:
+                    list_item.setSelected(True)
+                    break
+            return
+        
+        conv_id = item.data(Qt.ItemDataRole.UserRole)
+        if conv_id and conv_id != self.conversation_id:
+            if self._on_switch_conversation:
+                self._on_switch_conversation(conv_id)
+    
+    def update_conversation_list(self, conversations: List[Dict[str, Any]]):
+        if self._conversation_list is None:
+            return
+        
+        self._conversation_list.clear()
+        
+        for conv in conversations:
+            item = QListWidgetItem()
+            title = conv.get("title") or conv.get("id", "Untitled")
+            item.setText(title)
+            item.setData(Qt.ItemDataRole.UserRole, conv.get("id"))
+            
+            if conv.get("id") == self.conversation_id:
+                item.setSelected(True)
+            
+            self._conversation_list.addItem(item)
+        
+        for i in range(self._conversation_list.count()):
+            list_item = self._conversation_list.item(i)
+            if list_item.data(Qt.ItemDataRole.UserRole) == self.conversation_id:
+                list_item.setSelected(True)
+                self._conversation_list.setCurrentItem(list_item)
+                break
+    
+    def _refresh_conversation_list(self):
+        if self._on_list_conversation:
+            self._on_list_conversation()
+    
+    def request_conversation_list_refresh(self):
+        if self._conv_list_signals:
+            self._conv_list_signals.conversations_updated.emit()
+    
+    def set_current_conversation(self, conversation_id: str, messages: List[Dict[str, Any]]):
+        self.conversation_id = conversation_id
+        self._messages = []
+        
+        for msg in messages:
+            self._messages.append({
+                "role": msg.get("role"),
+                "content": msg.get("content")
+            })
+        
+        self._refresh_chat_display()
+        self._refresh_conversation_list()
+    
+    def is_current_conversation_empty(self) -> bool:
+        return len(self._messages) == 0
     
     def _on_send(self):
         if self._input_field is None:
@@ -276,15 +519,28 @@ class GUIFrontend(BaseFrontend):
         self._input_field.clear()
         
         self._messages.append({"role": "user", "content": content})
+        
+        if self._storage:
+            self._storage.add_message(self.conversation_id, "user", content)
+            conv = self._storage.get_conversation(self.conversation_id)
+            if not conv or not conv.get("title"):
+                title = content[:30]
+                if len(content) > 30:
+                    title += "..."
+                self._storage.update_conversation(self.conversation_id, title=title)
+        
         self._display_user_message(content)
         
         self._set_input_state(False)
         
         self._current_stream_text = ""
         self._is_streaming = True
+        self._streaming_conversation_id = self.conversation_id
         self._stream_start_position = self._chat_display.textCursor().position()
         
         self._display_ai_prefix()
+        
+        current_conv_id = self.conversation_id
         
         def stream_response():
             try:
@@ -293,15 +549,17 @@ class GUIFrontend(BaseFrontend):
                 config = Config()
                 client = LLMClient(config)
                 
+                history = [{"role": m["role"], "content": m["content"]} for m in self._messages[:-1]]
+                
                 full_text = ""
-                for chunk in client.chat_stream(content, []):
+                for chunk in client.chat_stream(content, history):
                     full_text += chunk
                     self._stream_signals.text_received.emit(chunk)
                 
-                self._stream_signals.stream_finished.emit(full_text)
+                self._stream_signals.stream_finished.emit(current_conv_id, full_text)
                 
             except Exception as e:
-                self._stream_signals.error_occurred.emit(str(e))
+                self._stream_signals.error_occurred.emit(current_conv_id, str(e))
         
         self._worker_thread = threading.Thread(target=stream_response, daemon=True)
         self._worker_thread.start()
@@ -338,15 +596,28 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
     
-    def _on_stream_finished(self, full_text: str):
+    def _on_stream_finished(self, conv_id: str, full_text: str):
+        if conv_id != self.conversation_id:
+            return
+        
         self._is_streaming = False
+        self._streaming_conversation_id = None
         self._messages.append({"role": "assistant", "content": full_text})
+        
+        if self._storage:
+            self._storage.add_message(conv_id, "assistant", full_text)
         
         self._refresh_chat_display()
         self._set_input_state(True)
+        
+        self._refresh_conversation_list()
     
-    def _on_stream_error(self, error: str):
+    def _on_stream_error(self, conv_id: str, error: str):
+        if conv_id != self.conversation_id:
+            return
+        
         self._is_streaming = False
+        self._streaming_conversation_id = None
         self.display_error(error)
         self._set_input_state(True)
     
