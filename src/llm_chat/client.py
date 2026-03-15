@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional, Callable, Generator
 import requests
 from llm_chat.config import Config
 from llm_chat.protocols import get_protocol, ToolCall
-from llm_chat.tools import get_tool_registry
+from llm_chat.tools import get_tool_registry, ToolExecutor
 from llm_chat.skills import SkillManager
 from llm_chat.skills.web_search import WebSearchSkill
 from llm_chat.skills.calculator import CalculatorSkill
@@ -41,6 +41,13 @@ class LLMClient:
         self._tool_executor: Optional[Callable[[str, Dict[str, Any]], str]] = None
         self._tool_registry = get_tool_registry()
         self._skill_manager = SkillManager(self._tool_registry)
+        self._tool_executor_instance = ToolExecutor(
+            tool_registry=self._tool_registry,
+            max_workers=config.tools.max_workers,
+            max_retries=config.tools.max_retries,
+            retry_delay=config.tools.retry_delay,
+            timeout=config.tools.timeout
+        )
         self._setup_skills()
     
     def _setup_skills(self):
@@ -217,38 +224,22 @@ class LLMClient:
             }
             current_messages.append(assistant_message)
             
-            for tool_call in tool_calls:
-                tool_name = tool_call["function"]["name"]
-                tool_args = tool_call["function"]["arguments"]
+            self._tool_executor_instance.tool_executor = self._tool_executor
+            tool_results = self._tool_executor_instance.execute_tools_parallel(tool_calls)
+            
+            for result in tool_results:
+                tool_name = "unknown"
+                for tc in tool_calls:
+                    if tc["id"] == result["tool_call_id"]:
+                        tool_name = tc["function"]["name"]
+                        break
                 
-                logger.info(f"工具调用: {tool_name}, 参数: {tool_args[:100]}...")
-                
-                yield ("tool_call", tool_name, tool_args)
-                
-                if self._tool_registry.has_tool(tool_name):
-                    try:
-                        args = json.loads(tool_args)
-                        tool_result = self.execute_builtin_tool(tool_name, args)
-                        logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(tool_result)}")
-                    except Exception as e:
-                        tool_result = f"Error: {str(e)}"
-                        logger.error(f"工具 {tool_name} 执行失败: {e}")
-                elif self._tool_executor:
-                    try:
-                        args = json.loads(tool_args)
-                        tool_result = self._tool_executor(tool_name, args)
-                        logger.info(f"工具 {tool_name} 执行成功(外部执行器), 结果长度: {len(tool_result)}")
-                    except Exception as e:
-                        tool_result = f"Error: {str(e)}"
-                        logger.error(f"工具 {tool_name} 执行失败(外部执行器): {e}")
-                else:
-                    tool_result = f"Error: No tool executor for {tool_name}"
-                    logger.error(f"没有找到工具 {tool_name} 的执行器")
+                yield ("tool_call", tool_name, result.get("content", "")[:100])
                 
                 tool_message = {
                     "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": tool_result
+                    "tool_call_id": result["tool_call_id"],
+                    "content": result["content"]
                 }
                 current_messages.append(tool_message)
     

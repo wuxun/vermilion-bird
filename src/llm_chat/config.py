@@ -22,6 +22,17 @@ class LLMConfig(BaseSettings):
         case_sensitive = False
 
 
+class ToolsConfig(BaseSettings):
+    max_workers: int = Field(default=5, description="工具并行执行的最大工作线程数")
+    max_retries: int = Field(default=3, description="工具执行失败时的最大重试次数")
+    retry_delay: float = Field(default=1.0, description="重试间隔时间（秒）")
+    timeout: int = Field(default=30, description="单个工具执行超时时间（秒）")
+
+    class Config:
+        env_prefix = "TOOLS_"
+        case_sensitive = False
+
+
 class SkillConfig(BaseSettings):
     enabled: bool = Field(default=True, description="是否启用该 Skill")
     
@@ -57,6 +68,7 @@ class SkillsConfig(BaseSettings):
 class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills 配置")
     external_skill_dirs: List[str] = Field(default_factory=list, description="外部 Skill 目录列表")
