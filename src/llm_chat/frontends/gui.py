@@ -51,21 +51,21 @@ except ImportError:
 
 MARKDOWN_CSS = """
 <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    h1 { color: #1976D2; border-bottom: 2px solid #1976D2; padding-bottom: 5px; }
-    h2 { color: #1565C0; border-bottom: 1px solid #1565C0; padding-bottom: 5px; }
-    h3 { color: #0D47A1; }
-    code { background-color: #e8e8e8; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: #333; }
-    pre { background-color: #2d2d2d; padding: 10px; border-radius: 5px; overflow-x: auto; }
-    pre code { background-color: transparent; padding: 0; color: #f8f8f2; }
-    blockquote { border-left: 4px solid #4CAF50; margin-left: 0; padding-left: 15px; color: #555; }
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #3D2C2E; }
+    h1 { color: #B8312F; border-bottom: 2px solid #C84B31; padding-bottom: 5px; }
+    h2 { color: #C84B31; border-bottom: 1px solid #EC994B; padding-bottom: 5px; }
+    h3 { color: #D4652F; }
+    code { background-color: #FFF3E6; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: #8B4513; }
+    pre { background-color: #2D2D2D; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    pre code { background-color: transparent; padding: 0; color: #F5E6D3; }
+    blockquote { border-left: 4px solid #C84B31; margin-left: 0; padding-left: 15px; color: #6B4423; background-color: #FFF8F0; }
     ul, ol { padding-left: 20px; }
     li { margin: 5px 0; }
     table { border-collapse: collapse; width: 100%; margin: 10px 0; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    th { background-color: #e0e0e0; }
-    a { color: #1976D2; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    th, td { border: 1px solid #D4A574; padding: 8px; text-align: left; }
+    th { background-color: #F5E6D3; color: #6B4423; }
+    a { color: #B8312F; text-decoration: none; }
+    a:hover { text-decoration: underline; color: #C84B31; }
 </style>
 """
 
@@ -314,74 +314,74 @@ class GUIFrontend(BaseFrontend):
     def _apply_styles(self):
         self._main_window.setStyleSheet("""
             QFrame#sidebar {
-                background-color: #2c3e50;
-                border-right: 1px solid #1a252f;
+                background-color: #4A2C2A;
+                border-right: 1px solid #3D2422;
             }
             QFrame#chatArea {
-                background-color: #fff;
+                background-color: #FFFBF5;
             }
         """)
         
         self._chat_display.setStyleSheet("""
             QTextBrowser {
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
+                background-color: #FFF8F0;
+                border: 1px solid #E8D5C4;
                 border-radius: 8px;
                 padding: 10px;
-                color: #333;
+                color: #3D2C2E;
             }
         """)
         
         self._input_field.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #ddd;
+                border: 1px solid #D4A574;
                 border-radius: 8px;
                 padding: 8px;
-                background-color: #fff;
-                color: #333;
+                background-color: #FFFCF7;
+                color: #3D2C2E;
             }
             QTextEdit:focus {
-                border: 2px solid #3498db;
+                border: 2px solid #C84B31;
             }
         """)
         
         self._send_button.setStyleSheet("""
             QPushButton {
-                background-color: #3498db;
+                background-color: #C84B31;
                 color: white;
                 border: none;
                 border-radius: 8px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #2980b9;
+                background-color: #B8312F;
             }
             QPushButton:disabled {
-                background-color: #bdc3c7;
+                background-color: #D4A574;
             }
         """)
         
         self._clear_button.setStyleSheet("""
             QPushButton {
-                background-color: #ecf0f1;
-                border: 1px solid #bdc3c7;
+                background-color: #FFF3E6;
+                border: 1px solid #D4A574;
                 border-radius: 8px;
-                color: #2c3e50;
+                color: #6B4423;
             }
             QPushButton:hover {
-                background-color: #bdc3c7;
+                background-color: #F5E6D3;
             }
         """)
         
         self._mcp_button.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
+                background-color: #D4652F;
                 color: white;
                 border: none;
                 border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #219a52;
+                background-color: #C84B31;
             }
         """)
         
@@ -389,22 +389,22 @@ class GUIFrontend(BaseFrontend):
             QListWidget {
                 border: none;
                 border-radius: 8px;
-                background-color: #34495e;
-                color: #ecf0f1;
+                background-color: #5C3D3A;
+                color: #F5E6D3;
                 font-size: 12px;
             }
             QListWidget::item {
                 padding: 12px 8px;
-                border-bottom: 1px solid #2c3e50;
-                color: #ecf0f1;
+                border-bottom: 1px solid #4A2C2A;
+                color: #F5E6D3;
             }
             QListWidget::item:selected {
-                background-color: #3498db;
+                background-color: #C84B31;
                 color: white;
             }
             QListWidget::item:hover:!selected {
-                background-color: #3d566e;
-                color: #ecf0f1;
+                background-color: #6B4D4A;
+                color: #F5E6D3;
             }
         """)
         
@@ -414,14 +414,14 @@ class GUIFrontend(BaseFrontend):
             if btn:
                 btn.setStyleSheet("""
                     QPushButton {
-                        background-color: #34495e;
-                        border: 1px solid #4a6278;
+                        background-color: #5C3D3A;
+                        border: 1px solid #7A5A56;
                         border-radius: 5px;
                         font-size: 14px;
-                        color: #ecf0f1;
+                        color: #F5E6D3;
                     }
                     QPushButton:hover {
-                        background-color: #4a6278;
+                        background-color: #7A5A56;
                     }
                 """)
     
@@ -570,7 +570,7 @@ class GUIFrontend(BaseFrontend):
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml('<p style="color: #1565C0; font-weight: bold;">You:</p>')
+        cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
         cursor.insertText(f" {content}\n")
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
@@ -581,7 +581,7 @@ class GUIFrontend(BaseFrontend):
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml('<p style="color: #2E7D32; font-weight: bold;">AI:</p>')
+        cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
         self._chat_display.setTextCursor(cursor)
     
     def _on_stream_text(self, text: str):
@@ -632,13 +632,13 @@ class GUIFrontend(BaseFrontend):
             cursor.movePosition(QTextCursor.MoveOperation.End)
             
             if msg["role"] == "user":
-                cursor.insertHtml('<p style="color: #1565C0; font-weight: bold;">You:</p>')
+                cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
                 cursor.insertText(f" {msg['content']}\n")
             elif msg["role"] == "assistant":
-                cursor.insertHtml('<p style="color: #2E7D32; font-weight: bold;">AI:</p>')
+                cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
                 html_content = self._render_markdown(msg["content"])
                 cursor.insertHtml(f'<div>{html_content}</div>')
-                cursor.insertHtml('<hr style="border: none; border-top: 1px solid #ccc; margin: 10px 0;">')
+                cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
         
         self._chat_display.ensureCursorVisible()
     
@@ -696,13 +696,13 @@ class GUIFrontend(BaseFrontend):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         
         if message.role == "user":
-            cursor.insertHtml('<p style="color: #1565C0; font-weight: bold;">You:</p>')
+            cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
             cursor.insertText(f" {message.content}\n")
         elif message.role == "assistant":
-            cursor.insertHtml('<p style="color: #2E7D32; font-weight: bold;">AI:</p>')
+            cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
             html_content = self._render_markdown(message.content)
             cursor.insertHtml(f'<div>{html_content}</div>')
-            cursor.insertHtml('<hr style="border: none; border-top: 1px solid #ccc; margin: 10px 0;">')
+            cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
         
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
@@ -713,7 +713,7 @@ class GUIFrontend(BaseFrontend):
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml(f'<p style="color: #C62828;">Error: {error}</p>')
+        cursor.insertHtml(f'<p style="color: #8B0000;">Error: {error}</p>')
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
     
@@ -723,6 +723,6 @@ class GUIFrontend(BaseFrontend):
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml(f'<p style="color: #616161; font-style: italic;">[{info}]</p>')
+        cursor.insertHtml(f'<p style="color: #6B4423; font-style: italic;">[{info}]</p>')
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
