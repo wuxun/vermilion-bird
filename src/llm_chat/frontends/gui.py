@@ -72,95 +72,6 @@ MARKDOWN_CSS = """
 </style>
 """
 
-TOOL_CALL_CSS = """
-<style>
-    .tool-call-container {
-        margin: 8px 0;
-        border: 1px solid #9C27B0;
-        border-radius: 8px;
-        background-color: #F3E5F5;
-        overflow: hidden;
-    }
-    .tool-call-header {
-        display: flex;
-        align-items: center;
-        padding: 8px 12px;
-        background-color: #E1BEE7;
-        cursor: pointer;
-        user-select: none;
-    }
-    .tool-call-header:hover {
-        background-color: #CE93D8;
-    }
-    .tool-call-icon {
-        margin-right: 8px;
-        font-size: 14px;
-    }
-    .tool-call-title {
-        flex: 1;
-        font-weight: bold;
-        color: #7B1FA2;
-    }
-    .tool-call-toggle {
-        font-size: 12px;
-        color: #7B1FA2;
-    }
-    .tool-call-content {
-        padding: 10px 12px;
-        background-color: #FFFFFF;
-        display: block;
-        font-family: Consolas, monospace;
-        font-size: 12px;
-        color: #4A148C;
-        max-height: 200px;
-        overflow-y: auto;
-    }
-    .tool-call-content.collapsed {
-        display: none;
-    }
-    .tool-call-result {
-        margin-top: 8px;
-        padding: 8px;
-        background-color: #F5F5F5;
-        border-radius: 4px;
-        border-left: 3px solid #4CAF50;
-        font-family: Consolas, monospace;
-        font-size: 11px;
-        color: #333;
-        max-height: 100px;
-        overflow-y: auto;
-    }
-</style>
-"""
-
-TOOL_CALL_TEMPLATE = """
-<div class="tool-call-container" id="tool-call-{id}">
-    <div class="tool-call-header" onclick="toggleToolCall('{id}')">
-        <span class="tool-call-icon">🔧</span>
-        <span class="tool-call-title">调用工具: {tool_name}</span>
-        <span class="tool-call-toggle" id="toggle-{id}">{toggle_icon}</span>
-    </div>
-    <div class="tool-call-content" id="content-{id}">
-        <div>参数:</div>
-        <pre>{tool_args}</pre>
-        {result_html}
-    </div>
-</div>
-<script>
-function toggleToolCall(id) {{
-    var content = document.getElementById('content-' + id);
-    var toggle = document.getElementById('toggle-' + id);
-    if (content.style.display === 'none') {{
-        content.style.display = 'block';
-        toggle.textContent = '▼ 折叠';
-    }} else {{
-        content.style.display = 'none';
-        toggle.textContent = '▶ 展开';
-    }}
-}}
-</script>
-"""
-
 
 class InputTextEdit(QTextEdit):
     if PYQT_AVAILABLE:
@@ -831,12 +742,11 @@ class GUIFrontend(BaseFrontend):
     
     def _render_tool_call_expanded(self, tool_id: str, tool_name: str, tool_args: str) -> str:
         return f'''
-{TOOL_CALL_CSS}
 <div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
-    <div style="display: flex; align-items: center; padding: 8px 12px; background-color: #E1BEE7;">
-        <span style="margin-right: 8px; font-size: 14px;">🔧</span>
-        <span style="flex: 1; font-weight: bold; color: #7B1FA2;">调用工具: {tool_name}</span>
-        <span style="font-size: 12px; color: #7B1FA2;">▼ 执行中...</span>
+    <div style="padding: 8px 12px; background-color: #E1BEE7;">
+        <span style="margin-right: 8px;">🔧</span>
+        <span style="font-weight: bold; color: #7B1FA2;">调用工具: {tool_name}</span>
+        <span style="margin-left: 10px; font-size: 12px; color: #7B1FA2;">▼ 执行中...</span>
     </div>
     <div style="padding: 10px 12px; background-color: #FFFFFF;">
         <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
@@ -847,13 +757,10 @@ class GUIFrontend(BaseFrontend):
     
     def _render_tool_call_collapsed(self, tool_id: str, tool_name: str, tool_args: str, result: str) -> str:
         return f'''
-{TOOL_CALL_CSS}
 <div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
-    <details>
-        <summary style="display: flex; align-items: center; padding: 8px 12px; background-color: #E1BEE7; cursor: pointer; list-style: none;">
-            <span style="margin-right: 8px; font-size: 14px;">✅</span>
-            <span style="flex: 1; font-weight: bold; color: #7B1FA2;">工具调用: {tool_name}</span>
-            <span style="font-size: 12px; color: #7B1FA2;">点击展开详情</span>
+    <details style="margin: 0;">
+        <summary style="display: list-item; padding: 8px 12px; background-color: #E1BEE7; cursor: pointer; color: #7B1FA2; font-weight: bold; list-style: disclosure-closed inside;">
+            <span style="margin-right: 8px;">✅</span>工具调用: {tool_name}
         </summary>
         <div style="padding: 10px 12px; background-color: #FFFFFF;">
             <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
@@ -882,10 +789,9 @@ class GUIFrontend(BaseFrontend):
                 cursor.insertHtml('<p style="color: #B8312F; font-weight: bold;">You:</p>')
                 cursor.insertText(f" {msg['content']}\n")
             elif msg["role"] == "assistant":
-                cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
-                
                 tool_calls = msg.get("tool_calls", [])
                 if tool_calls:
+                    cursor.insertHtml('<div style="margin-bottom: 10px; padding: 5px 10px; background-color: #F3E5F5; border-left: 3px solid #9C27B0; border-radius: 4px;"><span style="color: #7B1FA2; font-weight: bold;">🔧 工具调用记录</span></div>')
                     for tc in tool_calls:
                         tc_id = tc.get("id", "")
                         tc_name = tc.get("name", "unknown")
@@ -893,7 +799,9 @@ class GUIFrontend(BaseFrontend):
                         tc_result = tc.get("result", "")
                         html = self._render_tool_call_collapsed(tc_id, tc_name, tc_args, tc_result)
                         cursor.insertHtml(html)
+                    cursor.insertHtml('<div style="margin: 10px 0;"></div>')
                 
+                cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
                 html_content = self._render_markdown(msg["content"])
                 cursor.insertHtml(f'<div>{html_content}</div>')
                 cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
