@@ -14,6 +14,8 @@ class LLMConfig(BaseSettings):
     timeout: int = Field(default=30, description="请求超时时间（秒）")
     max_retries: int = Field(default=3, description="最大重试次数")
     protocol: str = Field(default="openai", description="API 协议类型: openai, anthropic, gemini")
+    http_proxy: Optional[str] = Field(default=None, description="HTTP 代理地址，如 http://127.0.0.1:7890")
+    https_proxy: Optional[str] = Field(default=None, description="HTTPS 代理地址，如 http://127.0.0.1:7890")
 
     class Config:
         env_prefix = "LLM_"

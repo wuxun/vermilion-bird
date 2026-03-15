@@ -12,6 +12,15 @@ class LLMClient:
         self.config = config
         self.session = requests.Session()
         self.session.timeout = config.llm.timeout
+        
+        if config.llm.http_proxy or config.llm.https_proxy:
+            proxies = {}
+            if config.llm.http_proxy:
+                proxies["http"] = config.llm.http_proxy
+            if config.llm.https_proxy:
+                proxies["https"] = config.llm.https_proxy
+            self.session.proxies = proxies
+        
         self.protocol = get_protocol(
             protocol=config.llm.protocol,
             base_url=config.llm.base_url,
@@ -30,7 +39,9 @@ class LLMClient:
         if builtin_config.web_search.enabled:
             search_tool = WebSearchTool(
                 engine=builtin_config.web_search.engine,
-                api_key=builtin_config.web_search.api_key
+                api_key=builtin_config.web_search.api_key,
+                http_proxy=self.config.llm.http_proxy,
+                https_proxy=self.config.llm.https_proxy
             )
             self._tool_registry.register(search_tool)
         

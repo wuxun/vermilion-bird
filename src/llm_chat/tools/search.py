@@ -36,9 +36,25 @@ class WebSearchTool(BaseTool):
             "required": ["query"]
         }
     
-    def __init__(self, engine: str = "duckduckgo", api_key: Optional[str] = None):
+    def __init__(
+        self, 
+        engine: str = "duckduckgo", 
+        api_key: Optional[str] = None,
+        http_proxy: Optional[str] = None,
+        https_proxy: Optional[str] = None
+    ):
         self.engine = engine
         self.api_key = api_key
+        self.http_proxy = http_proxy
+        self.https_proxy = https_proxy
+    
+    def _get_proxies(self) -> Optional[Dict[str, str]]:
+        proxies = {}
+        if self.http_proxy:
+            proxies["http"] = self.http_proxy
+        if self.https_proxy:
+            proxies["https"] = self.https_proxy
+        return proxies if proxies else None
     
     def execute(self, query: str, num_results: int = 5) -> str:
         if self.engine == "duckduckgo":
@@ -54,7 +70,9 @@ class WebSearchTool(BaseTool):
         
         try:
             results = []
-            with DDGS() as ddgs:
+            proxies = self._get_proxies()
+            
+            with DDGS(proxies=proxies) as ddgs:
                 search_results = list(ddgs.text(query, max_results=num_results))
             
             if not search_results:
@@ -89,7 +107,8 @@ class WebSearchTool(BaseTool):
                 "count": num_results
             }
             
-            response = requests.get(url, headers=headers, params=params)
+            proxies = self._get_proxies()
+            response = requests.get(url, headers=headers, params=params, proxies=proxies)
             response.raise_for_status()
             data = response.json()
             
