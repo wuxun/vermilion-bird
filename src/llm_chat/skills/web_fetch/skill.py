@@ -184,12 +184,13 @@ class WebFetchTool(BaseTool):
             logger.info(f"尝试 Playwright: {url}")
             
             with sync_playwright() as p:
-                browser_args = {}
+                launch_options = {"headless": True}
+                
                 if self.http_proxy or self.https_proxy:
                     proxy_server = self.https_proxy or self.http_proxy
-                    browser_args["proxy"] = {"server": proxy_server}
+                    launch_options["proxy"] = {"server": proxy_server}
                 
-                browser = p.chromium.launch(headless=True, args=browser_args if browser_args else None)
+                browser = p.chromium.launch(**launch_options)
                 
                 context_args = {
                     "user_agent": self._get_random_user_agent(),
