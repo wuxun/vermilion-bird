@@ -58,6 +58,13 @@ class WebSearchTool(BaseTool):
         self.http_proxy = http_proxy
         self.https_proxy = https_proxy
     
+    def _get_proxy_string(self) -> Optional[str]:
+        if self.https_proxy:
+            return self.https_proxy
+        if self.http_proxy:
+            return self.http_proxy
+        return None
+    
     def _get_proxies(self) -> Optional[Dict[str, str]]:
         proxies = {}
         if self.http_proxy:
@@ -81,15 +88,16 @@ class WebSearchTool(BaseTool):
         
         try:
             results = []
-            proxies = self._get_proxies()
+            proxy = self._get_proxy_string()
             
             logger.info(f"开始 DuckDuckGo 搜索: query={query}, num_results={num_results}")
-            logger.info(f"代理配置: proxies={proxies}")
+            logger.info(f"代理配置: proxy={proxy}")
             
             if USING_DDGS:
-                ddgs = DDGS()
+                ddgs = DDGS(proxy=proxy)
                 search_results = list(ddgs.text(query, max_results=num_results))
             else:
+                proxies = self._get_proxies()
                 with DDGS(proxies=proxies) as ddgs:
                     search_results = list(ddgs.text(query, max_results=num_results))
             
