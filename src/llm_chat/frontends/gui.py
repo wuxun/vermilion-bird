@@ -21,7 +21,7 @@ try:
         QAbstractItemView, QScrollArea, QSizePolicy
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
-    from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
+    from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
@@ -50,6 +50,8 @@ except ImportError:
     QFont = None
     QTextCursor = None
     QKeyEvent = None
+    QIcon = None
+    QPixmap = None
     pyqtSignal = None
     QObject = None
 
@@ -335,6 +337,8 @@ class GUIFrontend(BaseFrontend):
         self._main_window.setWindowTitle(self.title)
         self._main_window.setMinimumSize(QSize(1000, 600))
         
+        self._set_window_icon()
+        
         central_widget = QWidget()
         self._main_window.setCentralWidget(central_widget)
         
@@ -350,6 +354,26 @@ class GUIFrontend(BaseFrontend):
         
         self._main_window.show()
         sys.exit(self._app.exec())
+    
+    def _set_window_icon(self):
+        import os
+        icon_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "vermilion_bird_small.png"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "vermilion_bird_small.png"),
+        ]
+        
+        for icon_path in icon_paths:
+            if os.path.exists(icon_path):
+                pixmap = QPixmap(icon_path)
+                if not pixmap.isNull():
+                    icon = QIcon(pixmap)
+                    self._main_window.setWindowIcon(icon)
+                    if self._app:
+                        self._app.setWindowIcon(icon)
+                    logger.info(f"应用图标已设置: {icon_path}")
+                    return
+        
+        logger.warning("未找到应用图标文件")
     
     def _setup_ui(self, parent: QWidget):
         main_layout = QHBoxLayout(parent)
