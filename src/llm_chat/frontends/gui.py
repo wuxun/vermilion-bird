@@ -77,7 +77,7 @@ class InputTextEdit(QTextEdit):
 class StreamSignals(QObject):
     if PYQT_AVAILABLE:
         text_received = pyqtSignal(str)
-        stream_finished = pyqtSignal()
+        stream_finished = pyqtSignal(str)
         error_occurred = pyqtSignal(str)
 
 
@@ -105,6 +105,9 @@ class GUIFrontend(BaseFrontend):
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
         self._current_stream_text: str = ""
+        self._stream_start_position: int = 0
+        self._messages: list = []
+        self._is_streaming: bool = False
     
     def start(self):
         self._app = QApplication(sys.argv)
@@ -272,42 +275,47 @@ class GUIFrontend(BaseFrontend):
         
         self._input_field.clear()
         
-        message = Message(
-            content=content,
-            role="user",
-            msg_type=MessageType.TEXT
-        )
+        self._messages.append({"role": "user", "content": content})
+        self._display_user_message(content)
         
-        self.display_message(message)
         self._set_input_state(False)
         
         self._current_stream_text = ""
+        self._is_streaming = True
+        self._stream_start_position = self._chat_display.textCursor().position()
+        
         self._display_ai_prefix()
         
         def stream_response():
             try:
-                from llm_chat.app import App
-                if hasattr(self, '_app_instance') and self._app_instance:
-                    app = self._app_instance
-                else:
-                    from llm_chat.config import Config
-                    from llm_chat.client import LLMClient
-                    config = Config()
-                    client = LLMClient(config)
+                from llm_chat.config import Config
+                from llm_chat.client import LLMClient
+                config = Config()
+                client = LLMClient(config)
                 
-                history = []
-                
-                for chunk in client.chat_stream(content, history):
-                    self._current_stream_text += chunk
+                full_text = ""
+                for chunk in client.chat_stream(content, []):
+                    full_text += chunk
                     self._stream_signals.text_received.emit(chunk)
                 
-                self._stream_signals.stream_finished.emit()
+                self._stream_signals.stream_finished.emit(full_text)
                 
             except Exception as e:
                 self._stream_signals.error_occurred.emit(str(e))
         
         self._worker_thread = threading.Thread(target=stream_response, daemon=True)
         self._worker_thread.start()
+    
+    def _display_user_message(self, content: str):
+        if self._chat_display is None:
+            return
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml('<p style="color: #1565C0; font-weight: bold;">You:</p>')
+        cursor.insertText(f" {content}\n")
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
     
     def _display_ai_prefix(self):
         if self._chat_display is None:
@@ -319,8 +327,10 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setTextCursor(cursor)
     
     def _on_stream_text(self, text: str):
-        if self._chat_display is None:
+        if self._chat_display is None or not self._is_streaming:
             return
+        
+        self._current_stream_text += text
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -328,25 +338,44 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
     
-    def _on_stream_finished(self):
-        if self._chat_display is None:
-            return
+    def _on_stream_finished(self, full_text: str):
+        self._is_streaming = False
+        self._messages.append({"role": "assistant", "content": full_text})
         
-        cursor = self._chat_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText("\n")
-        cursor.insertHtml('<hr style="border: none; border-top: 1px solid #ccc; margin: 10px 0;">')
-        self._chat_display.setTextCursor(cursor)
-        
+        self._refresh_chat_display()
         self._set_input_state(True)
     
     def _on_stream_error(self, error: str):
+        self._is_streaming = False
         self.display_error(error)
         self._set_input_state(True)
+    
+    def _refresh_chat_display(self):
+        if self._chat_display is None:
+            return
+        
+        self._chat_display.clear()
+        
+        for msg in self._messages:
+            cursor = self._chat_display.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            
+            if msg["role"] == "user":
+                cursor.insertHtml('<p style="color: #1565C0; font-weight: bold;">You:</p>')
+                cursor.insertText(f" {msg['content']}\n")
+            elif msg["role"] == "assistant":
+                cursor.insertHtml('<p style="color: #2E7D32; font-weight: bold;">AI:</p>')
+                html_content = self._render_markdown(msg["content"])
+                cursor.insertHtml(f'<div>{html_content}</div>')
+                cursor.insertHtml('<hr style="border: none; border-top: 1px solid #ccc; margin: 10px 0;">')
+        
+        self._chat_display.ensureCursorVisible()
     
     def _on_clear(self):
         ctx = ConversationContext(conversation_id=self.conversation_id)
         self._handle_clear(ctx)
+        
+        self._messages = []
         
         if self._chat_display:
             self._chat_display.clear()
