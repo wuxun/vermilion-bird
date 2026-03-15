@@ -551,6 +551,8 @@ class GUIFrontend(BaseFrontend):
             try:
                 from llm_chat.config import Config
                 from llm_chat.client import LLMClient
+                config = Config()
+                client = LLMClient(config)
                 
                 history = [{"role": m["role"], "content": m["content"]} for m in self._messages[:-1]]
                 
