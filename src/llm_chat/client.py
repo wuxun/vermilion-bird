@@ -97,14 +97,20 @@ class LLMClient:
     def execute_builtin_tool(self, name: str, arguments: Dict[str, Any]) -> str:
         return self._tool_registry.execute_tool(name, **arguments)
     
-    def chat(self, message: str, history: Optional[List[Dict[str, str]]] = None, **kwargs) -> str:
+    def chat(self, message: str, history: Optional[List[Dict[str, str]]] = None, system_context: Optional[str] = None, **kwargs) -> str:
         if history is None:
             history = []
         
-        messages = history.copy()
+        messages = []
+        
+        if system_context:
+            messages.append({"role": "system", "content": system_context})
+            logger.debug(f"添加系统上下文: {len(system_context)} 字符")
+        
+        messages.extend(history)
         messages.append({"role": "user", "content": message})
         
-        logger.info(f"发送聊天请求: message_length={len(message)}, history_count={len(history)}")
+        logger.info(f"发送聊天请求: message_length={len(message)}, history_count={len(history)}, has_system_context={system_context is not None}")
         
         return self._send_chat_request(messages, **kwargs)
     
@@ -112,15 +118,22 @@ class LLMClient:
         self, 
         message: str, 
         history: Optional[List[Dict[str, str]]] = None, 
+        system_context: Optional[str] = None,
         **kwargs
     ) -> Generator[str, None, None]:
         if history is None:
             history = []
         
-        messages = history.copy()
+        messages = []
+        
+        if system_context:
+            messages.append({"role": "system", "content": system_context})
+            logger.debug(f"添加系统上下文: {len(system_context)} 字符")
+        
+        messages.extend(history)
         messages.append({"role": "user", "content": message})
         
-        logger.info(f"发送流式聊天请求: message_length={len(message)}, history_count={len(history)}")
+        logger.info(f"发送流式聊天请求: message_length={len(message)}, history_count={len(history)}, has_system_context={system_context is not None}")
         
         yield from self._send_chat_request_stream(messages, **kwargs)
     

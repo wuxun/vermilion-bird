@@ -13,11 +13,40 @@ class App:
         self.config = config or Config()
         self.client = LLMClient(self.config)
         self.storage = Storage()
-        self.conversation_manager = ConversationManager(self.client, self.storage)
+        
+        memory_config = self._build_memory_config()
+        
+        self.conversation_manager = ConversationManager(
+            self.client, 
+            self.storage,
+            memory_config=memory_config
+        )
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
+    
+    def _build_memory_config(self) -> Dict[str, Any]:
+        """构建记忆配置"""
+        if not self.config.memory.enabled:
+            return {"enabled": False}
+        
+        return {
+            "enabled": True,
+            "storage_dir": self.config.memory.storage_dir,
+            "short_term": {
+                "max_items": self.config.memory.short_term.max_items
+            },
+            "mid_term": {
+                "max_days": self.config.memory.mid_term.max_days,
+                "compress_after_days": self.config.memory.mid_term.compress_after_days
+            },
+            "long_term": {
+                "auto_evolve": self.config.memory.long_term.auto_evolve,
+                "evolve_interval_days": self.config.memory.long_term.evolve_interval_days
+            },
+            "exclude_patterns": self.config.memory.exclude_patterns
+        }
     
     def get_skill_manager(self) -> SkillManager:
         return self.client.get_skill_manager()

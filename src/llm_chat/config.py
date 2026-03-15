@@ -33,6 +33,48 @@ class ToolsConfig(BaseSettings):
         case_sensitive = False
 
 
+class ShortTermMemoryConfig(BaseSettings):
+    max_items: int = Field(default=10, description="短期记忆最大条目数")
+
+    class Config:
+        env_prefix = "MEMORY_SHORT_TERM_"
+        case_sensitive = False
+
+
+class MidTermMemoryConfig(BaseSettings):
+    max_days: int = Field(default=30, description="中期记忆保留天数")
+    compress_after_days: int = Field(default=7, description="多少天后压缩记忆")
+
+    class Config:
+        env_prefix = "MEMORY_MID_TERM_"
+        case_sensitive = False
+
+
+class LongTermMemoryConfig(BaseSettings):
+    auto_evolve: bool = Field(default=True, description="是否自动进化记忆")
+    evolve_interval_days: int = Field(default=7, description="记忆进化间隔天数")
+
+    class Config:
+        env_prefix = "MEMORY_LONG_TERM_"
+        case_sensitive = False
+
+
+class MemoryConfig(BaseSettings):
+    enabled: bool = Field(default=True, description="是否启用记忆系统")
+    storage_dir: str = Field(default="~/.vermilion-bird/memory", description="记忆存储目录")
+    short_term: ShortTermMemoryConfig = Field(default_factory=ShortTermMemoryConfig)
+    mid_term: MidTermMemoryConfig = Field(default_factory=MidTermMemoryConfig)
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
+    exclude_patterns: List[str] = Field(
+        default_factory=lambda: ["密码", "password", "token", "api_key", "secret"],
+        description="敏感词过滤模式"
+    )
+
+    class Config:
+        env_prefix = "MEMORY_"
+        case_sensitive = False
+
+
 class SkillConfig(BaseSettings):
     enabled: bool = Field(default=True, description="是否启用该 Skill")
     
@@ -69,6 +111,7 @@ class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills 配置")
     external_skill_dirs: List[str] = Field(default_factory=list, description="外部 Skill 目录列表")
@@ -99,14 +142,36 @@ class Config(BaseSettings):
             
             external_skill_dirs = config_data.get("external_skill_dirs", [])
             
+            memory_data = config_data.get("memory", {})
+            memory_config = cls._parse_memory(memory_data)
+            
             return cls(
                 llm=llm_config,
                 mcp=mcp_config,
                 enable_tools=enable_tools,
                 skills=skills_config,
-                external_skill_dirs=external_skill_dirs
+                external_skill_dirs=external_skill_dirs,
+                memory=memory_config
             )
         return cls()
+    
+    @classmethod
+    def _parse_memory(cls, data: Dict[str, Any]) -> MemoryConfig:
+        if not data:
+            return MemoryConfig()
+        
+        short_term_data = data.get("short_term", {})
+        mid_term_data = data.get("mid_term", {})
+        long_term_data = data.get("long_term", {})
+        
+        return MemoryConfig(
+            enabled=data.get("enabled", True),
+            storage_dir=data.get("storage_dir", "~/.vermilion-bird/memory"),
+            short_term=ShortTermMemoryConfig(**short_term_data),
+            mid_term=MidTermMemoryConfig(**mid_term_data),
+            long_term=LongTermMemoryConfig(**long_term_data),
+            exclude_patterns=data.get("exclude_patterns", ["密码", "password", "token", "api_key", "secret"])
+        )
     
     @classmethod
     def _parse_skills(cls, data: Dict[str, Any]) -> SkillsConfig:
@@ -138,7 +203,15 @@ class Config(BaseSettings):
             "mcp": self.mcp.to_dict(),
             "enable_tools": self.enable_tools,
             "skills": skills_dict,
-            "external_skill_dirs": self.external_skill_dirs
+            "external_skill_dirs": self.external_skill_dirs,
+            "memory": {
+                "enabled": self.memory.enabled,
+                "storage_dir": self.memory.storage_dir,
+                "short_term": self.memory.short_term.model_dump(),
+                "mid_term": self.memory.mid_term.model_dump(),
+                "long_term": self.memory.long_term.model_dump(),
+                "exclude_patterns": self.memory.exclude_patterns
+            }
         }
         
         with open(config_path, "w", encoding="utf-8") as f:
