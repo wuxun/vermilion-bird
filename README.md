@@ -302,7 +302,8 @@ src/llm_chat/
 ├── cli.py              # 命令行接口
 ├── client.py           # 大模型客户端
 ├── config.py           # 配置管理
-├── conversation.py     # 对话管理
+├── conversation.py     # 会话管理
+├── storage.py          # SQLite 存储管理
 ├── app.py              # 应用核心
 ├── protocols/          # 协议适配器
 │   ├── __init__.py
@@ -377,6 +378,52 @@ class CustomProtocol(BaseProtocol):
     
     # ... 其他方法
 ```
+
+## 会话管理
+
+### 存储方式
+
+Vermilion Bird 使用 SQLite 数据库存储会话和消息，数据保存在 `.vb/vermilion_bird.db`。
+
+### 数据库结构
+
+- **conversations** - 会话表（ID、标题、创建时间、更新时间）
+- **messages** - 消息表（会话ID、角色、内容、时间）
+- **messages_fts** - 全文搜索索引
+
+### Python API
+
+```python
+from llm_chat.storage import Storage
+
+storage = Storage()
+
+# 创建会话
+storage.create_conversation("conv_123", title="我的会话")
+
+# 添加消息
+storage.add_message("conv_123", "user", "你好")
+storage.add_message("conv_123", "assistant", "你好，有什么可以帮你的？")
+
+# 获取消息
+messages = storage.get_messages("conv_123")
+
+# 搜索消息
+results = storage.search_messages("关键词")
+
+# 列出所有会话
+conversations = storage.list_conversations()
+
+# 更新会话标题
+storage.update_conversation("conv_123", title="新标题")
+
+# 删除会话
+storage.delete_conversation("conv_123")
+```
+
+### 自动迁移
+
+启动时会自动检测旧版 JSON 文件（`.vb/history/` 目录），并迁移到 SQLite 数据库。
 
 ## 测试
 
