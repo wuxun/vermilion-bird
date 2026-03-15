@@ -9,6 +9,7 @@ from llm_chat.tools import get_tool_registry
 from llm_chat.skills import SkillManager
 from llm_chat.skills.web_search import WebSearchSkill
 from llm_chat.skills.calculator import CalculatorSkill
+from llm_chat.skills.web_fetch import WebFetchSkill
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class LLMClient:
     def _setup_skills(self):
         self._skill_manager.register_skill_class(WebSearchSkill)
         self._skill_manager.register_skill_class(CalculatorSkill)
+        self._skill_manager.register_skill_class(WebFetchSkill)
         
         if self.config.external_skill_dirs:
             self._skill_manager.discover_skills(self.config.external_skill_dirs)
@@ -59,6 +61,15 @@ class LLMClient:
                 web_search_config["https_proxy"] = self.config.llm.https_proxy
             if "timeout" not in web_search_config:
                 web_search_config["timeout"] = self.config.llm.timeout
+        
+        if "web_fetch" in skill_configs:
+            web_fetch_config = skill_configs["web_fetch"]
+            if "http_proxy" not in web_fetch_config:
+                web_fetch_config["http_proxy"] = self.config.llm.http_proxy
+            if "https_proxy" not in web_fetch_config:
+                web_fetch_config["https_proxy"] = self.config.llm.https_proxy
+            if "timeout" not in web_fetch_config:
+                web_fetch_config["timeout"] = self.config.llm.timeout
         
         self._skill_manager.load_from_config(skill_configs)
         

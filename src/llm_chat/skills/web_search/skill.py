@@ -41,8 +41,8 @@ class WebSearchTool(BaseTool):
                 },
                 "num_results": {
                     "type": "integer",
-                    "description": "返回结果数量，默认为5",
-                    "default": 5
+                    "description": "返回结果数量，默认为10，最大20",
+                    "default": 10
                 },
                 "region": {
                     "type": "string",
