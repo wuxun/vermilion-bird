@@ -72,6 +72,95 @@ MARKDOWN_CSS = """
 </style>
 """
 
+TOOL_CALL_CSS = """
+<style>
+    .tool-call-container {
+        margin: 8px 0;
+        border: 1px solid #9C27B0;
+        border-radius: 8px;
+        background-color: #F3E5F5;
+        overflow: hidden;
+    }
+    .tool-call-header {
+        display: flex;
+        align-items: center;
+        padding: 8px 12px;
+        background-color: #E1BEE7;
+        cursor: pointer;
+        user-select: none;
+    }
+    .tool-call-header:hover {
+        background-color: #CE93D8;
+    }
+    .tool-call-icon {
+        margin-right: 8px;
+        font-size: 14px;
+    }
+    .tool-call-title {
+        flex: 1;
+        font-weight: bold;
+        color: #7B1FA2;
+    }
+    .tool-call-toggle {
+        font-size: 12px;
+        color: #7B1FA2;
+    }
+    .tool-call-content {
+        padding: 10px 12px;
+        background-color: #FFFFFF;
+        display: block;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        color: #4A148C;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    .tool-call-content.collapsed {
+        display: none;
+    }
+    .tool-call-result {
+        margin-top: 8px;
+        padding: 8px;
+        background-color: #F5F5F5;
+        border-radius: 4px;
+        border-left: 3px solid #4CAF50;
+        font-family: Consolas, monospace;
+        font-size: 11px;
+        color: #333;
+        max-height: 100px;
+        overflow-y: auto;
+    }
+</style>
+"""
+
+TOOL_CALL_TEMPLATE = """
+<div class="tool-call-container" id="tool-call-{id}">
+    <div class="tool-call-header" onclick="toggleToolCall('{id}')">
+        <span class="tool-call-icon">🔧</span>
+        <span class="tool-call-title">调用工具: {tool_name}</span>
+        <span class="tool-call-toggle" id="toggle-{id}">{toggle_icon}</span>
+    </div>
+    <div class="tool-call-content" id="content-{id}">
+        <div>参数:</div>
+        <pre>{tool_args}</pre>
+        {result_html}
+    </div>
+</div>
+<script>
+function toggleToolCall(id) {{
+    var content = document.getElementById('content-' + id);
+    var toggle = document.getElementById('toggle-' + id);
+    if (content.style.display === 'none') {{
+        content.style.display = 'block';
+        toggle.textContent = '▼ 折叠';
+    }} else {{
+        content.style.display = 'none';
+        toggle.textContent = '▶ 展开';
+    }}
+}}
+</script>
+"""
+
 
 class InputTextEdit(QTextEdit):
     if PYQT_AVAILABLE:
@@ -91,7 +180,8 @@ class StreamSignals(QObject):
         text_received = pyqtSignal(str)
         stream_finished = pyqtSignal(str, str)
         error_occurred = pyqtSignal(str, str)
-        tool_call_received = pyqtSignal(str, str)
+        tool_call_started = pyqtSignal(str, str)
+        tool_call_finished = pyqtSignal(str, str, str)
 
 
 class ConversationListSignals(QObject):
@@ -126,6 +216,7 @@ class GUIFrontend(BaseFrontend):
         self._current_stream_text: str = ""
         self._stream_start_position: int = 0
         self._messages: list = []
+        self._current_tool_calls: list = []
         self._is_streaming: bool = False
         self._streaming_conversation_id: Optional[str] = None
         self._storage: Optional[Any] = None
@@ -168,7 +259,8 @@ class GUIFrontend(BaseFrontend):
         self._stream_signals.text_received.connect(self._on_stream_text)
         self._stream_signals.stream_finished.connect(self._on_stream_finished)
         self._stream_signals.error_occurred.connect(self._on_stream_error)
-        self._stream_signals.tool_call_received.connect(self._on_tool_call)
+        self._stream_signals.tool_call_started.connect(self._on_tool_call_started)
+        self._stream_signals.tool_call_finished.connect(self._on_tool_call_finished)
         
         self._conv_list_signals = ConversationListSignals()
         self._conv_list_signals.conversations_updated.connect(self._refresh_conversation_list)
@@ -569,6 +661,7 @@ class GUIFrontend(BaseFrontend):
         self._set_input_state(False)
         
         self._current_stream_text = ""
+        self._current_tool_calls = []
         self._is_streaming = True
         self._streaming_conversation_id = self.conversation_id
         self._stream_start_position = self._chat_display.textCursor().position()
@@ -595,9 +688,12 @@ class GUIFrontend(BaseFrontend):
                     
                     full_text = ""
                     for chunk in client.chat_stream_with_tools(content, tools, history):
-                        if isinstance(chunk, tuple) and chunk[0] == "tool_call":
+                        if isinstance(chunk, tuple) and chunk[0] == "tool_call_start":
                             _, tool_name, tool_args = chunk
-                            self._stream_signals.tool_call_received.emit(tool_name, tool_args)
+                            self._stream_signals.tool_call_started.emit(tool_name, tool_args)
+                        elif isinstance(chunk, tuple) and chunk[0] == "tool_call_end":
+                            _, tool_name, tool_args, result = chunk
+                            self._stream_signals.tool_call_finished.emit(tool_name, tool_args, result)
                         elif isinstance(chunk, str):
                             full_text += chunk
                             self._stream_signals.text_received.emit(chunk)
@@ -655,7 +751,15 @@ class GUIFrontend(BaseFrontend):
         
         self._is_streaming = False
         self._streaming_conversation_id = None
-        self._messages.append({"role": "assistant", "content": full_text})
+        
+        tool_calls_data = self._current_tool_calls.copy()
+        self._messages.append({
+            "role": "assistant", 
+            "content": full_text,
+            "tool_calls": tool_calls_data
+        })
+        
+        self._current_tool_calls = []
         
         self._update_context_status()
         
@@ -676,27 +780,93 @@ class GUIFrontend(BaseFrontend):
         self.display_error(error)
         self._set_input_state(True)
     
-    def _on_tool_call(self, tool_name: str, tool_args: str):
+    def _on_tool_call_started(self, tool_name: str, tool_args: str):
         if self._chat_display is None:
             return
+        
+        import uuid
+        tool_id = str(uuid.uuid4())[:8]
+        
+        import json
+        try:
+            args_dict = json.loads(tool_args)
+            args_formatted = json.dumps(args_dict, indent=2, ensure_ascii=False)
+        except:
+            args_formatted = tool_args
+        
+        tool_call_info = {
+            "id": tool_id,
+            "name": tool_name,
+            "args": args_formatted,
+            "result": None
+        }
+        self._current_tool_calls.append(tool_call_info)
         
         cursor = self._chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         
-        tool_info = f"🔧 调用工具: {tool_name}"
-        if tool_args:
-            try:
-                import json
-                args_dict = json.loads(tool_args)
-                if args_dict:
-                    args_str = ", ".join(f"{k}={v}" for k, v in args_dict.items())
-                    tool_info += f" ({args_str})"
-            except:
-                tool_info += f" ({tool_args})"
-        
-        cursor.insertHtml(f'<p style="color: #9C27B0; background-color: #F3E5F5; padding: 5px; border-radius: 3px; font-style: italic;">{tool_info}</p>')
+        html = self._render_tool_call_expanded(tool_id, tool_name, args_formatted)
+        cursor.insertHtml(html)
         self._chat_display.setTextCursor(cursor)
         self._chat_display.ensureCursorVisible()
+        logger.info(f"工具调用开始: {tool_name}, args={args_formatted[:100]}")
+    
+    def _on_tool_call_finished(self, tool_name: str, tool_args: str, result: str):
+        if self._chat_display is None:
+            return
+        
+        for tc in self._current_tool_calls:
+            if tc["name"] == tool_name and tc["result"] is None:
+                tc["result"] = result
+                break
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        
+        result_html = f'<div style="margin-top: 5px; padding: 8px; background-color: #E8F5E9; border-radius: 4px; border-left: 3px solid #4CAF50; font-family: Consolas, monospace; font-size: 11px; color: #2E7D32;"><b>结果:</b><br><pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word;">{self._escape_html(result)}</pre></div>'
+        cursor.insertHtml(result_html)
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
+        logger.info(f"工具调用完成: {tool_name}, result_length={len(result)}")
+    
+    def _render_tool_call_expanded(self, tool_id: str, tool_name: str, tool_args: str) -> str:
+        return f'''
+{TOOL_CALL_CSS}
+<div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
+    <div style="display: flex; align-items: center; padding: 8px 12px; background-color: #E1BEE7;">
+        <span style="margin-right: 8px; font-size: 14px;">🔧</span>
+        <span style="flex: 1; font-weight: bold; color: #7B1FA2;">调用工具: {tool_name}</span>
+        <span style="font-size: 12px; color: #7B1FA2;">▼ 执行中...</span>
+    </div>
+    <div style="padding: 10px 12px; background-color: #FFFFFF;">
+        <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
+        <pre style="margin: 0; padding: 8px; background-color: #F5F5F5; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; color: #4A148C; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(tool_args)}</pre>
+    </div>
+</div>
+'''
+    
+    def _render_tool_call_collapsed(self, tool_id: str, tool_name: str, tool_args: str, result: str) -> str:
+        return f'''
+{TOOL_CALL_CSS}
+<div style="margin: 8px 0; border: 1px solid #9C27B0; border-radius: 8px; background-color: #F3E5F5; overflow: hidden;">
+    <details>
+        <summary style="display: flex; align-items: center; padding: 8px 12px; background-color: #E1BEE7; cursor: pointer; list-style: none;">
+            <span style="margin-right: 8px; font-size: 14px;">✅</span>
+            <span style="flex: 1; font-weight: bold; color: #7B1FA2;">工具调用: {tool_name}</span>
+            <span style="font-size: 12px; color: #7B1FA2;">点击展开详情</span>
+        </summary>
+        <div style="padding: 10px 12px; background-color: #FFFFFF;">
+            <div style="color: #7B1FA2; font-weight: bold; margin-bottom: 5px;">参数:</div>
+            <pre style="margin: 0 0 10px 0; padding: 8px; background-color: #F5F5F5; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; color: #4A148C; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(tool_args)}</pre>
+            <div style="color: #2E7D32; font-weight: bold; margin-bottom: 5px;">结果:</div>
+            <pre style="margin: 0; padding: 8px; background-color: #E8F5E9; border-radius: 4px; border-left: 3px solid #4CAF50; font-family: Consolas, monospace; font-size: 11px; color: #2E7D32; white-space: pre-wrap; word-wrap: break-word; max-height: 150px; overflow-y: auto;">{self._escape_html(result)}</pre>
+        </div>
+    </details>
+</div>
+'''
+    
+    def _escape_html(self, text: str) -> str:
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#39;')
     
     def _refresh_chat_display(self):
         if self._chat_display is None:
@@ -713,6 +883,17 @@ class GUIFrontend(BaseFrontend):
                 cursor.insertText(f" {msg['content']}\n")
             elif msg["role"] == "assistant":
                 cursor.insertHtml('<p style="color: #D4652F; font-weight: bold;">AI:</p>')
+                
+                tool_calls = msg.get("tool_calls", [])
+                if tool_calls:
+                    for tc in tool_calls:
+                        tc_id = tc.get("id", "")
+                        tc_name = tc.get("name", "unknown")
+                        tc_args = tc.get("args", "{}")
+                        tc_result = tc.get("result", "")
+                        html = self._render_tool_call_collapsed(tc_id, tc_name, tc_args, tc_result)
+                        cursor.insertHtml(html)
+                
                 html_content = self._render_markdown(msg["content"])
                 cursor.insertHtml(f'<div>{html_content}</div>')
                 cursor.insertHtml('<hr style="border: none; border-top: 1px solid #D4A574; margin: 10px 0;">')
