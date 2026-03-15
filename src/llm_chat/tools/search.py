@@ -1,13 +1,23 @@
 import json
+import logging
 from typing import Dict, Any, List, Optional
 from .base import BaseTool
 
+logger = logging.getLogger(__name__)
+
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
     DUCKDUCKGO_AVAILABLE = True
+    USING_DDGS = True
 except ImportError:
-    DUCKDUCKGO_AVAILABLE = False
-    DDGS = None
+    try:
+        from duckduckgo_search import DDGS
+        DUCKDUCKGO_AVAILABLE = True
+        USING_DDGS = False
+    except ImportError:
+        DUCKDUCKGO_AVAILABLE = False
+        USING_DDGS = False
+        DDGS = None
 
 
 class WebSearchTool(BaseTool):
@@ -66,28 +76,44 @@ class WebSearchTool(BaseTool):
     
     def _search_duckduckgo(self, query: str, num_results: int) -> str:
         if not DUCKDUCKGO_AVAILABLE:
-            return "错误: duckduckgo-search 未安装。请运行: pip install duckduckgo-search"
+            logger.error("duckduckgo-search 或 ddgs 未安装")
+            return "错误: 搜索库未安装。请运行: pip install ddgs"
         
         try:
             results = []
             proxies = self._get_proxies()
             
-            with DDGS(proxies=proxies) as ddgs:
+            logger.info(f"开始 DuckDuckGo 搜索: query={query}, num_results={num_results}")
+            logger.info(f"代理配置: proxies={proxies}")
+            
+            if USING_DDGS:
+                ddgs = DDGS()
                 search_results = list(ddgs.text(query, max_results=num_results))
+            else:
+                with DDGS(proxies=proxies) as ddgs:
+                    search_results = list(ddgs.text(query, max_results=num_results))
+            
+            logger.info(f"搜索返回结果数量: {len(search_results) if search_results else 0}")
+            logger.debug(f"搜索结果详情: {search_results}")
             
             if not search_results:
+                logger.warning(f"未找到相关结果: query={query}")
                 return "未找到相关结果"
             
             for i, result in enumerate(search_results, 1):
+                logger.debug(f"结果 {i}: title={result.get('title')}, href={result.get('href')}")
                 results.append({
                     "title": result.get("title", ""),
                     "url": result.get("href", ""),
                     "snippet": result.get("body", "")
                 })
             
-            return json.dumps(results, ensure_ascii=False, indent=2)
+            result_json = json.dumps(results, ensure_ascii=False, indent=2)
+            logger.info(f"返回结果: {result_json[:200]}...")
+            return result_json
             
         except Exception as e:
+            logger.error(f"搜索失败: {str(e)}", exc_info=True)
             return f"搜索失败: {str(e)}"
     
     def _search_brave(self, query: str, num_results: int) -> str:

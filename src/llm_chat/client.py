@@ -1,10 +1,13 @@
 import time
 import json
+import logging
 from typing import List, Dict, Any, Optional, Callable, Generator
 import requests
 from llm_chat.config import Config
 from llm_chat.protocols import get_protocol, ToolCall
 from llm_chat.tools import get_tool_registry, WebSearchTool, CalculatorTool
+
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
