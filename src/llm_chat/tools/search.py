@@ -101,10 +101,14 @@ class WebSearchTool(BaseTool):
                 return "未找到相关结果"
             
             for i, result in enumerate(search_results, 1):
-                logger.debug(f"结果 {i}: title={result.get('title')}, href={result.get('href')}")
+                title = result.get("title", "")
+                url = result.get("href", "")
+                snippet = result.get("body", "")[:100] if result.get("body") else ""
+                logger.info(f"搜索结果 {i}: title={title}, url={url}")
+                logger.debug(f"  snippet: {snippet}...")
                 results.append({
-                    "title": result.get("title", ""),
-                    "url": result.get("href", ""),
+                    "title": title,
+                    "url": url,
                     "snippet": result.get("body", "")
                 })
             
