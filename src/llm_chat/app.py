@@ -209,8 +209,9 @@ class App:
             if hasattr(frontend, 'set_current_conversation'):
                 frontend.set_current_conversation(self._current_conversation_id, messages)
         
-        if self.config.enable_tools and self.config.mcp.servers:
-            self.enable_tools()
+        if self.config.enable_tools:
+            if self.config.mcp.servers:
+                self.enable_tools()
         
         try:
             frontend.start()
