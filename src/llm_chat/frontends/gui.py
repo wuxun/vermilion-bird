@@ -88,6 +88,7 @@ class StreamSignals(QObject):
         text_received = pyqtSignal(str)
         stream_finished = pyqtSignal(str, str)
         error_occurred = pyqtSignal(str, str)
+        tool_call_received = pyqtSignal(str, str)
 
 
 class ConversationListSignals(QObject):
@@ -162,6 +163,7 @@ class GUIFrontend(BaseFrontend):
         self._stream_signals.text_received.connect(self._on_stream_text)
         self._stream_signals.stream_finished.connect(self._on_stream_finished)
         self._stream_signals.error_occurred.connect(self._on_stream_error)
+        self._stream_signals.tool_call_received.connect(self._on_tool_call)
         
         self._conv_list_signals = ConversationListSignals()
         self._conv_list_signals.conversations_updated.connect(self._refresh_conversation_list)
@@ -551,12 +553,26 @@ class GUIFrontend(BaseFrontend):
                 
                 history = [{"role": m["role"], "content": m["content"]} for m in self._messages[:-1]]
                 
-                full_text = ""
-                for chunk in client.chat_stream(content, history):
-                    full_text += chunk
-                    self._stream_signals.text_received.emit(chunk)
-                
-                self._stream_signals.stream_finished.emit(current_conv_id, full_text)
+                if config.enable_tools and client.has_builtin_tools():
+                    tools = client.get_builtin_tools()
+                    
+                    full_text = ""
+                    for chunk in client.chat_stream_with_tools(content, tools, history):
+                        if isinstance(chunk, tuple) and chunk[0] == "tool_call":
+                            _, tool_name, tool_args = chunk
+                            self._stream_signals.tool_call_received.emit(tool_name, tool_args)
+                        elif isinstance(chunk, str):
+                            full_text += chunk
+                            self._stream_signals.text_received.emit(chunk)
+                    
+                    self._stream_signals.stream_finished.emit(current_conv_id, full_text)
+                else:
+                    full_text = ""
+                    for chunk in client.chat_stream(content, history):
+                        full_text += chunk
+                        self._stream_signals.text_received.emit(chunk)
+                    
+                    self._stream_signals.stream_finished.emit(current_conv_id, full_text)
                 
             except Exception as e:
                 self._stream_signals.error_occurred.emit(current_conv_id, str(e))
@@ -620,6 +636,28 @@ class GUIFrontend(BaseFrontend):
         self._streaming_conversation_id = None
         self.display_error(error)
         self._set_input_state(True)
+    
+    def _on_tool_call(self, tool_name: str, tool_args: str):
+        if self._chat_display is None:
+            return
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        
+        tool_info = f"🔧 调用工具: {tool_name}"
+        if tool_args:
+            try:
+                import json
+                args_dict = json.loads(tool_args)
+                if args_dict:
+                    args_str = ", ".join(f"{k}={v}" for k, v in args_dict.items())
+                    tool_info += f" ({args_str})"
+            except:
+                tool_info += f" ({tool_args})"
+        
+        cursor.insertHtml(f'<p style="color: #9C27B0; background-color: #F3E5F5; padding: 5px; border-radius: 3px; font-style: italic;">{tool_info}</p>')
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
     
     def _refresh_chat_display(self):
         if self._chat_display is None:

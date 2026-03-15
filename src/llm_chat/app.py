@@ -63,11 +63,20 @@ class App:
         self._tools_enabled = False
     
     def get_available_tools(self) -> List[Dict[str, Any]]:
-        if not self._tools_enabled:
-            return []
+        tools = []
         
-        manager = self._get_mcp_manager()
-        return manager.get_tools_for_openai()
+        builtin_tools = self.client.get_builtin_tools()
+        tools.extend(builtin_tools)
+        
+        if self._tools_enabled:
+            manager = self._get_mcp_manager()
+            mcp_tools = manager.get_tools_for_openai()
+            tools.extend(mcp_tools)
+        
+        return tools
+    
+    def has_tools_available(self) -> bool:
+        return self.client.has_builtin_tools() or self._tools_enabled
     
     def get_conversation(self, conversation_id: str) -> Conversation:
         return self.conversation_manager.get_conversation(conversation_id)
@@ -90,7 +99,7 @@ class App:
         def handle_message(message: Message, ctx: ConversationContext):
             conversation = self.get_conversation(ctx.conversation_id)
             try:
-                if self.config.enable_tools and self._tools_enabled:
+                if self.config.enable_tools and self.has_tools_available():
                     tools = self.get_available_tools()
                     if tools:
                         response = self.client.chat_with_tools(
