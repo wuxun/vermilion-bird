@@ -48,11 +48,44 @@ class BuiltinToolsConfig(BaseSettings):
         case_sensitive = False
 
 
+class SkillConfig(BaseSettings):
+    enabled: bool = Field(default=True, description="是否启用该 Skill")
+    
+    class Config:
+        extra = "allow"
+        case_sensitive = False
+
+
+class SkillsConfig(BaseSettings):
+    web_search: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    calculator: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    
+    class Config:
+        extra = "allow"
+        case_sensitive = False
+    
+    def get_skill_config(self, skill_name: str) -> Dict[str, Any]:
+        skill_config = getattr(self, skill_name, None)
+        if skill_config is None:
+            return {"enabled": False}
+        return skill_config.model_dump()
+    
+    def get_all_skill_configs(self) -> Dict[str, Dict[str, Any]]:
+        configs = {}
+        for skill_name in self.model_fields.keys():
+            configs[skill_name] = self.get_skill_config(skill_name)
+        for extra_field in self.__pydantic_extra__ or {}:
+            configs[extra_field] = self.__pydantic_extra__[extra_field].model_dump() if hasattr(self.__pydantic_extra__[extra_field], 'model_dump') else self.__pydantic_extra__[extra_field]
+        return configs
+
+
 class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
-    builtin_tools: BuiltinToolsConfig = Field(default_factory=BuiltinToolsConfig, description="内置工具配置")
+    builtin_tools: BuiltinToolsConfig = Field(default_factory=BuiltinToolsConfig, description="内置工具配置（已废弃，请使用 skills）")
+    skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills 配置")
+    external_skill_dirs: List[str] = Field(default_factory=list, description="外部 Skill 目录列表")
 
     class Config:
         env_prefix = ""
@@ -78,13 +111,36 @@ class Config(BaseSettings):
             builtin_tools_data = config_data.get("builtin_tools", {})
             builtin_tools_config = cls._parse_builtin_tools(builtin_tools_data)
             
+            skills_data = config_data.get("skills", {})
+            skills_config = cls._parse_skills(skills_data)
+            
+            external_skill_dirs = config_data.get("external_skill_dirs", [])
+            
             return cls(
                 llm=llm_config,
                 mcp=mcp_config,
                 enable_tools=enable_tools,
-                builtin_tools=builtin_tools_config
+                builtin_tools=builtin_tools_config,
+                skills=skills_config,
+                external_skill_dirs=external_skill_dirs
             )
         return cls()
+    
+    @classmethod
+    def _parse_skills(cls, data: Dict[str, Any]) -> SkillsConfig:
+        skill_configs = {}
+        for skill_name, skill_data in data.items():
+            if isinstance(skill_data, dict):
+                skill_configs[skill_name] = SkillConfig(**skill_data)
+            elif isinstance(skill_data, SkillConfig):
+                skill_configs[skill_name] = skill_data
+        
+        if "web_search" not in skill_configs:
+            skill_configs["web_search"] = SkillConfig(enabled=True)
+        if "calculator" not in skill_configs:
+            skill_configs["calculator"] = SkillConfig(enabled=True)
+        
+        return SkillsConfig(**skill_configs)
     
     @classmethod
     def _parse_builtin_tools(cls, data: Dict[str, Any]) -> BuiltinToolsConfig:
@@ -100,14 +156,18 @@ class Config(BaseSettings):
         )
     
     def to_yaml(self, config_path: str = "config.yaml"):
+        skills_dict = {}
+        for skill_name in self.skills.model_fields.keys():
+            skill_config = getattr(self.skills, skill_name, None)
+            if skill_config:
+                skills_dict[skill_name] = skill_config.model_dump()
+        
         config_data = {
             "llm": self.llm.model_dump(),
             "mcp": self.mcp.to_dict(),
             "enable_tools": self.enable_tools,
-            "builtin_tools": {
-                "web_search": self.builtin_tools.web_search.model_dump(),
-                "calculator": self.builtin_tools.calculator.model_dump()
-            }
+            "skills": skills_dict,
+            "external_skill_dirs": self.external_skill_dirs
         }
         
         with open(config_path, "w", encoding="utf-8") as f:

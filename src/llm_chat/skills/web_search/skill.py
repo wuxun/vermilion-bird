@@ -1,0 +1,210 @@
+import json
+import logging
+from typing import Dict, Any, List, Optional
+
+from llm_chat.skills.base import BaseSkill
+from llm_chat.tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ddgs import DDGS
+    DUCKDUCKGO_AVAILABLE = True
+    USING_DDGS = True
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+        DUCKDUCKGO_AVAILABLE = True
+        USING_DDGS = False
+    except ImportError:
+        DUCKDUCKGO_AVAILABLE = False
+        USING_DDGS = False
+        DDGS = None
+
+
+class WebSearchTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "web_search"
+    
+    @property
+    def description(self) -> str:
+        return "搜索互联网获取实时信息。当用户询问时事新闻、最新信息、或需要查询网络内容时使用此工具。"
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词或问题"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "返回结果数量，默认为5",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        }
+    
+    def __init__(
+        self,
+        engine: str = "duckduckgo",
+        api_key: Optional[str] = None,
+        http_proxy: Optional[str] = None,
+        https_proxy: Optional[str] = None
+    ):
+        self.engine = engine
+        self.api_key = api_key
+        self.http_proxy = http_proxy
+        self.https_proxy = https_proxy
+    
+    def _get_proxy_string(self) -> Optional[str]:
+        if self.https_proxy:
+            return self.https_proxy
+        if self.http_proxy:
+            return self.http_proxy
+        return None
+    
+    def _get_proxies(self) -> Optional[Dict[str, str]]:
+        proxies = {}
+        if self.http_proxy:
+            proxies["http"] = self.http_proxy
+        if self.https_proxy:
+            proxies["https"] = self.https_proxy
+        return proxies if proxies else None
+    
+    def execute(self, query: str, num_results: int = 5) -> str:
+        if self.engine == "duckduckgo":
+            return self._search_duckduckgo(query, num_results)
+        elif self.engine == "brave":
+            return self._search_brave(query, num_results)
+        else:
+            return f"不支持的搜索引擎: {self.engine}"
+    
+    def _search_duckduckgo(self, query: str, num_results: int) -> str:
+        if not DUCKDUCKGO_AVAILABLE:
+            logger.error("duckduckgo-search 或 ddgs 未安装")
+            return "错误: 搜索库未安装。请运行: pip install ddgs"
+        
+        try:
+            results = []
+            proxy = self._get_proxy_string()
+            
+            logger.info(f"开始 DuckDuckGo 搜索: query={query}, num_results={num_results}")
+            logger.info(f"代理配置: proxy={proxy}")
+            
+            if USING_DDGS:
+                ddgs = DDGS(proxy=proxy)
+                search_results = list(ddgs.text(query, max_results=num_results))
+            else:
+                proxies = self._get_proxies()
+                with DDGS(proxies=proxies) as ddgs:
+                    search_results = list(ddgs.text(query, max_results=num_results))
+            
+            logger.info(f"搜索返回结果数量: {len(search_results) if search_results else 0}")
+            logger.debug(f"搜索结果详情: {search_results}")
+            
+            if not search_results:
+                logger.warning(f"未找到相关结果: query={query}")
+                return "未找到相关结果"
+            
+            for i, result in enumerate(search_results, 1):
+                title = result.get("title", "")
+                url = result.get("href", "")
+                snippet = result.get("body", "")[:100] if result.get("body") else ""
+                logger.info(f"搜索结果 {i}: title={title}, url={url}")
+                logger.debug(f"  snippet: {snippet}...")
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": result.get("body", "")
+                })
+            
+            result_json = json.dumps(results, ensure_ascii=False, indent=2)
+            logger.info(f"返回结果: {result_json[:200]}...")
+            return result_json
+            
+        except Exception as e:
+            logger.error(f"搜索失败: {str(e)}", exc_info=True)
+            return f"搜索失败: {str(e)}"
+    
+    def _search_brave(self, query: str, num_results: int) -> str:
+        import requests
+        
+        if not self.api_key:
+            return "错误: Brave Search 需要 API Key"
+        
+        try:
+            url = "https://api.search.brave.com/res/v1/web/search"
+            headers = {
+                "Accept": "application/json",
+                "X-Subscription-Token": self.api_key
+            }
+            params = {
+                "q": query,
+                "count": num_results
+            }
+            
+            proxies = self._get_proxies()
+            response = requests.get(url, headers=headers, params=params, proxies=proxies)
+            response.raise_for_status()
+            data = response.json()
+            
+            results = []
+            web_results = data.get("web", {}).get("results", [])
+            
+            for result in web_results[:num_results]:
+                results.append({
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "snippet": result.get("description", "")
+                })
+            
+            return json.dumps(results, ensure_ascii=False, indent=2)
+            
+        except Exception as e:
+            return f"搜索失败: {str(e)}"
+
+
+class WebSearchSkill(BaseSkill):
+    @property
+    def name(self) -> str:
+        return "web_search"
+    
+    @property
+    def description(self) -> str:
+        return "网络搜索能力，支持 DuckDuckGo 和 Brave 搜索引擎"
+    
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+    
+    def __init__(self):
+        self._engine = "duckduckgo"
+        self._api_key = None
+        self._http_proxy = None
+        self._https_proxy = None
+    
+    def get_tools(self) -> List[BaseTool]:
+        return [
+            WebSearchTool(
+                engine=self._engine,
+                api_key=self._api_key,
+                http_proxy=self._http_proxy,
+                https_proxy=self._https_proxy
+            )
+        ]
+    
+    def on_load(self, config: Dict[str, Any]) -> None:
+        self._engine = config.get("engine", "duckduckgo")
+        self._api_key = config.get("api_key")
+        self._http_proxy = config.get("http_proxy")
+        self._https_proxy = config.get("https_proxy")
+        
+        self.logger.info(
+            f"WebSearchSkill loaded: engine={self._engine}, "
+            f"api_key={'*' * 8 if self._api_key else 'None'}, "
+            f"http_proxy={self._http_proxy}, https_proxy={self._https_proxy}"
+        )
