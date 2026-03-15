@@ -14,7 +14,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox
     )
-    from PyQt6.QtCore import Qt, QTimer, QSize
+    from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
     PYQT_AVAILABLE = True
 except ImportError:
@@ -36,6 +36,8 @@ except ImportError:
     QFont = None
     QTextCursor = None
     QKeyEvent = None
+    pyqtSignal = None
+    QObject = None
 
 
 MARKDOWN_CSS = """
@@ -61,7 +63,6 @@ MARKDOWN_CSS = """
 
 class InputTextEdit(QTextEdit):
     if PYQT_AVAILABLE:
-        from PyQt6.QtCore import pyqtSignal
         send_requested = pyqtSignal()
     
     def keyPressEvent(self, event):
@@ -71,6 +72,13 @@ class InputTextEdit(QTextEdit):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+
+class StreamSignals(QObject):
+    if PYQT_AVAILABLE:
+        text_received = pyqtSignal(str)
+        stream_finished = pyqtSignal()
+        error_occurred = pyqtSignal(str)
 
 
 class GUIFrontend(BaseFrontend):
@@ -95,10 +103,17 @@ class GUIFrontend(BaseFrontend):
         self._mcp_button: Optional[QPushButton] = None
         self._mcp_dialog = None
         self._worker_thread: Optional[threading.Thread] = None
+        self._stream_signals: Optional[StreamSignals] = None
+        self._current_stream_text: str = ""
     
     def start(self):
         self._app = QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        
+        self._stream_signals = StreamSignals()
+        self._stream_signals.text_received.connect(self._on_stream_text)
+        self._stream_signals.stream_finished.connect(self._on_stream_finished)
+        self._stream_signals.error_occurred.connect(self._on_stream_error)
         
         self._main_window = QMainWindow()
         self._main_window.setWindowTitle(self.title)
@@ -262,30 +277,72 @@ class GUIFrontend(BaseFrontend):
             role="user",
             msg_type=MessageType.TEXT
         )
-        ctx = ConversationContext(conversation_id=self.conversation_id)
         
         self.display_message(message)
         self._set_input_state(False)
         
-        def send_and_display():
-            self._handle_message(message, ctx)
+        self._current_stream_text = ""
+        self._display_ai_prefix()
         
-        self._worker_thread = threading.Thread(target=send_and_display, daemon=True)
-        self._worker_thread.start()
-        
-        def check_thread():
-            if self._worker_thread and self._worker_thread.is_alive():
-                self._worker_thread.join(timeout=0.1)
-                if self._worker_thread.is_alive():
-                    if self._app:
-                        QTimer.singleShot(100, check_thread)
+        def stream_response():
+            try:
+                from llm_chat.app import App
+                if hasattr(self, '_app_instance') and self._app_instance:
+                    app = self._app_instance
                 else:
-                    self._set_input_state(True)
-            else:
-                self._set_input_state(True)
+                    from llm_chat.config import Config
+                    from llm_chat.client import LLMClient
+                    config = Config()
+                    client = LLMClient(config)
+                
+                history = []
+                
+                for chunk in client.chat_stream(content, history):
+                    self._current_stream_text += chunk
+                    self._stream_signals.text_received.emit(chunk)
+                
+                self._stream_signals.stream_finished.emit()
+                
+            except Exception as e:
+                self._stream_signals.error_occurred.emit(str(e))
         
-        if self._app:
-            QTimer.singleShot(100, check_thread)
+        self._worker_thread = threading.Thread(target=stream_response, daemon=True)
+        self._worker_thread.start()
+    
+    def _display_ai_prefix(self):
+        if self._chat_display is None:
+            return
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml('<p style="color: #2E7D32; font-weight: bold;">AI:</p>')
+        self._chat_display.setTextCursor(cursor)
+    
+    def _on_stream_text(self, text: str):
+        if self._chat_display is None:
+            return
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(text)
+        self._chat_display.setTextCursor(cursor)
+        self._chat_display.ensureCursorVisible()
+    
+    def _on_stream_finished(self):
+        if self._chat_display is None:
+            return
+        
+        cursor = self._chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText("\n")
+        cursor.insertHtml('<hr style="border: none; border-top: 1px solid #ccc; margin: 10px 0;">')
+        self._chat_display.setTextCursor(cursor)
+        
+        self._set_input_state(True)
+    
+    def _on_stream_error(self, error: str):
+        self.display_error(error)
+        self._set_input_state(True)
     
     def _on_clear(self):
         ctx = ConversationContext(conversation_id=self.conversation_id)

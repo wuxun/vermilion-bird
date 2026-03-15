@@ -90,3 +90,6 @@ class BaseProtocol(ABC):
     
     def get_assistant_message_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         return {"role": "assistant", "content": self.parse_chat_response(response)}
+    
+    def parse_stream_chunk(self, chunk: Dict[str, Any]) -> Optional[str]:
+        return None

@@ -106,3 +106,13 @@ class OpenAIProtocol(BaseProtocol):
             msg["tool_calls"] = message["tool_calls"]
         
         return msg
+    
+    def parse_stream_chunk(self, chunk: Dict[str, Any]) -> Optional[str]:
+        choices = chunk.get("choices", [])
+        if not choices:
+            return None
+        
+        delta = choices[0].get("delta", {})
+        content = delta.get("content")
+        
+        return content if content else None

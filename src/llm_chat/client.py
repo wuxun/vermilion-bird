@@ -1,5 +1,6 @@
 import time
-from typing import List, Dict, Any, Optional, Callable
+import json
+from typing import List, Dict, Any, Optional, Callable, Generator
 import requests
 from llm_chat.config import Config
 from llm_chat.protocols import get_protocol, ToolCall
@@ -31,6 +32,20 @@ class LLMClient:
         messages.append({"role": "user", "content": message})
         
         return self._send_chat_request(messages, **kwargs)
+    
+    def chat_stream(
+        self, 
+        message: str, 
+        history: Optional[List[Dict[str, str]]] = None, 
+        **kwargs
+    ) -> Generator[str, None, None]:
+        if history is None:
+            history = []
+        
+        messages = history.copy()
+        messages.append({"role": "user", "content": message})
+        
+        yield from self._send_chat_request_stream(messages, **kwargs)
     
     def chat_with_tools(
         self, 
@@ -72,6 +87,54 @@ class LLMClient:
                 time.sleep(1)
         
         return ""
+    
+    def _send_chat_request_stream(
+        self, 
+        messages: List[Dict[str, str]], 
+        **kwargs
+    ) -> Generator[str, None, None]:
+        url = self.protocol.get_chat_url()
+        headers = self.protocol.get_headers()
+        data = self.protocol.build_chat_request(messages, stream=True, **kwargs)
+        
+        try:
+            response = self.session.post(
+                url, 
+                json=data, 
+                headers=headers, 
+                stream=True
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                
+                line_text = line.decode('utf-8')
+                
+                if line_text.startswith('data: '):
+                    data_str = line_text[6:]
+                    
+                    if data_str == '[DONE]':
+                        break
+                    
+                    try:
+                        chunk = json.loads(data_str)
+                        content = self.protocol.parse_stream_chunk(chunk)
+                        if content:
+                            yield content
+                    except json.JSONDecodeError:
+                        continue
+                        
+        except requests.RequestException as e:
+            error_msg = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    error_msg = f"{error_msg}\n详情: {error_detail}"
+                except:
+                    error_msg = f"{error_msg}\n响应内容: {e.response.text}"
+            raise Exception(f"API 请求失败: {error_msg}")
     
     def _send_chat_request_with_tools(
         self, 
