@@ -44,7 +44,8 @@ class LLMClient:
                 engine=builtin_config.web_search.engine,
                 api_key=builtin_config.web_search.api_key,
                 http_proxy=self.config.llm.http_proxy,
-                https_proxy=self.config.llm.https_proxy
+                https_proxy=self.config.llm.https_proxy,
+                timeout=self.config.llm.timeout
             )
             self._tool_registry.register(search_tool)
         
