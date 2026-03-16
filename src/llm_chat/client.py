@@ -500,11 +500,18 @@ class LLMClient:
             for tool_call in tool_calls:
                 logger.info(f"工具调用: {tool_call.name}, 参数: {json.dumps(tool_call.arguments, ensure_ascii=False)[:100]}...")
                 
+                tool_result = None
+                is_error = False
+                
                 if self._tool_registry.has_tool(tool_call.name):
                     try:
                         tool_result = self.execute_builtin_tool(tool_call.name, tool_call.arguments)
                         is_error = False
-                        logger.info(f"工具 {tool_call.name} 执行成功, 结果长度: {len(tool_result)}")
+                        if tool_result is None:
+                            tool_result = "工具执行返回空结果"
+                            logger.warning(f"工具 {tool_call.name} 返回 None")
+                        else:
+                            logger.info(f"工具 {tool_call.name} 执行成功, 结果长度: {len(tool_result)}")
                     except Exception as e:
                         tool_result = str(e)
                         is_error = True
@@ -513,7 +520,11 @@ class LLMClient:
                     try:
                         tool_result = self._tool_executor(tool_call.name, tool_call.arguments)
                         is_error = False
-                        logger.info(f"工具 {tool_call.name} 执行成功(外部执行器)")
+                        if tool_result is None:
+                            tool_result = "工具执行返回空结果"
+                            logger.warning(f"工具 {tool_call.name} 返回 None")
+                        else:
+                            logger.info(f"工具 {tool_call.name} 执行成功(外部执行器)")
                     except Exception as e:
                         tool_result = str(e)
                         is_error = True
