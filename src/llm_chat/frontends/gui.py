@@ -932,27 +932,20 @@ class GUIFrontend(BaseFrontend):
         if self._chat_layout is None:
             return
         
-        user_browser = QTextBrowser()
-        user_browser.setHtml(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{content}</span>")
-        user_browser.setOpenExternalLinks(True)
-        user_browser.setStyleSheet("""
-            QTextBrowser {
-                padding: 5px;
-                background-color: rgba(255,255,255,0.5);
-                border-radius: 4px;
-                border: none;
-                color: #3D2C2E;
-            }
-            QTextBrowser:focus {
-                border: 1px solid #D4A574;
-            }
-        """)
-        user_browser.setMaximumHeight(16777215)
-        user_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        user_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        user_browser.setReadOnly(True)
+        user_browser = self._create_message_browser(
+            f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{content}</span>"
+        )
         self._add_widget_to_chat(user_browser)
         self._scroll_to_bottom()
+    
+    def _adjust_browser_height(self, browser):
+        """调整 QTextBrowser 高度以适应内容"""
+        if browser is None:
+            return
+        doc_height = browser.document().size().height()
+        margins = browser.contentsMargins()
+        new_height = int(doc_height + margins.top() + margins.bottom() + 10)
+        browser.setFixedHeight(max(30, new_height))
     
     def _display_ai_prefix(self):
         if self._chat_layout is None:
@@ -968,24 +961,7 @@ class GUIFrontend(BaseFrontend):
         if self._streaming_browser is not None:
             return
         
-        self._streaming_browser = QTextBrowser()
-        self._streaming_browser.setOpenExternalLinks(True)
-        self._streaming_browser.setStyleSheet("""
-            QTextBrowser {
-                padding: 5px;
-                background-color: rgba(255,255,255,0.5);
-                border-radius: 4px;
-                border: none;
-                color: #3D2C2E;
-            }
-            QTextBrowser:focus {
-                border: 1px solid #D4A574;
-            }
-        """)
-        self._streaming_browser.setMaximumHeight(16777215)
-        self._streaming_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._streaming_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._streaming_browser.setReadOnly(True)
+        self._streaming_browser = self._create_message_browser("")
         self._add_widget_to_chat(self._streaming_browser)
     
     def _on_stream_text(self, text: str):
@@ -1113,6 +1089,38 @@ class GUIFrontend(BaseFrontend):
         self._chat_layout.addStretch()
         self._current_tool_call_widgets.clear()
     
+    def _create_message_browser(self, html_content: str) -> QTextBrowser:
+        """创建消息浏览器，支持选择复制和高度自适应"""
+        browser = QTextBrowser()
+        browser.setHtml(html_content)
+        browser.setOpenExternalLinks(True)
+        browser.setStyleSheet("""
+            QTextBrowser {
+                padding: 5px;
+                background-color: rgba(255,255,255,0.5);
+                border-radius: 4px;
+                border: none;
+                color: #3D2C2E;
+            }
+            QMenu {
+                background-color: #FFFBF5;
+                color: #3D2C2E;
+                border: 1px solid #D4A574;
+            }
+            QMenu::item:selected {
+                background-color: #D4A574;
+                color: white;
+            }
+        """)
+        browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setReadOnly(True)
+        browser.document().documentLayout().documentSizeChanged.connect(
+            lambda size, b=browser: self._adjust_browser_height(b)
+        )
+        return browser
+    
     def _refresh_chat_display(self):
         if self._chat_layout is None:
             return
@@ -1121,22 +1129,9 @@ class GUIFrontend(BaseFrontend):
         
         for msg in self._messages:
             if msg["role"] == "user":
-                user_browser = QTextBrowser()
-                user_browser.setHtml(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{msg['content']}</span>")
-                user_browser.setOpenExternalLinks(True)
-                user_browser.setStyleSheet("""
-                    QTextBrowser {
-                        padding: 5px;
-                        background-color: rgba(255,255,255,0.5);
-                        border-radius: 4px;
-                        border: none;
-                        color: #3D2C2E;
-                    }
-                """)
-                user_browser.setMaximumHeight(16777215)
-                user_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                user_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                user_browser.setReadOnly(True)
+                user_browser = self._create_message_browser(
+                    f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{msg['content']}</span>"
+                )
                 self._add_widget_to_chat(user_browser)
             elif msg["role"] == "assistant":
                 tool_calls = msg.get("tool_calls", [])
@@ -1170,22 +1165,7 @@ class GUIFrontend(BaseFrontend):
                 self._add_widget_to_chat(ai_label)
                 
                 html_content = self._render_markdown(msg["content"])
-                content_browser = QTextBrowser()
-                content_browser.setHtml(html_content)
-                content_browser.setOpenExternalLinks(True)
-                content_browser.setStyleSheet("""
-                    QTextBrowser {
-                        padding: 5px;
-                        background-color: rgba(255,255,255,0.5);
-                        border-radius: 4px;
-                        border: none;
-                        color: #3D2C2E;
-                    }
-                """)
-                content_browser.setMaximumHeight(16777215)
-                content_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                content_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                content_browser.setReadOnly(True)
+                content_browser = self._create_message_browser(html_content)
                 self._add_widget_to_chat(content_browser)
                 
                 separator = QFrame()
@@ -1260,22 +1240,9 @@ class GUIFrontend(BaseFrontend):
             return
         
         if message.role == "user":
-            user_browser = QTextBrowser()
-            user_browser.setHtml(f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{message.content}</span>")
-            user_browser.setOpenExternalLinks(True)
-            user_browser.setStyleSheet("""
-                QTextBrowser {
-                    padding: 5px;
-                    background-color: rgba(255,255,255,0.5);
-                    border-radius: 4px;
-                    border: none;
-                    color: #3D2C2E;
-                }
-            """)
-            user_browser.setMaximumHeight(16777215)
-            user_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            user_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            user_browser.setReadOnly(True)
+            user_browser = self._create_message_browser(
+                f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{message.content}</span>"
+            )
             self._add_widget_to_chat(user_browser)
         elif message.role == "assistant":
             ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
@@ -1283,22 +1250,7 @@ class GUIFrontend(BaseFrontend):
             self._add_widget_to_chat(ai_label)
             
             html_content = self._render_markdown(message.content)
-            content_browser = QTextBrowser()
-            content_browser.setHtml(html_content)
-            content_browser.setOpenExternalLinks(True)
-            content_browser.setStyleSheet("""
-                QTextBrowser {
-                    padding: 5px;
-                    background-color: rgba(255,255,255,0.5);
-                    border-radius: 4px;
-                    border: none;
-                    color: #3D2C2E;
-                }
-            """)
-            content_browser.setMaximumHeight(16777215)
-            content_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            content_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            content_browser.setReadOnly(True)
+            content_browser = self._create_message_browser(html_content)
             self._add_widget_to_chat(content_browser)
             
             separator = QFrame()
