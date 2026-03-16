@@ -1091,7 +1091,8 @@ class GUIFrontend(BaseFrontend):
                 break
         
         self._scroll_to_bottom()
-        logger.info(f"工具调用完成: {tool_name}, result_length={len(result)}")
+        result_len = len(result) if result else 0
+        logger.info(f"工具调用完成: {tool_name}, result_length={result_len}")
     
     def _escape_html(self, text: str) -> str:
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#39;')
