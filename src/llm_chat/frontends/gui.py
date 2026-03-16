@@ -208,9 +208,9 @@ if PYQT_AVAILABLE:
             logger.info(f"工具调用控件折叠状态切换: {self._tool_name}, expanded={self._is_expanded}")
         
         def set_result(self, result: str):
-            self._result = result
+            self._result = result if result else "无返回结果"
             self._is_completed = True
-            self._result_text.setPlainText(result)
+            self._result_text.setPlainText(self._result)
             self._result_label.show()
             self._result_text.show()
             self._update_header_text()
