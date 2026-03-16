@@ -168,7 +168,8 @@ class LLMClient:
                 **kwargs
             )
             
-            logger.debug(f"迭代 {iteration + 1}: 发送请求到 {url}")
+            self._log_request_details(url, data, current_messages, kwargs)
+            logger.info(f"(流式请求, 迭代 {iteration + 1})")
             
             full_text = ""
             tool_calls_data = []
@@ -318,7 +319,7 @@ class LLMClient:
         headers = self.protocol.get_headers()
         data = self.protocol.build_chat_request(messages, **kwargs)
         
-        logger.debug(f"发送请求: url={url}, model={data.get('model')}, messages_count={len(messages)}")
+        self._log_request_details(url, data, messages, kwargs)
         
         for i in range(self.config.llm.max_retries):
             try:
@@ -346,6 +347,39 @@ class LLMClient:
         
         return ""
     
+    def _log_request_details(self, url: str, data: Dict, messages: List[Dict], kwargs: Dict):
+        """打印请求详情日志"""
+        logger.info(f"{'='*60}")
+        logger.info(f"发送请求到: {url}")
+        logger.info(f"模型: {data.get('model', 'unknown')}")
+        
+        if kwargs.get('temperature') is not None:
+            logger.info(f"温度: {kwargs['temperature']}")
+        if kwargs.get('reasoning_effort'):
+            logger.info(f"推理深度: {kwargs['reasoning_effort']}")
+        if kwargs.get('max_tokens'):
+            logger.info(f"最大Token: {kwargs['max_tokens']}")
+        
+        logger.info(f"消息数量: {len(messages)}")
+        
+        for i, msg in enumerate(messages):
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            
+            if role == 'system':
+                preview = content[:200] + '...' if len(content) > 200 else content
+                logger.info(f"  [{i}] system: {preview}")
+            elif role == 'user':
+                preview = content[:100] + '...' if len(content) > 100 else content
+                logger.info(f"  [{i}] user: {preview}")
+            elif role == 'assistant':
+                preview = content[:100] + '...' if len(content) > 100 else content
+                logger.info(f"  [{i}] assistant: {preview}")
+            else:
+                logger.info(f"  [{i}] {role}: (content length: {len(content)})")
+        
+        logger.info(f"{'='*60}")
+    
     def _send_chat_request_stream(
         self, 
         messages: List[Dict[str, str]], 
@@ -355,7 +389,8 @@ class LLMClient:
         headers = self.protocol.get_headers()
         data = self.protocol.build_chat_request(messages, stream=True, **kwargs)
         
-        logger.debug(f"发送流式请求: url={url}, model={data.get('model')}, messages_count={len(messages)}")
+        self._log_request_details(url, data, messages, kwargs)
+        logger.info("(流式请求)")
         
         try:
             response = self.session.post(
