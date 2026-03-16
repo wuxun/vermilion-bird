@@ -45,7 +45,12 @@ class ToolExecutor:
                         "is_error": True
                     }
                 
-                logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(result)}")
+                if result is None:
+                    result = "工具执行返回空结果"
+                    logger.warning(f"工具 {tool_name} 返回 None")
+                else:
+                    logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(result)}")
+                
                 return {
                     "tool_call_id": tool_call_id,
                     "content": result,

@@ -265,7 +265,7 @@ class LLMClient:
                 }
                 current_messages.append(tool_message)
                 
-                yield ("tool_call_end", tool_name, tool_args, result.get("content", "")[:500])
+                yield ("tool_call_end", tool_name, tool_args, str(result.get("content", ""))[:500])
     
     def _parse_stream_tool_calls(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
         choices = chunk.get("choices", [])
