@@ -884,12 +884,14 @@ class GUIFrontend(BaseFrontend):
         self._display_ai_prefix()
         
         current_conv_id = self.conversation_id
+        model_params = self._get_model_params()
         
         def stream_response():
             try:
                 from llm_chat.config import Config
                 from llm_chat.client import LLMClient
                 from llm_chat.cli import setup_logging
+                from llm_chat.memory import MemoryStorage, MemoryManager
                 
                 setup_logging(logging.INFO)
                 
@@ -898,11 +900,31 @@ class GUIFrontend(BaseFrontend):
                 
                 history = [{"role": m["role"], "content": m["content"]} for m in self._messages[:-1]]
                 
+                system_context = None
+                if config.memory.enabled:
+                    try:
+                        memory_storage = MemoryStorage(config.memory.storage_dir)
+                        memory_manager = MemoryManager(
+                            storage=memory_storage,
+                            db_storage=None,
+                            llm_client=client,
+                            config={}
+                        )
+                        system_context = memory_manager.build_system_prompt()
+                        if system_context:
+                            logger.info(f"加载记忆上下文: {len(system_context)} 字符")
+                    except Exception as e:
+                        logger.warning(f"加载记忆上下文失败: {e}")
+                
                 if config.enable_tools and client.has_builtin_tools():
                     tools = client.get_builtin_tools()
                     
                     full_text = ""
-                    for chunk in client.chat_stream_with_tools(content, tools, history):
+                    for chunk in client.chat_stream_with_tools(
+                        content, tools, history, 
+                        system_context=system_context,
+                        **model_params
+                    ):
                         if isinstance(chunk, tuple) and chunk[0] == "tool_call_start":
                             _, tool_name, tool_args = chunk
                             self._stream_signals.tool_call_started.emit(tool_name, tool_args)
@@ -916,7 +938,11 @@ class GUIFrontend(BaseFrontend):
                     self._stream_signals.stream_finished.emit(current_conv_id, full_text)
                 else:
                     full_text = ""
-                    for chunk in client.chat_stream(content, history):
+                    for chunk in client.chat_stream(
+                        content, history, 
+                        system_context=system_context,
+                        **model_params
+                    ):
                         full_text += chunk
                         self._stream_signals.text_received.emit(chunk)
                     

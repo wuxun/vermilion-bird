@@ -142,18 +142,24 @@ class LLMClient:
         message: str,
         tools: List[Dict[str, Any]],
         history: Optional[List[Dict[str, Any]]] = None,
+        system_context: Optional[str] = None,
         max_iterations: int = 10,
         **kwargs
     ) -> Generator[Any, None, None]:
         if not self.protocol.supports_tools():
             logger.warning("当前协议不支持工具调用，使用普通流式聊天")
-            yield from self.chat_stream(message, history, **kwargs)
+            yield from self.chat_stream(message, history, system_context=system_context, **kwargs)
             return
         
         if history is None:
             history = []
         
-        current_messages = history.copy()
+        current_messages = []
+        
+        if system_context:
+            current_messages.append({"role": "system", "content": system_context})
+        
+        current_messages.extend(history)
         current_messages.append({"role": "user", "content": message})
         
         logger.info(f"开始带工具的流式聊天: tools={[t['function']['name'] for t in tools]}, max_iterations={max_iterations}")
