@@ -26,6 +26,25 @@ class AnthropicProtocol(BaseProtocol):
         }
         if system_prompt:
             data["system"] = system_prompt
+        
+        if kwargs.get("temperature") is not None:
+            data["temperature"] = kwargs["temperature"]
+        
+        if kwargs.get("top_p") is not None:
+            data["top_p"] = kwargs["top_p"]
+        
+        if kwargs.get("reasoning_effort"):
+            budget_map = {
+                "low": 1024,
+                "medium": 4096,
+                "high": 16000
+            }
+            budget = budget_map.get(kwargs["reasoning_effort"], 4096)
+            data["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": budget
+            }
+        
         return data
     
     def parse_chat_response(self, response: Dict[str, Any]) -> str:

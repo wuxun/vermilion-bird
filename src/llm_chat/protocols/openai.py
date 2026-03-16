@@ -18,12 +18,23 @@ class OpenAIProtocol(BaseProtocol):
         data = {
             "model": self.model,
             "messages": messages,
-            "temperature": kwargs.get("temperature", 0.7),
         }
+        
+        if kwargs.get("temperature") is not None:
+            data["temperature"] = kwargs["temperature"]
+        
         if kwargs.get("max_tokens"):
             data["max_tokens"] = kwargs["max_tokens"]
+        
+        if kwargs.get("top_p") is not None:
+            data["top_p"] = kwargs["top_p"]
+        
         if kwargs.get("stream"):
             data["stream"] = kwargs["stream"]
+        
+        if kwargs.get("reasoning_effort"):
+            data["reasoning_effort"] = kwargs["reasoning_effort"]
+        
         return data
     
     def parse_chat_response(self, response: Dict[str, Any]) -> str:

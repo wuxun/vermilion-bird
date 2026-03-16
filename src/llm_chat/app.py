@@ -15,11 +15,13 @@ class App:
         self.storage = Storage()
         
         memory_config = self._build_memory_config()
+        default_model_params = self.config.llm.get_model_params()
         
         self.conversation_manager = ConversationManager(
             self.client, 
             self.storage,
-            memory_config=memory_config
+            memory_config=memory_config,
+            default_model_params=default_model_params
         )
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None

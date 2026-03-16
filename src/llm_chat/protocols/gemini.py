@@ -19,12 +19,28 @@ class GeminiProtocol(BaseProtocol):
                 "parts": [{"text": msg["content"]}]
             })
         
+        generation_config = {}
+        
+        if kwargs.get("temperature") is not None:
+            generation_config["temperature"] = kwargs["temperature"]
+        
+        if kwargs.get("max_tokens"):
+            generation_config["maxOutputTokens"] = kwargs["max_tokens"]
+        
+        if kwargs.get("top_p") is not None:
+            generation_config["topP"] = kwargs["top_p"]
+        
+        if kwargs.get("reasoning_effort"):
+            budget_map = {
+                "low": 1024,
+                "medium": 8192,
+                "high": 24576
+            }
+            generation_config["thinkingBudget"] = budget_map.get(kwargs["reasoning_effort"], 8192)
+        
         data = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": kwargs.get("temperature", 0.7),
-                "maxOutputTokens": kwargs.get("max_tokens", 8192),
-            }
+            "generationConfig": generation_config
         }
         return data
     

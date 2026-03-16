@@ -16,10 +16,28 @@ class LLMConfig(BaseSettings):
     protocol: str = Field(default="openai", description="API 协议类型: openai, anthropic, gemini")
     http_proxy: Optional[str] = Field(default=None, description="HTTP 代理地址，如 http://127.0.0.1:7890")
     https_proxy: Optional[str] = Field(default=None, description="HTTPS 代理地址，如 http://127.0.0.1:7890")
+    
+    temperature: Optional[float] = Field(default=None, description="温度参数 (0-2)，控制输出随机性")
+    max_tokens: Optional[int] = Field(default=None, description="最大输出token数")
+    top_p: Optional[float] = Field(default=None, description="Top-p 采样参数")
+    reasoning_effort: Optional[str] = Field(default=None, description="推理深度: low/medium/high，用于DeepSeek R1/OpenAI o1等模型")
 
     class Config:
         env_prefix = "LLM_"
         case_sensitive = False
+    
+    def get_model_params(self) -> Dict[str, Any]:
+        """获取非空的模型参数"""
+        params = {}
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            params["max_tokens"] = self.max_tokens
+        if self.top_p is not None:
+            params["top_p"] = self.top_p
+        if self.reasoning_effort is not None:
+            params["reasoning_effort"] = self.reasoning_effort
+        return params
 
 
 class ToolsConfig(BaseSettings):

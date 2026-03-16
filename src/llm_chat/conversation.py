@@ -13,15 +13,42 @@ class Conversation:
         client: LLMClient, 
         conversation_id: Optional[str] = None, 
         storage: Optional[Storage] = None,
-        memory_config: Optional[Dict] = None
+        memory_config: Optional[Dict] = None,
+        model_params: Optional[Dict[str, Any]] = None
     ):
         self.client = client
         self.conversation_id = conversation_id or f"conv_{int(time.time())}"
         self.storage = storage or Storage()
         self.memory_config = memory_config or {}
+        self._model_params = model_params or {}
         self._ensure_conversation()
         self._memory_manager = None
         self._init_memory()
+    
+    def set_model_param(self, key: str, value: Any):
+        """设置单个模型参数"""
+        self._model_params[key] = value
+        logger.info(f"设置模型参数: {key}={value}")
+    
+    def set_model_params(self, params: Dict[str, Any]):
+        """批量设置模型参数"""
+        self._model_params.update(params)
+        logger.info(f"批量设置模型参数: {params}")
+    
+    def get_model_params(self) -> Dict[str, Any]:
+        """获取当前模型参数"""
+        return self._model_params.copy()
+    
+    def clear_model_params(self):
+        """清空模型参数"""
+        self._model_params = {}
+        logger.info("已清空模型参数")
+    
+    def remove_model_param(self, key: str):
+        """移除指定模型参数"""
+        if key in self._model_params:
+            del self._model_params[key]
+            logger.info(f"移除模型参数: {key}")
     
     def _init_memory(self):
         """初始化记忆管理器"""
@@ -76,7 +103,8 @@ class Conversation:
         response = self.client.chat(
             message, 
             self._get_simple_history(),
-            system_context=memory_context
+            system_context=memory_context,
+            **self._model_params
         )
         
         self.add_assistant_message(response)
@@ -145,25 +173,44 @@ class Conversation:
 
 
 class ConversationManager:
-    def __init__(self, client: LLMClient, storage: Optional[Storage] = None, memory_config: Optional[Dict] = None):
+    def __init__(
+        self, 
+        client: LLMClient, 
+        storage: Optional[Storage] = None, 
+        memory_config: Optional[Dict] = None,
+        default_model_params: Optional[Dict[str, Any]] = None
+    ):
         self.client = client
         self.storage = storage or Storage()
         self.memory_config = memory_config or {}
+        self.default_model_params = default_model_params or {}
         self._conversations: Dict[str, Conversation] = {}
     
     def get_conversation(self, conversation_id: str) -> Conversation:
         if conversation_id not in self._conversations:
             self._conversations[conversation_id] = Conversation(
-                self.client, conversation_id, self.storage, self.memory_config
+                self.client, conversation_id, self.storage, 
+                self.memory_config, self.default_model_params
             )
         return self._conversations[conversation_id]
     
     def create_conversation(self, title: Optional[str] = None) -> Conversation:
         conversation_id = f"conv_{int(time.time())}"
         self.storage.create_conversation(conversation_id, title)
-        conv = Conversation(self.client, conversation_id, self.storage, self.memory_config)
+        conv = Conversation(
+            self.client, conversation_id, self.storage, 
+            self.memory_config, self.default_model_params
+        )
         self._conversations[conversation_id] = conv
         return conv
+    
+    def set_default_model_params(self, params: Dict[str, Any]):
+        """设置默认模型参数"""
+        self.default_model_params = params
+    
+    def get_default_model_params(self) -> Dict[str, Any]:
+        """获取默认模型参数"""
+        return self.default_model_params.copy()
     
     def list_conversations(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         return self.storage.list_conversations(limit, offset)

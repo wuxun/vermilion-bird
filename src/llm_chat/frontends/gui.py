@@ -18,7 +18,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit, QInputDialog,
-        QAbstractItemView, QScrollArea, QSizePolicy
+        QAbstractItemView, QScrollArea, QSizePolicy, QSlider, QComboBox
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -42,6 +42,10 @@ except ImportError:
     QLineEdit = None
     QInputDialog = None
     QAbstractItemView = None
+    QScrollArea = None
+    QSizePolicy = None
+    QSlider = None
+    QComboBox = None
     QScrollArea = None
     QSizePolicy = None
     Qt = None
@@ -484,6 +488,76 @@ class GUIFrontend(BaseFrontend):
         self._chat_display.setMaximumHeight(0)
         self._chat_display.hide()
         
+        params_container = QWidget()
+        params_container.setStyleSheet("""
+            QWidget {
+                background-color: #F5E6D3;
+                border: 1px solid #D4A574;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QLabel {
+                color: #4A2C2A;
+                font-size: 11px;
+            }
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: #D4A574;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #8B4513;
+                width: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+            QComboBox {
+                background-color: white;
+                border: 1px solid #D4A574;
+                border-radius: 3px;
+                padding: 2px 5px;
+                color: #4A2C2A;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        params_layout = QHBoxLayout(params_container)
+        params_layout.setContentsMargins(8, 3, 8, 3)
+        params_layout.setSpacing(10)
+        
+        temp_label = QLabel("温度:")
+        params_layout.addWidget(temp_label)
+        
+        self._temperature_slider = QSlider(Qt.Orientation.Horizontal)
+        self._temperature_slider.setMinimum(0)
+        self._temperature_slider.setMaximum(20)
+        self._temperature_slider.setValue(7)
+        self._temperature_slider.setFixedWidth(80)
+        self._temperature_slider.valueChanged.connect(self._on_temperature_changed)
+        params_layout.addWidget(self._temperature_slider)
+        
+        self._temperature_value = QLabel("0.7")
+        self._temperature_value.setFixedWidth(25)
+        params_layout.addWidget(self._temperature_value)
+        
+        params_layout.addSpacing(10)
+        
+        reasoning_label = QLabel("推理:")
+        params_layout.addWidget(reasoning_label)
+        
+        self._reasoning_combo = QComboBox()
+        self._reasoning_combo.addItems(["关闭", "低", "中", "高"])
+        self._reasoning_combo.setCurrentIndex(0)
+        self._reasoning_combo.setFixedWidth(60)
+        self._reasoning_combo.currentIndexChanged.connect(self._on_reasoning_changed)
+        params_layout.addWidget(self._reasoning_combo)
+        
+        params_layout.addStretch()
+        
+        self._params_container = params_container
+        layout.addWidget(params_container)
+        
         input_container = QVBoxLayout()
         input_container.setSpacing(5)
         
@@ -747,6 +821,32 @@ class GUIFrontend(BaseFrontend):
                 color = "#dc3545"
             
             self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
+    
+    def _on_temperature_changed(self, value):
+        """温度滑块变化处理"""
+        temp = value / 10.0
+        self._temperature_value.setText(f"{temp:.1f}")
+        logger.info(f"温度设置为: {temp}")
+    
+    def _on_reasoning_changed(self, index):
+        """推理深度变化处理"""
+        levels = ["关闭", "低", "中", "高"]
+        logger.info(f"推理深度设置为: {levels[index]}")
+    
+    def _get_model_params(self) -> Dict[str, Any]:
+        """获取当前模型参数"""
+        params = {}
+        
+        if self._temperature_slider:
+            temp = self._temperature_slider.value() / 10.0
+            if temp != 0.7:
+                params["temperature"] = temp
+        
+        if self._reasoning_combo and self._reasoning_combo.currentIndex() > 0:
+            reasoning_levels = ["off", "low", "medium", "high"]
+            params["reasoning_effort"] = reasoning_levels[self._reasoning_combo.currentIndex()]
+        
+        return params
     
     def _on_send(self):
         if self._input_field is None:
