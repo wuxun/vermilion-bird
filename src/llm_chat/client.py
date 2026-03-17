@@ -244,6 +244,11 @@ class LLMClient:
             }
             current_messages.append(assistant_message)
             
+            for tc in tool_calls:
+                tool_name = tc["function"]["name"]
+                tool_args = tc["function"].get("arguments", "{}")
+                yield ("tool_call_start", tool_name, tool_args)
+            
             self._tool_executor_instance.tool_executor = self._tool_executor
             tool_results = self._tool_executor_instance.execute_tools_parallel(tool_calls)
             logger.info(f"工具执行结果数量: {len(tool_results)}")
@@ -258,8 +263,6 @@ class LLMClient:
                         tool_name = tc["function"]["name"]
                         tool_args = tc["function"].get("arguments", "{}")
                         break
-                
-                yield ("tool_call_start", tool_name, tool_args)
                 
                 content = result.get("content")
                 if content is None:
