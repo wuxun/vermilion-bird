@@ -170,6 +170,18 @@ class SkillManager:
     def get_available_skill_classes(self) -> Dict[str, Type[BaseSkill]]:
         return self._skill_classes.copy()
     
+    def get_all_skill_classes(self) -> Dict[str, Type[BaseSkill]]:
+        """获取所有已注册的技能类"""
+        return self._skill_classes.copy()
+    
+    def get_loaded_skills(self) -> Dict[str, BaseSkill]:
+        """获取所有已加载的技能实例"""
+        return self._skills.copy()
+    
+    def get_skill_class(self, name: str) -> Optional[Type[BaseSkill]]:
+        """获取指定技能类"""
+        return self._skill_classes.get(name)
+    
     def load_from_config(self, skills_config: Dict[str, Dict[str, Any]]) -> None:
         for skill_name, skill_config in skills_config.items():
             if skill_config.get("enabled", True):
