@@ -384,13 +384,13 @@ class LLMClient:
             content = msg.get('content', '')
             
             if role == 'system':
-                preview = content[:200] + '...' if len(content) > 200 else content
+                preview = content[:200] + '...' if content is not None and len(content) > 200 else content
                 logger.info(f"  [{i}] system: {preview}")
             elif role == 'user':
-                preview = content[:100] + '...' if len(content) > 100 else content
+                preview = content[:100] + '...' if content is not None and len(content) > 100 else content
                 logger.info(f"  [{i}] user: {preview}")
             elif role == 'assistant':
-                preview = content[:100] + '...' if len(content) > 100 else content
+                preview = content[:100] + '...' if content is not None and len(content) > 100 else content
                 logger.info(f"  [{i}] assistant: {preview}")
             else:
                 logger.info(f"  [{i}] {role}: (content length: {len(content)})")
