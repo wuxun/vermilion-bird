@@ -913,7 +913,7 @@ class GUIFrontend(BaseFrontend):
                 
                 setup_logging(logging.INFO)
                 
-                config = Config()
+                config = Config.from_yaml()
                 client = LLMClient(config)
                 
                 history = [{"role": m["role"], "content": m["content"]} for m in self._messages[:-1]]

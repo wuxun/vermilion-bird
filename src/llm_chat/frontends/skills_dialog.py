@@ -114,7 +114,7 @@ class SkillsConfigDialog(QDialog):
         from llm_chat.skills.manager import SkillManager
         from llm_chat.config import Config
         
-        config = Config()
+        config = Config.from_yaml()
         manager = SkillManager()
         manager.register_skill_class(WebSearchSkill)
         manager.register_skill_class(CalculatorSkill)
@@ -161,7 +161,37 @@ class SkillsConfigDialog(QDialog):
         status = "✓ 已启用" if self._skill_states[skill_name] else "○ 已禁用"
         current_item.setText(f"{status}  {skill_name}\n      版本: {data['version']} | 工具: {tool_names}")
         
+        self._save_skill_state(skill_name, self._skill_states[skill_name])
+        
         logger.info(f"技能 {skill_name} 状态切换为: {'启用' if self._skill_states[skill_name] else '禁用'}")
+    
+    def _save_skill_state(self, skill_name: str, enabled: bool):
+        """保存技能状态到配置文件"""
+        import yaml
+        from pathlib import Path
+        
+        config_path = Path("config.yaml")
+        
+        try:
+            config_data = {}
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config_data = yaml.safe_load(f) or {}
+            
+            if "skills" not in config_data:
+                config_data["skills"] = {}
+            
+            if skill_name not in config_data["skills"]:
+                config_data["skills"][skill_name] = {}
+            
+            config_data["skills"][skill_name]["enabled"] = enabled
+            
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+            
+            logger.info(f"已保存技能 {skill_name} 状态到配置文件: enabled={enabled}")
+        except Exception as e:
+            logger.error(f"保存技能状态失败: {e}")
     
     def _show_info(self):
         current_item = self._skills_list.currentItem()
