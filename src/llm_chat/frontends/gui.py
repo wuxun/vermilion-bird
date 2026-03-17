@@ -685,6 +685,18 @@ class GUIFrontend(BaseFrontend):
             }
         """)
         
+        self._skills_button.setStyleSheet("""
+            QPushButton {
+                background-color: #D4652F;
+                color: white;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #C84B31;
+            }
+        """)
+        
         self._conversation_list.setStyleSheet("""
             QListWidget {
                 border: none;

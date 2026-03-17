@@ -57,16 +57,52 @@ class SkillsConfigDialog(QDialog):
         
         self._toggle_btn = QPushButton("启用/禁用")
         self._toggle_btn.clicked.connect(self._toggle_skill)
+        self._toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #D4652F;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #C84B31;
+            }
+        """)
         button_layout.addWidget(self._toggle_btn)
         
         self._info_btn = QPushButton("查看详情")
         self._info_btn.clicked.connect(self._show_info)
+        self._info_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #5C3D3A;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #6B4D4A;
+            }
+        """)
         button_layout.addWidget(self._info_btn)
         
         button_layout.addStretch()
         
         close_btn = QPushButton("关闭")
         close_btn.clicked.connect(self.accept)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #D4A574;
+                color: #3D2C2E;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #C49464;
+            }
+        """)
         button_layout.addWidget(close_btn)
         
         layout.addLayout(button_layout)
