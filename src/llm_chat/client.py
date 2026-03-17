@@ -51,6 +51,8 @@ class LLMClient:
         self._setup_skills()
     
     def _setup_skills(self):
+        self._tool_registry.clear()
+        
         self._skill_manager.register_skill_class(WebSearchSkill)
         self._skill_manager.register_skill_class(CalculatorSkill)
         self._skill_manager.register_skill_class(WebFetchSkill)
