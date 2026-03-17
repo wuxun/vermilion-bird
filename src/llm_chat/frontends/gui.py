@@ -18,7 +18,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QTextEdit, QTextBrowser, QPushButton, QLabel, QFrame, QMessageBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit, QInputDialog,
-        QAbstractItemView, QScrollArea, QSizePolicy, QSlider, QComboBox
+        QAbstractItemView, QScrollArea, QSizePolicy, QSlider, QComboBox, QDialog
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -46,6 +46,7 @@ except ImportError:
     QSizePolicy = None
     QSlider = None
     QComboBox = None
+    QDialog = None
     QScrollArea = None
     QSizePolicy = None
     Qt = None
