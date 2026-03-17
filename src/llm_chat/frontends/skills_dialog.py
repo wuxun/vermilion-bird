@@ -3,9 +3,10 @@ from typing import Dict, Any, List
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QMessageBox, QFont
+    QListWidget, QListWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 
 logger = logging.getLogger(__name__)
 
