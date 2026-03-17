@@ -98,12 +98,14 @@ if PYQT_AVAILABLE:
         def __init__(self, parent=None):
             super().__init__(parent)
             self.setWindowTitle("技能管理")
-            self.setMinimumSize(600, 400)
+            self.setMinimumSize(650, 450)
+            self._skill_states = {}
             self._setup_ui()
             self._load_skills()
         
         def _setup_ui(self):
             layout = QVBoxLayout(self)
+            layout.setSpacing(10)
             
             label = QLabel("可用技能列表")
             label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
@@ -114,20 +116,28 @@ if PYQT_AVAILABLE:
                 QListWidget {
                     border: 1px solid #D4A574;
                     border-radius: 4px;
-                    background-color: white;
+                    background-color: #FFFBF5;
                 }
                 QListWidget::item {
-                    padding: 10px;
+                    padding: 8px;
                     border-bottom: 1px solid #E0D0C0;
+                    color: #3D2C2E;
                 }
                 QListWidget::item:selected {
                     background-color: #F5E6D3;
                     color: #3D2C2E;
                 }
+                QListWidget::item:hover {
+                    background-color: #F5E6D3;
+                }
             """)
             layout.addWidget(self._skills_list)
             
             button_layout = QHBoxLayout()
+            
+            self._toggle_btn = QPushButton("启用/禁用")
+            self._toggle_btn.clicked.connect(self._toggle_skill)
+            button_layout.addWidget(self._toggle_btn)
             
             self._info_btn = QPushButton("查看详情")
             self._info_btn.clicked.connect(self._show_info)
@@ -146,7 +156,9 @@ if PYQT_AVAILABLE:
             from llm_chat.skills.calculator.skill import CalculatorSkill
             from llm_chat.skills.web_fetch.skill import WebFetchSkill
             from llm_chat.skills.manager import SkillManager
+            from llm_chat.config import Config
             
+            config = Config()
             manager = SkillManager()
             manager.register_skill_class(WebSearchSkill)
             manager.register_skill_class(CalculatorSkill)
@@ -159,9 +171,19 @@ if PYQT_AVAILABLE:
                 tools = skill.get_tools()
                 tool_names = ", ".join([t.name for t in tools])
                 
+                enabled = True
+                if hasattr(config.skills, name):
+                    skill_config = getattr(config.skills, name, None)
+                    if skill_config and hasattr(skill_config, 'enabled'):
+                        enabled = skill_config.enabled
+                
+                self._skill_states[name] = enabled
+                
+                status = "✓ 已启用" if enabled else "○ 已禁用"
                 item = QListWidgetItem()
-                item.setText(f"{name}\n  版本: {skill.version} | 工具: {tool_names}")
+                item.setText(f"{status}  {name}\n      版本: {skill.version} | 工具: {tool_names}")
                 item.setData(Qt.ItemDataRole.UserRole, name)
+                item.setForeground(Qt.GlobalColor.darkGray)
                 self._skills_list.addItem(item)
                 
                 self._skills_data[name] = {
@@ -170,6 +192,22 @@ if PYQT_AVAILABLE:
                     'dependencies': skill.dependencies,
                     'tools': tools
                 }
+        
+        def _toggle_skill(self):
+            current_item = self._skills_list.currentItem()
+            if not current_item:
+                QMessageBox.information(self, "提示", "请先选择一个技能")
+                return
+            
+            skill_name = current_item.data(Qt.ItemDataRole.UserRole)
+            self._skill_states[skill_name] = not self._skill_states[skill_name]
+            
+            data = self._skills_data[skill_name]
+            tool_names = ", ".join([t.name for t in data['tools']])
+            status = "✓ 已启用" if self._skill_states[skill_name] else "○ 已禁用"
+            current_item.setText(f"{status}  {skill_name}\n      版本: {data['version']} | 工具: {tool_names}")
+            
+            logger.info(f"技能 {skill_name} 状态切换为: {'启用' if self._skill_states[skill_name] else '禁用'}")
         
         def _show_info(self):
             current_item = self._skills_list.currentItem()
@@ -566,7 +604,7 @@ class GUIFrontend(BaseFrontend):
         header_layout.addWidget(self._mcp_button)
         
         self._skills_button = QPushButton("Skills")
-        self._skills_button.setFixedWidth(80)
+        self._skills_button.setFixedWidth(100)
         self._skills_button.clicked.connect(self._on_skills_config)
         header_layout.addWidget(self._skills_button)
         
