@@ -1079,6 +1079,8 @@ class GUIFrontend(BaseFrontend):
         logger.info(f"工具调用开始: {tool_name}, args={args_formatted[:100]}")
     
     def _on_tool_call_finished(self, tool_name: str, tool_args: str, result: str):
+        logger.info(f"_on_tool_call_finished 被调用: tool_name={tool_name}, result_type={type(result)}, result_is_none={result is None}")
+        
         for tc in self._current_tool_calls:
             if tc["name"] == tool_name and tc["result"] is None:
                 tc["result"] = result
@@ -1086,6 +1088,7 @@ class GUIFrontend(BaseFrontend):
                 
                 if tool_id in self._current_tool_call_widgets:
                     widget = self._current_tool_call_widgets[tool_id]
+                    logger.info(f"调用 widget.set_result, result_len={len(result) if result else 0}")
                     widget.set_result(result)
                 
                 break

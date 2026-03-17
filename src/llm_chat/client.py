@@ -246,8 +246,11 @@ class LLMClient:
             
             self._tool_executor_instance.tool_executor = self._tool_executor
             tool_results = self._tool_executor_instance.execute_tools_parallel(tool_calls)
+            logger.info(f"工具执行结果数量: {len(tool_results)}")
             
             for result in tool_results:
+                logger.info(f"处理工具结果: tool_call_id={result.get('tool_call_id')}, content_type={type(result.get('content'))}, content_is_none={result.get('content') is None}")
+                
                 tool_name = "unknown"
                 tool_args = "{}"
                 for tc in tool_calls:
@@ -258,14 +261,19 @@ class LLMClient:
                 
                 yield ("tool_call_start", tool_name, tool_args)
                 
+                content = result.get("content")
+                if content is None:
+                    content = "工具返回空结果"
+                    logger.warning(f"工具 {tool_name} 返回 content 为 None")
+                
                 tool_message = {
                     "role": "tool",
                     "tool_call_id": result["tool_call_id"],
-                    "content": result["content"]
+                    "content": content
                 }
                 current_messages.append(tool_message)
                 
-                yield ("tool_call_end", tool_name, tool_args, str(result.get("content", ""))[:500])
+                yield ("tool_call_end", tool_name, tool_args, str(content)[:500])
     
     def _parse_stream_tool_calls(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
         choices = chunk.get("choices", [])

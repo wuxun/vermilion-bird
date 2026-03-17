@@ -34,10 +34,14 @@ class ToolExecutor:
         
         for attempt in range(self.max_retries):
             try:
+                logger.info(f"执行工具: {tool_name}, args={tool_args}")
+                
                 if self.tool_registry.has_tool(tool_name):
                     result = self.tool_registry.execute_tool(tool_name, **tool_args)
+                    logger.info(f"工具注册表执行完成: result_type={type(result)}, result_is_none={result is None}")
                 elif self.tool_executor:
                     result = self.tool_executor(tool_name, tool_args)
+                    logger.info(f"外部执行器执行完成: result_type={type(result)}, result_is_none={result is None}")
                 else:
                     return {
                         "tool_call_id": tool_call_id,
@@ -51,11 +55,13 @@ class ToolExecutor:
                 else:
                     logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(result)}")
                 
-                return {
+                return_dict = {
                     "tool_call_id": tool_call_id,
                     "content": result,
                     "is_error": False
                 }
+                logger.info(f"返回结果字典: tool_call_id={tool_call_id}, content_type={type(result)}, content_len={len(result) if result else 0}")
+                return return_dict
                 
             except Exception as e:
                 last_error = e
