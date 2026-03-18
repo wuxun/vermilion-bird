@@ -376,8 +376,6 @@ class MemoryManager:
                 if summary:
                     self.consolidate_to_mid_term(summary)
                     logger.info("中期记忆提取完成")
-                
-                self.evolve_understanding()
             except Exception as e:
                 logger.error(f"中期记忆提取失败: {e}")
     
