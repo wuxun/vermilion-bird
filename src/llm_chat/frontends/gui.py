@@ -1044,10 +1044,60 @@ class GUIFrontend(BaseFrontend):
         if self._storage:
             self._storage.add_message(conv_id, "assistant", full_text)
         
+        self._extract_memory_async(full_text)
+        
         self._refresh_chat_display()
         self._set_input_state(True)
         
         self._refresh_conversation_list()
+    
+    def _extract_memory_async(self, assistant_response: str):
+        """异步提取记忆"""
+        if len(self._messages) < 2:
+            return
+        
+        user_message = None
+        for msg in reversed(self._messages[:-1]):
+            if msg.get("role") == "user":
+                user_message = msg.get("content", "")
+                break
+        
+        if not user_message:
+            return
+        
+        def extract_memory():
+            try:
+                from llm_chat.config import Config
+                from llm_chat.memory import MemoryStorage, MemoryManager
+                from llm_chat.client import LLMClient
+                
+                config = Config.from_yaml()
+                if not config.memory.enabled:
+                    return
+                
+                memory_storage = MemoryStorage(config.memory.storage_dir)
+                client = LLMClient(config)
+                
+                memory_manager = MemoryManager(
+                    storage=memory_storage,
+                    db_storage=None,
+                    llm_client=client,
+                    config={}
+                )
+                
+                messages = [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": assistant_response}
+                ]
+                memory_manager.schedule_extraction(messages)
+                memory_manager.process_pending_extractions()
+                logger.info(f"记忆提取完成")
+            except Exception as e:
+                logger.warning(f"记忆提取失败: {e}")
+        
+        import threading
+        thread = threading.Thread(target=extract_memory, daemon=True)
+        thread.start()
     
     def _on_stream_error(self, conv_id: str, error: str):
         if conv_id != self.conversation_id:
