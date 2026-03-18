@@ -1052,7 +1052,7 @@ class GUIFrontend(BaseFrontend):
         self._refresh_conversation_list()
     
     def _extract_memory_async(self, assistant_response: str):
-        """异步提取记忆"""
+        """异步处理记忆 - 短期记忆直接写入"""
         if len(self._messages) < 2:
             return
         
@@ -1065,7 +1065,7 @@ class GUIFrontend(BaseFrontend):
         if not user_message:
             return
         
-        def extract_memory():
+        def process_memory():
             try:
                 from llm_chat.config import Config
                 from llm_chat.memory import MemoryStorage, MemoryManager
@@ -1082,21 +1082,27 @@ class GUIFrontend(BaseFrontend):
                     storage=memory_storage,
                     db_storage=None,
                     llm_client=client,
-                    config={}
+                    config={
+                        "extraction_interval": config.memory.extraction_interval,
+                        "extraction_time_interval": config.memory.extraction_time_interval,
+                        "short_term_max_entries": config.memory.short_term_max_entries
+                    }
                 )
                 
                 messages = [
                     {"role": "user", "content": user_message},
                     {"role": "assistant", "content": assistant_response}
                 ]
+                
                 memory_manager.schedule_extraction(messages)
                 memory_manager.process_pending_extractions()
-                logger.info(f"记忆提取完成")
+                
+                logger.info("记忆处理完成")
             except Exception as e:
-                logger.warning(f"记忆提取失败: {e}")
+                logger.warning(f"记忆处理失败: {e}")
         
         import threading
-        thread = threading.Thread(target=extract_memory, daemon=True)
+        thread = threading.Thread(target=process_memory, daemon=True)
         thread.start()
     
     def _on_stream_error(self, conv_id: str, error: str):

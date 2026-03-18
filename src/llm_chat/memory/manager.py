@@ -27,6 +27,12 @@ class MemoryManager:
         
         self._extraction_lock = threading.Lock()
         self._pending_extractions: List[Dict] = []
+        
+        self._conversation_count = 0
+        self._last_extraction_time = datetime.now()
+        self._extraction_interval = self.config.get("extraction_interval", 10)
+        self._extraction_time_interval = self.config.get("extraction_time_interval", 3600)
+        self._short_term_max_entries = self.config.get("short_term_max_entries", 50)
     
     def load_recent_conversations(self, days: int = 7) -> List[Dict]:
         """从SQLite读取最近的对话"""
@@ -281,7 +287,7 @@ class MemoryManager:
             self._pending_extractions.extend(messages)
     
     def process_pending_extractions(self):
-        """处理待提取的记忆"""
+        """处理待提取的记忆 - 短期记忆直接写入"""
         with self._extraction_lock:
             if not self._pending_extractions:
                 return
@@ -289,21 +295,102 @@ class MemoryManager:
             messages = self._pending_extractions.copy()
             self._pending_extractions.clear()
         
-        try:
-            info = self.extract_memories_from_messages(messages)
+        self._write_short_term_directly(messages)
+        
+        self._increment_conversation_count()
+        
+        if self._should_extract_mid_term():
+            self._extract_to_mid_term()
+    
+    def _increment_conversation_count(self):
+        """增加对话计数"""
+        self._conversation_count += 1
+        logger.debug(f"对话计数: {self._conversation_count}/{self._extraction_interval}")
+    
+    def _should_extract_mid_term(self) -> bool:
+        """判断是否需要提取中期记忆"""
+        if self._conversation_count >= self._extraction_interval:
+            logger.info(f"达到对话次数阈值 ({self._extraction_interval})，触发中期记忆提取")
+            return True
+        
+        elapsed = (datetime.now() - self._last_extraction_time).total_seconds()
+        if elapsed >= self._extraction_time_interval:
+            logger.info(f"达到时间间隔阈值 ({self._extraction_time_interval}秒)，触发中期记忆提取")
+            return True
+        
+        return False
+    
+    def _write_short_term_directly(self, messages: List[Dict]):
+        """直接写入短期记忆，不调用 LLM"""
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
             
-            if self.extractor.should_remember(info):
-                self.consolidate_to_short_term(info)
-                
-                if info.get("important_facts"):
-                    self.consolidate_to_long_term(info["important_facts"], is_user_told=True)
-                
-                if info.get("user_preferences"):
-                    self.consolidate_to_long_term(info["user_preferences"], is_user_told=False)
-            
-            logger.info("完成记忆提取处理")
-        except Exception as e:
-            logger.error(f"记忆提取处理失败: {e}")
+            if role == "user" and content:
+                self._append_short_term_entry("用户", content[:200])
+            elif role == "assistant" and content:
+                self._append_short_term_entry("助手", content[:200])
+        
+        self._trim_short_term_entries()
+        logger.info("短期记忆直接写入完成")
+    
+    def _append_short_term_entry(self, role: str, content: str):
+        """追加短期记忆条目"""
+        current = self.storage.load_short_term()
+        timestamp = datetime.now().strftime("%H:%M")
+        
+        entry = f"- [{timestamp}] {role}: {content}"
+        
+        current = self._update_section(current, "## 最近对话", entry)
+        self.storage.save_short_term(current)
+    
+    def _trim_short_term_entries(self):
+        """修剪短期记忆条目，保持最大数量"""
+        content = self.storage.load_short_term()
+        
+        import re
+        dialog_section = re.search(r'## 最近对话\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        
+        if dialog_section:
+            entries = dialog_section.group(1).strip().split('\n')
+            if len(entries) > self._short_term_max_entries:
+                entries = entries[-self._short_term_max_entries:]
+                new_dialog = '\n'.join(entries)
+                content = content[:dialog_section.start(1)] + new_dialog + "\n" + content[dialog_section.end(1):]
+                self.storage.save_short_term(content)
+                logger.debug(f"修剪短期记忆到 {self._short_term_max_entries} 条")
+    
+    def _extract_to_mid_term(self):
+        """从短期记忆提取到中期记忆"""
+        self._conversation_count = 0
+        self._last_extraction_time = datetime.now()
+        
+        if self.db_storage:
+            messages = self.load_recent_conversations(days=1)
+        else:
+            messages = self._pending_extractions.copy()
+        
+        if messages and self.llm_client:
+            try:
+                summary = self.extractor.summarize_day(messages)
+                if summary:
+                    self.consolidate_to_mid_term(summary)
+                    logger.info("中期记忆提取完成")
+            except Exception as e:
+                logger.error(f"中期记忆提取失败: {e}")
+    
+    def consolidate_mid_to_long_term(self):
+        """从中期记忆整理到长期记忆"""
+        mid_term = self.storage.load_mid_term()
+        
+        if self.llm_client and mid_term:
+            try:
+                facts = self.extractor.extract_long_term_facts(mid_term)
+                if facts:
+                    self.consolidate_to_long_term(facts, is_user_told=False)
+                    logger.info("中期记忆已整理到长期记忆")
+            except Exception as e:
+                logger.error(f"中期到长期记忆整理失败: {e}")
     
     def archive_session(self, session_id: str):
         """归档会话到中期记忆"""

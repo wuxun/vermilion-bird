@@ -87,6 +87,9 @@ class MemoryConfig(BaseSettings):
         default_factory=lambda: ["密码", "password", "token", "api_key", "secret"],
         description="敏感词过滤模式"
     )
+    extraction_interval: int = Field(default=10, description="多少次对话后提取中期记忆")
+    extraction_time_interval: int = Field(default=3600, description="多少秒后提取中期记忆（默认1小时）")
+    short_term_max_entries: int = Field(default=50, description="短期记忆最大条目数")
 
     class Config:
         env_prefix = "MEMORY_"

@@ -302,3 +302,75 @@ class MemoryExtractor:
     def should_remember(self, info: Dict, threshold: float = 0.3) -> bool:
         """判断是否值得记忆"""
         return self.calculate_importance(info) >= threshold
+    
+    EXTRACT_LONG_TERM_PROMPT = """分析以下中期记忆内容，提取值得长期保存的重要事实和用户偏好。
+
+中期记忆内容：
+{mid_term_content}
+
+请提取以下类型的信息：
+1. 用户偏好：用户明确表达的长期偏好（如语言风格、工作习惯等）
+2. 重要事实：用户的个人信息、职业、兴趣等长期有效的事实
+3. 关键事件：对用户有长期影响的重要事件
+
+请以JSON格式输出：
+{{
+    "user_preferences": ["偏好1", "偏好2"],
+    "important_facts": ["事实1", "事实2"],
+    "key_events": ["事件1", "事件2"]
+}}
+
+注意：
+- 只提取长期有效的信息，不要提取临时性的内容
+- 不要包含敏感信息
+- 如果某类信息不存在，对应字段留空数组"""
+
+    def extract_long_term_facts(self, mid_term_content: str) -> List[str]:
+        """从中期记忆提取长期事实"""
+        if not mid_term_content or len(mid_term_content) < 50:
+            return []
+        
+        if self._contains_sensitive_info(mid_term_content):
+            mid_term_content = self._redact_sensitive_info(mid_term_content)
+        
+        if self.llm_client:
+            return self._extract_long_term_with_llm(mid_term_content)
+        else:
+            return self._extract_long_term_with_rules(mid_term_content)
+    
+    def _extract_long_term_with_llm(self, content: str) -> List[str]:
+        """使用LLM提取长期事实"""
+        try:
+            prompt = self.EXTRACT_LONG_TERM_PROMPT.format(mid_term_content=content)
+            response = self.llm_client.chat(prompt, history=[])
+            
+            import json
+            result = json.loads(response)
+            
+            facts = []
+            facts.extend(result.get("user_preferences", []))
+            facts.extend(result.get("important_facts", []))
+            facts.extend(result.get("key_events", []))
+            
+            logger.info(f"使用LLM提取长期事实: {len(facts)} 条")
+            return facts
+        except Exception as e:
+            logger.error(f"LLM提取长期事实失败: {e}")
+            return []
+    
+    def _extract_long_term_with_rules(self, content: str) -> List[str]:
+        """使用规则提取长期事实"""
+        facts = []
+        
+        preference_patterns = [
+            r'偏好[：:]\s*(.+)',
+            r'喜欢[：:]\s*(.+)',
+            r'习惯[：:]\s*(.+)',
+        ]
+        
+        for pattern in preference_patterns:
+            matches = re.findall(pattern, content)
+            facts.extend(matches)
+        
+        logger.info(f"使用规则提取长期事实: {len(facts)} 条")
+        return facts
