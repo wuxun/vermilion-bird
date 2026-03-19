@@ -109,6 +109,8 @@ class SkillsConfig(BaseSettings):
     calculator: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     web_fetch: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     file_reader: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    file_writer: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    file_editor: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     
     class Config:
         extra = "allow"
