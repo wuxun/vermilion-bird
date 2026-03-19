@@ -10,6 +10,7 @@ from llm_chat.skills import SkillManager
 from llm_chat.skills.web_search import WebSearchSkill
 from llm_chat.skills.calculator import CalculatorSkill
 from llm_chat.skills.web_fetch import WebFetchSkill
+from llm_chat.skills.file_reader import FileReaderSkill
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class LLMClient:
         self._skill_manager.register_skill_class(WebSearchSkill)
         self._skill_manager.register_skill_class(CalculatorSkill)
         self._skill_manager.register_skill_class(WebFetchSkill)
+        self._skill_manager.register_skill_class(FileReaderSkill)
         
         if self.config.external_skill_dirs:
             self._skill_manager.discover_skills(self.config.external_skill_dirs)

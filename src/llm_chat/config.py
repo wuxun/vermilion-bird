@@ -108,6 +108,7 @@ class SkillsConfig(BaseSettings):
     web_search: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     calculator: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     web_fetch: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    file_reader: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     
     class Config:
         extra = "allow"
@@ -209,6 +210,8 @@ class Config(BaseSettings):
             skill_configs["calculator"] = SkillConfig(enabled=True)
         if "web_fetch" not in skill_configs:
             skill_configs["web_fetch"] = SkillConfig(enabled=True)
+        if "file_reader" not in skill_configs:
+            skill_configs["file_reader"] = SkillConfig(enabled=True)
         
         return SkillsConfig(**skill_configs)
     

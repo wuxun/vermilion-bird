@@ -111,6 +111,7 @@ class SkillsConfigDialog(QDialog):
         from llm_chat.skills.web_search.skill import WebSearchSkill
         from llm_chat.skills.calculator.skill import CalculatorSkill
         from llm_chat.skills.web_fetch.skill import WebFetchSkill
+        from llm_chat.skills.file_reader.skill import FileReaderSkill
         from llm_chat.skills.manager import SkillManager
         from llm_chat.config import Config
         
@@ -119,6 +120,7 @@ class SkillsConfigDialog(QDialog):
         manager.register_skill_class(WebSearchSkill)
         manager.register_skill_class(CalculatorSkill)
         manager.register_skill_class(WebFetchSkill)
+        manager.register_skill_class(FileReaderSkill)
         
         for name, skill_class in manager.get_all_skill_classes().items():
             skill = skill_class()
