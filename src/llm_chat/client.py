@@ -13,6 +13,7 @@ from llm_chat.skills.web_fetch import WebFetchSkill
 from llm_chat.skills.file_reader import FileReaderSkill
 from llm_chat.skills.file_writer import FileWriterSkill
 from llm_chat.skills.file_editor import FileEditorSkill
+from llm_chat.skills.todo_manager import TodoManagerSkill
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class LLMClient:
         self._skill_manager.register_skill_class(FileReaderSkill)
         self._skill_manager.register_skill_class(FileWriterSkill)
         self._skill_manager.register_skill_class(FileEditorSkill)
+        self._skill_manager.register_skill_class(TodoManagerSkill)
         
         if self.config.external_skill_dirs:
             self._skill_manager.discover_skills(self.config.external_skill_dirs)

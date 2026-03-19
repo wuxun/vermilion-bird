@@ -111,6 +111,7 @@ class SkillsConfig(BaseSettings):
     file_reader: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     file_writer: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     file_editor: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    todo_manager: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     
     class Config:
         extra = "allow"
