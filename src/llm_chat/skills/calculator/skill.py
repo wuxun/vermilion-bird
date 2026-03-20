@@ -1,9 +1,12 @@
-import logging
+import ast
 import math
 from typing import Dict, Any, List
-
+import logging
 from llm_chat.skills.base import BaseSkill
 from llm_chat.tools.base import BaseTool
+
+import logging
+from llm_chat.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -30,45 +33,51 @@ class CalculatorTool(BaseTool):
         }
     
     def execute(self, expression: str) -> str:
-        allowed_names = {
-            "abs": abs, "round": round, "min": min, "max": max,
-            "sum": sum, "pow": pow,
-            "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
-            "tan": math.tan, "log": math.log, "log10": math.log10,
-            "exp": math.exp, "pi": math.pi, "e": math.e
-        }
+        """安全地执行数学表达式计算
         
+        使用 ast 模块解析和验证表达式，只允许安全的操作。
+        支持:
+            - 帺本算术运算: +, -, *, /, **, (), ()
+            - 幂运算: **, pow
+            - 数学函数: abs, round, min, max, sum, sqrt, sin, cos, tan, log, log10, log2, exp
+            - 数学常量: pi, e
+        """
+        
+        # 允许的字符集（字母、数字、运算符、括号)
+        allowed_chars = set('01234567890+-*/().%abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ')
+        for char in expression:
+            if char not in allowed_chars:
+                return f"错误: 表达式包含不允许的字符: {char}"
+        
+        # 使用 ast 模块进行安全解析
         try:
-            for char in expression:
-                if char.isalpha() or char == '_':
-                    continue
-                if char.isdigit() or char in '+-*/().% ':
-                    continue
-                if char not in allowed_names:
-                    return f"错误: 表达式包含不允许的字符: {char}"
+            node = ast.parse(expression, mode='eval')
             
-            result = eval(expression, {"__builtins__": {}}, allowed_names)
-            return str(result)
+            # 验证节点类型 - 只允许安全的操作
+            allowed_nodes = (
+                ast.Expression,      # 表达式
+                ast.BinOp,          # 二元运算
+                ast.UnaryOp,        # 一元运算
+                ast.Num,          # 数字
+                ast.Constant,      # 岒量
+            )
             
-        except Exception as e:
-            return f"计算错误: {str(e)}"
-
-
-class CalculatorSkill(BaseSkill):
-    @property
-    def name(self) -> str:
-        return "calculator"
-    
-    @property
-    def description(self) -> str:
-        return "数学计算能力，支持基本算术运算、幂运算、开方等"
-    
-    @property
-    def version(self) -> str:
-        return "1.0.0"
-    
-    def get_tools(self) -> List[BaseTool]:
-        return [CalculatorTool()]
-    
-    def on_load(self, config: Dict[str, Any]) -> None:
-        self.logger.info(f"CalculatorSkill loaded with config: {config}")
+            # 递归遍历 AST 节点，验证安全性
+            for node in ast.walk(node):
+                if not isinstance(node, allowed_nodes):
+                    return f"错误: 表达式包含不允许的操作"
+                
+                # 安全执行计算
+                safe_builtins = {}
+                for name, allowed_functions:
+                    if name not in safe_builtins:
+                        safe_builtins[name] = safe_functions[name]
+                    else:
+                        raise ValueError(f"不允许的函数: {name}")
+                
+                # 执行计算
+                result = eval(code, {"__builtins__": {}}, safe_builtins)
+                return str(result)
+            
+            except Exception as e:
+                return f"计算错误: {str(e)}"
