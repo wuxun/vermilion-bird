@@ -250,7 +250,7 @@ class LLMClient:
 
             assistant_message = {
                 "role": "assistant",
-                "content": full_text if full_text else None,
+                "content": full_text if full_text else "",
                 "tool_calls": tool_calls,
             }
             current_messages.append(assistant_message)

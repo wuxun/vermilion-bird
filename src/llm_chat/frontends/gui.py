@@ -300,6 +300,8 @@ else:
 class GUIFrontend(BaseFrontend):
     def __init__(self, conversation_id: str = "default", title: str = "Vermilion Bird"):
         BaseFrontend.__init__(self, "gui")
+        self._conversation_id: str = conversation_id
+        self._title: str = title
         self._app: Optional[QApplication] = None
         self._main_window: Optional[QMainWindow] = None
         self._chat_display: Optional[QTextBrowser] = None
@@ -335,7 +337,7 @@ class GUIFrontend(BaseFrontend):
         self._on_delete_conversation: Optional[Callable] = None
         self._on_rename_conversation: Optional[Callable] = None
         self._on_switch_conversation: Optional[Callable] = None
-        self._on_list_conversations: Optional[Callable] = None
+        self._on_list_conversation: Optional[Callable] = None
 
     def set_storage(self, storage: Any):
         self._storage = storage
@@ -371,7 +373,7 @@ class GUIFrontend(BaseFrontend):
         )
 
         self._main_window = QMainWindow()
-        self._main_window.setWindowTitle(self.title)
+        self._main_window.setWindowTitle(self._title)
         self._main_window.setMinimumSize(QSize(1000, 600))
 
         self._set_window_icon()
@@ -855,7 +857,7 @@ class GUIFrontend(BaseFrontend):
     def set_current_conversation(
         self, conversation_id: str, messages: List[Dict[str, Any]]
     ):
-        self.conversation_id = conversation_id
+        self._conversation_id = conversation_id
         self._messages = []
 
         for msg in messages:

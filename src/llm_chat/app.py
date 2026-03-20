@@ -121,6 +121,10 @@ class App:
     def set_frontend(self, frontend: BaseFrontend):
         self.current_frontend = frontend
 
+        # Set storage for frontends that support it (e.g., GUIFrontend)
+        if hasattr(frontend, "set_storage"):
+            frontend.set_storage(self.storage)
+
         frontend.set_conversation_callbacks(
             on_new=self._on_new_conversation,
             on_delete=self._on_delete_conversation,
