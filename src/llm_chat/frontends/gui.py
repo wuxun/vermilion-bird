@@ -300,16 +300,6 @@ else:
 class GUIFrontend(BaseFrontend):
     def __init__(self, conversation_id: str = "default", title: str = "Vermilion Bird"):
         BaseFrontend.__init__(self, "gui")
-        self.conversation_id = conversation_id
-        self.title = title
-
-        if not PYQT_AVAILABLE:
-            raise ImportError(
-                "PyQt6 未安装。GUI 前端需要 PyQt6。\n"
-                "请运行: pip install PyQt6\n"
-                "或使用 Poetry: poetry add PyQt6"
-            )
-
         self._app: Optional[QApplication] = None
         self._main_window: Optional[QMainWindow] = None
         self._chat_display: Optional[QTextBrowser] = None
