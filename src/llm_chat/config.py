@@ -11,6 +11,9 @@ class ModelInfo(BaseSettings):
     id: str = Field(description="模型ID")
     name: str = Field(description="模型显示名称")
     description: Optional[str] = Field(default=None, description="模型描述")
+    base_url: Optional[str] = Field(default=None, description="模型 API 基础 URL")
+    api_key: Optional[str] = Field(default=None, description="API 密钥")
+    protocol: Optional[str] = Field(default=None, description="API 协议类型")
 
     class Config:
         extra = "allow"
@@ -182,8 +185,17 @@ class Config(BaseSettings):
         env_prefix = ""
         case_sensitive = False
 
+    @staticmethod
+    def get_default_config_path() -> str:
+        config_dir = os.path.expanduser("~/.vermilion-bird")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "config.yaml")
+
     @classmethod
-    def from_yaml(cls, config_path: str = "config.yaml") -> "Config":
+    def from_yaml(cls, config_path: Optional[str] = None) -> "Config":
+        if config_path is None:
+            config_path = cls.get_default_config_path()
+
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = yaml.safe_load(f)
@@ -265,7 +277,14 @@ class Config(BaseSettings):
 
         return SkillsConfig(**skill_configs)
 
-    def to_yaml(self, config_path: str = "config.yaml"):
+    def to_yaml(self, config_path: Optional[str] = None):
+        if config_path is None:
+            config_path = self.get_default_config_path()
+
+        config_dir = os.path.dirname(config_path)
+        if config_dir:
+            os.makedirs(config_dir, exist_ok=True)
+
         skills_dict = {}
         for skill_name in self.skills.model_fields.keys():
             skill_config = getattr(self.skills, skill_name, None)

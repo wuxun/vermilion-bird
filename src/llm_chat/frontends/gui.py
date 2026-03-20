@@ -585,6 +585,11 @@ class GUIFrontend(BaseFrontend):
         self._skills_button.clicked.connect(self._on_skills_config)
         header_layout.addWidget(self._skills_button)
 
+        self._models_button = QPushButton("Models")
+        self._models_button.setFixedWidth(100)
+        self._models_button.clicked.connect(self._on_models_config)
+        header_layout.addWidget(self._models_button)
+
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
         self._clear_button.clicked.connect(self._on_clear)
@@ -822,6 +827,18 @@ class GUIFrontend(BaseFrontend):
         """)
 
         self._skills_button.setStyleSheet("""
+            QPushButton {
+                background-color: #D4652F;
+                color: white;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #C84B31;
+            }
+        """)
+
+        self._models_button.setStyleSheet("""
             QPushButton {
                 background-color: #D4652F;
                 color: white;
@@ -1499,6 +1516,19 @@ class GUIFrontend(BaseFrontend):
         except ImportError as e:
             QMessageBox.warning(
                 self._main_window, "Error", f"Skills module not available: {e}"
+            )
+
+    def _on_models_config(self):
+        """打开模型配置对话框"""
+        try:
+            from llm_chat.frontends.models_dialog import ModelsConfigDialog
+
+            dialog = ModelsConfigDialog(self._main_window, self._config)
+            dialog.exec()
+            self._init_model_combo()
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window, "Error", f"Models module not available: {e}"
             )
 
     def _on_close(self):
