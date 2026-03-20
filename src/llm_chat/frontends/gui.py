@@ -338,9 +338,87 @@ class GUIFrontend(BaseFrontend):
         self._on_rename_conversation: Optional[Callable] = None
         self._on_switch_conversation: Optional[Callable] = None
         self._on_list_conversation: Optional[Callable] = None
+        self._config: Optional[Any] = None
+        self._model_combo: Optional[QComboBox] = None
 
     def set_storage(self, storage: Any):
         self._storage = storage
+
+    def set_config(self, config: Any):
+        self._config = config
+
+    def _init_model_combo(self):
+        if self._model_combo is None:
+            return
+        self._model_combo.clear()
+        if self._config is None:
+            self._model_combo.addItem(self._current_model)
+            self._model_combo.setCurrentText(self._current_model)
+            return
+        available_models = getattr(self._config.llm, "available_models", [])
+        if available_models:
+            for model_info in available_models:
+                if hasattr(model_info, "name"):
+                    model_name = model_info.name
+                elif hasattr(model_info, "get"):
+                    model_name = model_info.get("id")
+                else:
+                    model_name = str(model_info)
+                self._model_combo.addItem(model_name)
+            current_model = self._config.llm.model
+            index = self._model_combo.findText(current_model)
+            if index >= 0:
+                self._model_combo.setCurrentIndex(index)
+            else:
+                self._model_combo.setCurrentText(current_model)
+        else:
+            self._model_combo.addItem(self._current_model)
+            self._model_combo.setCurrentText(self._current_model)
+
+    def _on_model_changed(self, index: int):
+        if self._config is None or self._model_combo is None:
+            return
+        model_name = self._model_combo.currentText()
+        old_model = self._config.llm.model
+        if model_name == old_model:
+            return
+        available_models = getattr(self._config.llm, "available_models", [])
+        model_id = model_name
+        if available_models:
+            for model_info in available_models:
+                info_name = (
+                    model_info.name
+                    if hasattr(model_info, "name")
+                    else (
+                        model_info.get("name")
+                        if hasattr(model_info, "get")
+                        else str(model_info)
+                    )
+                )
+                if info_name == model_name:
+                    model_id = (
+                        model_info.id
+                        if hasattr(model_info, "id")
+                        else (
+                            model_info.get("id")
+                            if hasattr(model_info, "get")
+                            else model_name
+                        )
+                    )
+                    break
+        self._config.llm.model = model_id
+        self._current_model = model_id
+        logger.info(f"模型切换: {old_model} -> {model_id}")
+        self._save_config()
+
+    def _save_config(self):
+        if self._config is None:
+            return
+        try:
+            self._config.to_yaml()
+            logger.info("配置已保存到 config.yaml")
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
 
     def set_conversation_callbacks(
         self,
@@ -383,6 +461,8 @@ class GUIFrontend(BaseFrontend):
 
         self._setup_ui(central_widget)
         self._apply_styles()
+
+        self._init_model_combo()
 
         self._main_window.closeEvent = self._on_close_event
 
@@ -605,6 +685,16 @@ class GUIFrontend(BaseFrontend):
         self._reasoning_combo.setFixedWidth(60)
         self._reasoning_combo.currentIndexChanged.connect(self._on_reasoning_changed)
         params_layout.addWidget(self._reasoning_combo)
+
+        params_layout.addSpacing(15)
+
+        model_label = QLabel("模型:")
+        params_layout.addWidget(model_label)
+
+        self._model_combo = QComboBox()
+        self._model_combo.setFixedWidth(150)
+        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
+        params_layout.addWidget(self._model_combo)
 
         params_layout.addStretch()
 

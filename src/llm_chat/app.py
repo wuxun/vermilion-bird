@@ -125,6 +125,10 @@ class App:
         if hasattr(frontend, "set_storage"):
             frontend.set_storage(self.storage)
 
+        # Set config for frontends that support it
+        if hasattr(frontend, "set_config"):
+            frontend.set_config(self.config)
+
         frontend.set_conversation_callbacks(
             on_new=self._on_new_conversation,
             on_delete=self._on_delete_conversation,
