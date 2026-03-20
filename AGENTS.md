@@ -81,12 +81,13 @@ vermilion-bird/
 
 ## 反模式（本项目）
 
-### 安全警告
+ 
+ ### 安全警告
 - **禁止**在用户输入上使用 `eval()`
-- 位置：`src/llm_chat/skills/calculator/skill.py:50`
-- 替代方案：实现安全的表达式解析器或使用 ast 白名单
+- 位置：`src/llm_chat/skills/calculator/skill.py`
+- 替代方案：使用 ast 白名单或实现安全的表达式解析器
 
-### 代码风格
+ ### 代码风格
 - 缺少显式的 black/flake8 配置（行长等）
 - 建议在 pyproject.toml 添加 `[tool.black]` 和 `[tool.flake8]`
 
