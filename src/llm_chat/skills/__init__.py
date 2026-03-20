@@ -1,7 +1,2 @@
-from .base import BaseSkill
-from .manager import SkillManager
-
-__all__ = [
-    "BaseSkill",
-    "SkillManager",
-]
+from llm_chat.skills.base import BaseSkill
+from llm_chat.skills.registry import get_builtin_skills
