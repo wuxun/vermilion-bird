@@ -165,7 +165,7 @@ class LLMClient:
         tools: List[Dict[str, Any]],
         history: Optional[List[Dict[str, Any]]] = None,
         system_context: Optional[str] = None,
-        max_iterations: int = 50,
+        max_iterations: int = 100,
         **kwargs,
     ) -> Generator[Any, None, None]:
         if not self.protocol.supports_tools():
@@ -498,7 +498,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        max_iterations: int = 50,
+        max_iterations: int = 100,
         **kwargs,
     ) -> str:
         if not self.protocol.supports_tools():
