@@ -384,6 +384,7 @@ class GUIFrontend(BaseFrontend):
             return
         available_models = getattr(self._config.llm, "available_models", [])
         model_id = model_name
+        selected_model_info = None
         if available_models:
             for model_info in available_models:
                 info_name = (
@@ -405,9 +406,23 @@ class GUIFrontend(BaseFrontend):
                             else model_name
                         )
                     )
+                    selected_model_info = model_info
                     break
         self._config.llm.model = model_id
         self._current_model = model_id
+        if selected_model_info:
+            if (
+                hasattr(selected_model_info, "base_url")
+                and selected_model_info.base_url
+            ):
+                self._config.llm.base_url = selected_model_info.base_url
+            if hasattr(selected_model_info, "api_key") and selected_model_info.api_key:
+                self._config.llm.api_key = selected_model_info.api_key
+            if (
+                hasattr(selected_model_info, "protocol")
+                and selected_model_info.protocol
+            ):
+                self._config.llm.protocol = selected_model_info.protocol
         logger.info(f"模型切换: {old_model} -> {model_id}")
         self._save_config()
 
