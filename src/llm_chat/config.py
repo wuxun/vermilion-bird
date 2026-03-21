@@ -74,7 +74,7 @@ class ToolsConfig(BaseSettings):
     max_workers: int = Field(default=5, description="工具并行执行的最大工作线程数")
     max_retries: int = Field(default=3, description="工具执行失败时的最大重试次数")
     retry_delay: float = Field(default=1.0, description="重试间隔时间（秒）")
-    work_dir: str = Field(default=".vb/work", description="任务临时文件工作目录")
+    work_dir: str = Field(default="./work", description="任务临时文件工作目录")
 
     class Config:
         env_prefix = "TOOLS_"
