@@ -8,6 +8,7 @@ from llm_chat.protocols import get_protocol, ToolCall
 from llm_chat.tools import get_tool_registry, ToolExecutor
 from llm_chat.skills import SkillManager
 from llm_chat.skills.registry import get_builtin_skills
+from llm_chat.utils.token_counter import count_messages_tokens, get_context_limit
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,12 @@ class LLMClient:
                 current_messages.append(tool_message)
 
                 yield ("tool_call_end", tool_name, tool_args, str(content)[:500])
+
+            current_tokens = count_messages_tokens(
+                current_messages, self.config.llm.model
+            )
+            context_limit = get_context_limit(self.config.llm.model)
+            yield ("context_update", current_tokens, context_limit)
 
     def _parse_stream_tool_calls(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
         choices = chunk.get("choices", [])

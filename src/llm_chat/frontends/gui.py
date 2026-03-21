@@ -289,6 +289,7 @@ if PYQT_AVAILABLE:
         error_occurred = pyqtSignal(str, str)
         tool_call_started = pyqtSignal(str, str)
         tool_call_finished = pyqtSignal(str, str, str)
+        context_updated = pyqtSignal(int, int)
 
     class ConversationListSignals(QObject):
         conversations_updated = pyqtSignal()
@@ -459,6 +460,7 @@ class GUIFrontend(BaseFrontend):
         self._stream_signals.error_occurred.connect(self._on_stream_error)
         self._stream_signals.tool_call_started.connect(self._on_tool_call_started)
         self._stream_signals.tool_call_finished.connect(self._on_tool_call_finished)
+        self._stream_signals.context_updated.connect(self._on_context_updated)
 
         self._conv_list_signals = ConversationListSignals()
         self._conv_list_signals.conversations_updated.connect(
@@ -998,10 +1000,71 @@ class GUIFrontend(BaseFrontend):
         from llm_chat.utils.token_counter import (
             calculate_context_usage,
             format_context_usage_short,
+            count_tokens,
+            get_context_limit,
         )
 
+        # 基础对话历史
         history = [{"role": m["role"], "content": m["content"]} for m in self._messages]
-        usage = calculate_context_usage(history, self._current_model)
+
+        # 计算对话历史的 token
+        base_usage = calculate_context_usage(history, self._current_model)
+        total_tokens = base_usage["used_tokens"]
+
+        # 计算系统提示词（记忆上下文）的 token
+        if self._config and self._config.memory.enabled:
+            try:
+                from llm_chat.memory import MemoryStorage, MemoryManager
+                from llm_chat.client import LLMClient
+
+                memory_storage = MemoryStorage(self._config.memory.storage_dir)
+                # 使用临时 client 仅用于 memory manager
+                temp_client = LLMClient(self._config)
+                memory_manager = MemoryManager(
+                    storage=memory_storage,
+                    db_storage=None,
+                    llm_client=temp_client,
+                    config={},
+                )
+                system_context = memory_manager.build_system_prompt()
+                if system_context:
+                    system_tokens = count_tokens(system_context, self._current_model)
+                    # 系统消息格式开销（类似 OpenAI 格式）
+                    system_tokens += 4  # {"role": "system", "content": "..."} 格式开销
+                    total_tokens += system_tokens
+                    logger.debug(f"系统上下文 token: {system_tokens}")
+            except Exception as e:
+                logger.warning(f"计算系统上下文 token 失败: {e}")
+
+        # 计算工具定义的 token
+        if self._config and self._config.enable_tools:
+            try:
+                from llm_chat.client import LLMClient
+                import json
+
+                temp_client = LLMClient(self._config)
+                if temp_client.has_builtin_tools():
+                    tools = temp_client.get_builtin_tools()
+                    if tools:
+                        # 工具定义序列化为 JSON 计算 token
+                        tools_json = json.dumps(tools, ensure_ascii=False)
+                        tools_tokens = count_tokens(tools_json, self._current_model)
+                        total_tokens += tools_tokens
+                        logger.debug(f"工具定义 token: {tools_tokens}")
+            except Exception as e:
+                logger.warning(f"计算工具定义 token 失败: {e}")
+
+        # 构建完整的使用量信息
+        limit = get_context_limit(self._current_model)
+        usage_percent = (total_tokens / limit) * 100 if limit > 0 else 0
+        usage = {
+            "used_tokens": total_tokens,
+            "limit": limit,
+            "usage_percent": round(usage_percent, 1),
+            "remaining_tokens": max(0, limit - total_tokens),
+            "model": self._current_model,
+        }
+
         status_text = format_context_usage_short(usage)
 
         if self._context_label:
@@ -1137,6 +1200,11 @@ class GUIFrontend(BaseFrontend):
                             _, tool_name, tool_args, result = chunk
                             self._stream_signals.tool_call_finished.emit(
                                 tool_name, tool_args, result
+                            )
+                        elif isinstance(chunk, tuple) and chunk[0] == "context_update":
+                            _, used_tokens, limit = chunk
+                            self._stream_signals.context_updated.emit(
+                                used_tokens, limit
                             )
                         elif isinstance(chunk, str):
                             full_text += chunk
@@ -1366,6 +1434,39 @@ class GUIFrontend(BaseFrontend):
         self._scroll_to_bottom()
         result_len = len(result) if result else 0
         logger.info(f"工具调用完成: {tool_name}, result_length={result_len}")
+
+    def _on_context_updated(self, used_tokens: int, limit: int):
+        from llm_chat.utils.token_counter import format_context_usage_short
+
+        usage_percent = (used_tokens / limit) * 100 if limit > 0 else 0
+        usage = {
+            "used_tokens": used_tokens,
+            "limit": limit,
+            "usage_percent": round(usage_percent, 1),
+            "remaining_tokens": max(0, limit - used_tokens),
+            "model": self._current_model,
+        }
+
+        status_text = format_context_usage_short(usage)
+
+        if self._context_label:
+            self._context_label.setText(status_text)
+
+            percent = usage["usage_percent"]
+            if percent < 50:
+                color = "#28a745"
+            elif percent < 80:
+                color = "#ffc107"
+            else:
+                color = "#dc3545"
+
+            self._context_label.setStyleSheet(
+                f"color: {color}; padding: 2px; font-weight: bold;"
+            )
+
+        logger.debug(
+            f"上下文已更新: {used_tokens}/{limit} tokens ({usage_percent:.1f}%)"
+        )
 
     def _escape_html(self, text: str) -> str:
         return (
