@@ -15,3 +15,4 @@ class AgentContext:
     created_at: datetime
     status: str
     result: Optional[str] = None
+    work_dir: Optional[str] = None

@@ -1,5 +1,6 @@
 """Task Delegator Tools - 子Agent任务分配工具"""
 
+import os
 import uuid
 import json
 import logging
@@ -44,6 +45,10 @@ class SpawnSubagentTool(BaseTool):
                     "description": "子agent超时时间（秒），默认60",
                     "default": 60,
                 },
+                "work_dir": {
+                    "type": "string",
+                    "description": "临时文件工作目录，默认使用配置中的 tools.work_dir",
+                },
                 "model_config": {
                     "type": "object",
                     "description": "子agent使用的大模型配置（可选）。不指定则使用默认配置。",
@@ -87,26 +92,25 @@ class SpawnSubagentTool(BaseTool):
         timeout = kwargs.get("timeout", 60)
         model_config = kwargs.get("model_config")
 
-        if self.parent_context and self.parent_context.depth >= 1:
-            error_msg = f"Cannot spawn subagent: recursion not allowed. Agent {self.parent_context.agent_id} has depth {self.parent_context.depth}"
-            logger.warning(error_msg)
-            return error_msg
-
+        work_dir = self.config.tools.work_dir if self.config else ".vb/work"
+        
         agent_id = str(uuid.uuid4())
-
-        filtered_tools = [t for t in allowed_tools if t != "spawn_subagent"]
 
         context = AgentContext(
             agent_id=agent_id,
             parent_id=self.parent_context.agent_id if self.parent_context else None,
-            depth=1 if self.parent_context else 0,
-            allowed_tools=set(filtered_tools),
-            conversation_id=f"conv_{agent_id}",
+            depth=(self.parent_context.depth + 1) if self.parent_context else 0,
+            allowed_tools=set(allowed_tools),
+            conversation_id=f"conv_{uuid.uuid4()}",
             created_at=datetime.utcnow(),
             status="running",
+            work_dir=work_dir,
         )
 
         self.registry.spawn(agent_id, context)
+
+        os.makedirs(work_dir, exist_ok=True
+        logger.info(f"Created work directory: {work_dir}")
 
         model_info = ""
         if model_config:
@@ -123,22 +127,118 @@ class SpawnSubagentTool(BaseTool):
 
     def _execute_task(
         self,
-        agent_id: str,
-        task: str,
-        allowed_tools: List[str],
-        timeout: int,
-        context: AgentContext,
-        model_config: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        if self.config is None:
-            logger.warning(
-                f"No config provided for subagent {agent_id}, returning placeholder result"
+        agent_id: str(uuid.uuid4())
+        task = kwargs.get("task", "")
+        allowed_tools = kwargs.get("allowed_tools", []) or []
+        timeout = kwargs.get("timeout", 60)
+        model_config = kwargs.get("model_config")
+        work_dir = self._get_work_dir()
+        context = AgentContext(
+            agent_id=agent_id,
+            parent_id=self.parent_context.agent_id if self.parent_context else None,
+            depth=self.parent_context.depth + 1
+        )
+        allowed_tools = set(allowed_tools)
+        context.conversation_id = str(uuid.uuid4())
+        context.created_at = datetime.utcnow()
+        context.status = "running"
+        context.work_dir = work_dir
+        context.result = result
+
+        self.registry.spawn(agent_id, context)
+
+        model_info = ""
+        if model_config:
+            model_info = f"(model: {model_config.get('model', self.config.llm.model)}"
+        else:
+            model_info = f"Subagent {agent_id} without tools"
+        )
+
+        logger.info(f"Spawned subagent {agent_id}{model_info} with task: {task[:50]}...")
+
+        self.registry.spawn(agent_id, context)
+
+        result = self._execute_task(
+            agent_id, task,
+            filtered_tools,
+            timeout,
+            model_config,
+            work_dir,
+            context,
+        )
+
+        try:
+            from llm_chat.client import LLMClient
+            from llm_chat.config import Config, LLMConfig
+
+            subagent_config = Config(
+                llm=llm_config,
+                mcp=self.config.mcp,
+                enable_tools=self.config.enable_tools,
+                skills=self.config.skills
+                memory=self.config.memory
+                external_skill_dirs=self.config.external_skill_dirs,
             )
-            result = f"Subagent {agent_id} created successfully. Task: {task}"
+            if work_dir is None:
+                work_dir = Path.join(work_dir)
+            else:
+                work_dir = self.config.tools.work_dir
+
+            result = client.chat(task)
+        else:
+            result = client.chat(task)
             context.status = "completed"
             context.result = result
-            return result
+            logger.info(f"Subagent {agent_id} completed successfully")
 
+            return json.dumps(
+                {"agent_id": agent_id, "status": "completed", "result": result},
+                ensure_ascii=False,
+                indent=2
+            )
+        allowed_tools = set(allowed_tools, context.allowed_tools)
+        conversation_id = str(uuid.uuid4())
+        context.created_at = datetime.utcnow()
+        context.status = "running"
+        context.work_dir = work_dir
+
+        self.registry.spawn(agent_id, context)
+
+        model_info = ""
+        if model_config:
+            model_info = f" (model: {model_config.get('model', 'default')}"
+        logger.info(
+            f"Spawned subagent {agent_id}{model_info} with task: {task[:50]}..."
+        )
+
+        result = self._execute_task(
+            agent_id, task, filtered_tools, timeout, context, model_config
+        )
+    else:
+        logger.info(
+            f"Subagent {agent_id} calling LLM without tools (none matched)"
+        )
+        result = client.chat(task)
+    else:
+        logger.info(
+            f"Subagent {agent_id} calling LLM without tools (none matched)"
+        )
+        result = client.chat(task)
+    else:
+        logger.info(f"Subagent {agent_id} calling LLM without tools")
+        result = client.chat(task)
+    else:
+        logger.info(f"Subagent {agent_id} calling LLM without tools")
+        result = client.chat(task)
+
+    context.status = "completed"
+        context.result = result
+            logger.info(f"Subagent {agent_id} completed successfully")
+
+        return json.dumps(
+            {"agent_id": agent_id, "status": "completed", "result": result},
+            ensure_ascii=False, indent=2
+        )
         try:
             from llm_chat.client import LLMClient
             from llm_chat.config import Config, LLMConfig

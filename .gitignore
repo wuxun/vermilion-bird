@@ -59,6 +59,7 @@ Thumbs.db
 *.db
 *.log
 logs/
+work/
 
 # Environment
 .env
