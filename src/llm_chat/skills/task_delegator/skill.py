@@ -47,19 +47,12 @@ class TaskDelegatorSkill(BaseSkill):
             GetSubagentStatusTool(registry=self._registry),
             CancelSubagentTool(registry=self._registry),
         ]
-        return [
-            SpawnSubagentTool(
-                registry=self._registry,
-                parent_context=self._parent_context,
-                config=self._config,
-            ),
-            GetSubagentStatusTool(registry=self._registry),
-            CancelSubagentTool(registry=self._registry),
-        ]
 
     def on_load(self, config: Dict[str, Any]) -> None:
         from llm_chat.config import Config
 
-        if config:
+        if config is not None:
             self._config = Config(**config) if isinstance(config, dict) else config
+        else:
+            self._config = Config()
         self.logger.info(f"TaskDelegatorSkill loaded with config: {config}")

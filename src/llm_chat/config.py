@@ -144,6 +144,9 @@ class SkillsConfig(BaseSettings):
     file_writer: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     file_editor: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     todo_manager: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    task_delegator: SkillConfig = Field(
+        default_factory=lambda: SkillConfig(enabled=True)
+    )
 
     class Config:
         extra = "allow"
@@ -300,14 +303,17 @@ class Config(BaseSettings):
             elif isinstance(skill_data, SkillConfig):
                 skill_configs[skill_name] = skill_data
 
-        if "web_search" not in skill_configs:
-            skill_configs["web_search"] = SkillConfig(enabled=True)
-        if "calculator" not in skill_configs:
-            skill_configs["calculator"] = SkillConfig(enabled=True)
-        if "web_fetch" not in skill_configs:
-            skill_configs["web_fetch"] = SkillConfig(enabled=True)
-        if "file_reader" not in skill_configs:
-            skill_configs["file_reader"] = SkillConfig(enabled=True)
+        # 默认启用的 skills
+        default_skills = [
+            "web_search",
+            "calculator",
+            "web_fetch",
+            "file_reader",
+            "task_delegator",
+        ]
+        for skill_name in default_skills:
+            if skill_name not in skill_configs:
+                skill_configs[skill_name] = SkillConfig(enabled=True)
 
         return SkillsConfig(**skill_configs)
 
