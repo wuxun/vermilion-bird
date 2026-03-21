@@ -11,14 +11,14 @@ from llm_chat.tools.registry import ToolRegistry
 
 def setup_logging(level=logging.INFO, log_file: str = None):
     handlers = [logging.StreamHandler(sys.stdout)]
-    
+
     if log_file:
-        handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
-    
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=handlers
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=handlers,
     )
 
 
@@ -33,15 +33,15 @@ def status():
     """查看记忆状态"""
     storage = MemoryStorage()
     stats = storage.get_memory_stats()
-    
+
     click.echo("=" * 50)
     click.echo("记忆系统状态")
     click.echo("=" * 50)
     click.echo(f"存储目录: {stats['memory_dir']}")
     click.echo("")
-    
-    for name, info in stats['files'].items():
-        if info['exists']:
+
+    for name, info in stats["files"].items():
+        if info["exists"]:
             click.echo(f"【{name}】")
             click.echo(f"  大小: {info['size_bytes']} bytes")
             click.echo(f"  行数: {info['line_count']}")
@@ -57,7 +57,7 @@ def soul():
     """查看人格设定"""
     storage = MemoryStorage()
     soul = storage.load_soul()
-    
+
     if soul:
         click.echo(soul)
     else:
@@ -65,7 +65,7 @@ def soul():
 
 
 @memory.command()
-@click.argument('content')
+@click.argument("content")
 def set_soul(content):
     """设置人格设定（完整内容）"""
     storage = MemoryStorage()
@@ -74,23 +74,24 @@ def set_soul(content):
 
 
 @memory.command()
-@click.argument('section')
-@click.argument('content')
+@click.argument("section")
+@click.argument("content")
 def set_soul_section(section, content):
     """设置人格设定的特定章节
-    
+
     SECTION: 章节名称 (核心特质/行为准则/沟通风格/专业能力)
     CONTENT: 章节内容
     """
     storage = MemoryStorage()
     soul = storage.load_soul()
-    
+
     import re
-    pattern = rf'(## {re.escape(section)}\n)(.*?)(?=\n##|\Z)'
+
+    pattern = rf"(## {re.escape(section)}\n)(.*?)(?=\n##|\Z)"
     match = re.search(pattern, soul, re.DOTALL)
-    
+
     if match:
-        updated = soul[:match.start(2)] + content + soul[match.end(2):]
+        updated = soul[: match.start(2)] + content + soul[match.end(2) :]
         storage.save_soul(updated)
         click.echo(f"已更新章节: {section}")
     else:
@@ -124,7 +125,7 @@ def long_term():
 @memory.command()
 def clear():
     """清空所有记忆（危险操作）"""
-    if click.confirm('确定要清空所有记忆吗？此操作不可恢复！'):
+    if click.confirm("确定要清空所有记忆吗？此操作不可恢复！"):
         storage = MemoryStorage()
         storage.clear_short_term()
         storage.save_mid_term("")
@@ -147,24 +148,51 @@ def cli():
 
 
 @cli.command()
-@click.option('--base-url', help='模型 API 基础 URL')
-@click.option('--model', help='模型名称')
-@click.option('--api-key', help='API 密钥')
-@click.option('--protocol', type=click.Choice(['openai', 'anthropic', 'gemini']), help='API 协议类型')
-@click.option('--frontend', type=click.Choice(['cli', 'gui']), default='cli', help='前端类型 (cli 或 gui)')
-@click.option('--gui', is_flag=True, help='启动 GUI 界面 (等同于 --frontend gui)')
-@click.option('--conversation-id', help='对话 ID')
-@click.option('--timeout', type=int, help='请求超时时间（秒）')
-@click.option('--max-retries', type=int, help='最大重试次数')
-@click.option('--no-tools', is_flag=True, help='禁用工具调用')
-@click.option('--log-file', default=None, help='日志文件路径')
-@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), default='INFO', help='日志级别')
-def chat(base_url, model, api_key, protocol, frontend, gui, conversation_id, timeout, max_retries, no_tools, log_file, log_level):
+@click.option("--base-url", help="模型 API 基础 URL")
+@click.option("--model", help="模型名称")
+@click.option("--api-key", help="API 密钥")
+@click.option(
+    "--protocol",
+    type=click.Choice(["openai", "anthropic", "gemini"]),
+    help="API 协议类型",
+)
+@click.option(
+    "--frontend",
+    type=click.Choice(["cli", "gui"]),
+    default="cli",
+    help="前端类型 (cli 或 gui)",
+)
+@click.option("--gui", is_flag=True, help="启动 GUI 界面 (等同于 --frontend gui)")
+@click.option("--conversation-id", help="对话 ID")
+@click.option("--timeout", type=int, help="请求超时时间（秒）")
+@click.option("--max-retries", type=int, help="最大重试次数")
+@click.option("--no-tools", is_flag=True, help="禁用工具调用")
+@click.option("--log-file", default=None, help="日志文件路径")
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    default="INFO",
+    help="日志级别",
+)
+def chat(
+    base_url,
+    model,
+    api_key,
+    protocol,
+    frontend,
+    gui,
+    conversation_id,
+    timeout,
+    max_retries,
+    no_tools,
+    log_file,
+    log_level,
+):
     """启动对话"""
     setup_logging(getattr(logging, log_level), log_file)
-    
-    config = Config()
-    
+
+    config = Config.from_yaml()
+
     if base_url:
         config.llm.base_url = base_url
     if model:
@@ -179,24 +207,23 @@ def chat(base_url, model, api_key, protocol, frontend, gui, conversation_id, tim
         config.llm.max_retries = max_retries
     if no_tools:
         config.enable_tools = False
-    
+
     if gui:
-        frontend = 'gui'
-    
+        frontend = "gui"
+
     app = App(config)
-    
-    if frontend == 'cli':
+
+    if frontend == "cli":
         click.echo(f"协议: {config.llm.protocol}")
         click.echo(f"模型: {config.llm.model}")
         click.echo(f"API URL: {config.llm.base_url}")
         click.echo(f"工具调用: {'启用' if config.enable_tools else '禁用'}")
         click.echo("=" * 50)
-    
+
     frontend_instance = get_frontend(
-        frontend,
-        conversation_id=conversation_id or "default"
+        frontend, conversation_id=conversation_id or "default"
     )
-    
+
     app.run(frontend_instance)
 
 
@@ -215,115 +242,119 @@ def list():
     from llm_chat.skills.web_search.skill import WebSearchSkill
     from llm_chat.skills.calculator.skill import CalculatorSkill
     from llm_chat.skills.web_fetch.skill import WebFetchSkill
-    
+
     config = Config()
     manager = SkillManager()
-    
+
     manager.register_skill_class(WebSearchSkill)
     manager.register_skill_class(CalculatorSkill)
     manager.register_skill_class(WebFetchSkill)
-    
+
     if config.external_skill_dirs:
         manager.discover_skills(config.external_skill_dirs)
-    
+
     click.echo("=" * 60)
     click.echo("可用技能列表")
     click.echo("=" * 60)
-    
+
     all_skills = manager.get_all_skill_classes()
     loaded_skills = manager.get_loaded_skills()
-    
+
     for name, skill_class in all_skills.items():
         status = "✓ 已加载" if name in loaded_skills else "○ 未加载"
-        desc = skill_class().description[:50] if len(skill_class().description) > 50 else skill_class().description
+        desc = (
+            skill_class().description[:50]
+            if len(skill_class().description) > 50
+            else skill_class().description
+        )
         click.echo(f"\n{status} {name}")
         click.echo(f"  描述: {desc}")
         click.echo(f"  版本: {skill_class().version}")
-        
+
         tools = skill_class().get_tools()
         tool_names = [t.name for t in tools]
         click.echo(f"  工具: {', '.join(tool_names)}")
-    
+
     click.echo("\n" + "=" * 60)
 
 
 @skills.command()
-@click.argument('skill_name')
+@click.argument("skill_name")
 def info(skill_name):
     """查看技能详细信息
-    
+
     SKILL_NAME: 技能名称
     """
     from llm_chat.skills.web_search.skill import WebSearchSkill
     from llm_chat.skills.calculator.skill import CalculatorSkill
     from llm_chat.skills.web_fetch.skill import WebFetchSkill
-    
+
     manager = SkillManager()
     manager.register_skill_class(WebSearchSkill)
     manager.register_skill_class(CalculatorSkill)
     manager.register_skill_class(WebFetchSkill)
-    
+
     skill_class = manager.get_skill_class(skill_name)
     if not skill_class:
         click.echo(f"未找到技能: {skill_name}")
         return
-    
+
     skill = skill_class()
-    
+
     click.echo("=" * 60)
     click.echo(f"技能: {skill.name}")
     click.echo("=" * 60)
     click.echo(f"版本: {skill.version}")
     click.echo(f"描述: {skill.description}")
     click.echo(f"依赖: {', '.join(skill.dependencies) if skill.dependencies else '无'}")
-    
+
     click.echo("\n工具列表:")
     for tool in skill.get_tools():
         click.echo(f"\n  【{tool.name}】")
         click.echo(f"  描述: {tool.description}")
         params = tool.get_parameters_schema()
-        if params.get('properties'):
+        if params.get("properties"):
             click.echo("  参数:")
-            for prop, schema in params['properties'].items():
-                required = prop in params.get('required', [])
+            for prop, schema in params["properties"].items():
+                required = prop in params.get("required", [])
                 req_mark = "*" if required else ""
-                desc = schema.get('description', '')
-                default = schema.get('default', '无')
+                desc = schema.get("description", "")
+                default = schema.get("default", "无")
                 click.echo(f"    - {prop}{req_mark}: {desc} (默认: {default})")
 
 
 @skills.command()
-@click.argument('skill_name')
+@click.argument("skill_name")
 def enable(skill_name):
     """启用技能
-    
+
     SKILL_NAME: 技能名称
     """
     config = Config()
-    
+
     if not hasattr(config.skills, skill_name):
         click.echo(f"未知技能: {skill_name}")
         click.echo("使用 'skills list' 查看可用技能")
         return
-    
+
     setattr(config.skills, skill_name, type(config.skills.__class__.__bases__[0])())
     click.echo(f"技能 {skill_name} 已启用")
 
 
 @skills.command()
-@click.argument('skill_name')
+@click.argument("skill_name")
 def disable(skill_name):
     """禁用技能
-    
+
     SKILL_NAME: 技能名称
     """
     config = Config()
-    
+
     if not hasattr(config.skills, skill_name):
         click.echo(f"未知技能: {skill_name}")
         click.echo("使用 'skills list' 查看可用技能")
         return
-    
+
     skill_config = getattr(config.skills, skill_name)
     skill_config.enabled = False
     click.echo(f"技能 {skill_name} 已禁用")
@@ -333,11 +364,11 @@ def disable(skill_name):
 def tools():
     """列出所有已注册的工具"""
     registry = ToolRegistry()
-    
+
     click.echo("=" * 60)
     click.echo("已注册工具列表")
     click.echo("=" * 60)
-    
+
     all_tools = registry.get_all_tools()
     if not all_tools:
         click.echo("\n暂无已注册的工具")
@@ -346,7 +377,7 @@ def tools():
         for tool in all_tools:
             click.echo(f"\n【{tool.name}】")
             click.echo(f"  描述: {tool.description[:60]}...")
-    
+
     click.echo("\n" + "=" * 60)
 
 
@@ -356,10 +387,11 @@ cli.add_command(skills)
 def main():
     """主入口 - 默认启动对话"""
     import sys
+
     if len(sys.argv) == 1:
-        sys.argv.append('chat')
+        sys.argv.append("chat")
     cli()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

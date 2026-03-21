@@ -207,14 +207,17 @@ class Config(BaseSettings):
             llm_config = LLMConfig(**llm_data)
 
             # Parse available_models
+            # Check if "available_models" key exists in config file
+            has_available_models_key = "available_models" in llm_data
             available_models_data = llm_data.get("available_models", [])
             available_models = []
             for model_data in available_models_data:
                 if isinstance(model_data, dict):
                     available_models.append(ModelInfo(**model_data))
 
-            # If no models configured, add defaults
-            if not available_models:
+            # Only add defaults if the key doesn't exist in config file
+            # If user explicitly sets empty list, respect that
+            if not has_available_models_key and not available_models:
                 available_models = [
                     ModelInfo(
                         id="gpt-3.5-turbo",
