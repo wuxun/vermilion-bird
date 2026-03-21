@@ -1,10 +1,15 @@
+from __future__ import annotations
 import os
 from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import yaml
 
 from llm_chat.mcp import MCPConfig
+
+
+# FeishuConfig duplicate removed to unify with the later definition
 
 
 class ModelInfo(BaseSettings):
@@ -17,6 +22,14 @@ class ModelInfo(BaseSettings):
 
     class Config:
         extra = "allow"
+
+
+@dataclass
+class FeishuConfig:
+    enabled: bool = False
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
+    tenant_key: Optional[str] = None
 
 
 class LLMConfig(BaseSettings):
@@ -163,12 +176,12 @@ class SkillsConfig(BaseSettings):
         configs = {}
         for skill_name in self.model_fields.keys():
             configs[skill_name] = self.get_skill_config(skill_name)
-        for extra_field in self.__pydantic_extra__ or {}:
-            configs[extra_field] = (
-                self.__pydantic_extra__[extra_field].model_dump()
-                if hasattr(self.__pydantic_extra__[extra_field], "model_dump")
-                else self.__pydantic_extra__[extra_field]
-            )
+        extra = getattr(self, "__pydantic_extra__", {}) or {}
+        for extra_field, extra_value in extra.items():
+            if hasattr(extra_value, "model_dump"):
+                configs[extra_field] = extra_value.model_dump()
+            else:
+                configs[extra_field] = extra_value
         return configs
 
 
@@ -177,6 +190,7 @@ class Config(BaseSettings):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    feishu: FeishuConfig = Field(default_factory=lambda: FeishuConfig())
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
     skills: SkillsConfig = Field(
         default_factory=SkillsConfig, description="Skills 配置"
@@ -252,6 +266,14 @@ class Config(BaseSettings):
 
             llm_config.available_models = available_models
 
+            # Feishu (Feishu/Lark) config
+            feishu_data = config_data.get("feishu", {})
+            feishu_config = (
+                FeishuConfig(**feishu_data)
+                if feishu_data is not None
+                else FeishuConfig()
+            )
+
             mcp_data = config_data.get("mcp", {})
             mcp_config = MCPConfig.from_dict(mcp_data)
 
@@ -265,15 +287,51 @@ class Config(BaseSettings):
             memory_data = config_data.get("memory", {})
             memory_config = cls._parse_memory(memory_data)
 
-            return cls(
+            config_instance = cls(
                 llm=llm_config,
                 mcp=mcp_config,
                 enable_tools=enable_tools,
                 skills=skills_config,
+                feishu=feishu_config,
                 external_skill_dirs=external_skill_dirs,
                 memory=memory_config,
             )
+            config_instance.validate_feishu_config()
+            return config_instance
         return cls()
+
+    def validate_feishu_config(self) -> None:
+        # Feishu 配置有效性校验：当 enabled=True 时，app_id/app_secret 必须不为空
+        if getattr(self, "feishu", None) is None:
+            return
+        if self.feishu.enabled and (
+            not self.feishu.app_id or not self.feishu.app_secret
+        ):
+            raise ValueError("Feishu 集成已启用但 app_id 或 app_secret 为空")
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        # 从环境变量加载配置，覆盖 Feishu 配置的相关字段
+        cfg = cls()
+        # 读取 Feishu 环境变量
+        feishu_enabled = os.getenv("FEISHU_ENABLED")
+        app_id = os.getenv("FEISHU_APP_ID")
+        app_secret = os.getenv("FEISHU_APP_SECRET")
+        tenant_key = os.getenv("FEISHU_TENANT_KEY")
+
+        if any(v is not None for v in [feishu_enabled, app_id, app_secret, tenant_key]):
+            enabled = False
+            if feishu_enabled is not None:
+                enabled = str(feishu_enabled).lower() in ("1", "true", "yes")
+            cfg.feishu = FeishuConfig(
+                enabled=enabled,
+                app_id=app_id,
+                app_secret=app_secret,
+                tenant_key=tenant_key,
+            )
+            cfg.validate_feishu_config()
+
+        return cfg
 
     @classmethod
     def _parse_memory(cls, data: Dict[str, Any]) -> MemoryConfig:
@@ -336,6 +394,12 @@ class Config(BaseSettings):
             "llm": self.llm.model_dump(),
             "mcp": self.mcp.to_dict(),
             "enable_tools": self.enable_tools,
+            "feishu": {
+                "enabled": self.feishu.enabled,
+                "app_id": self.feishu.app_id,
+                "app_secret": self.feishu.app_secret,
+                "tenant_key": self.feishu.tenant_key,
+            },
             "skills": skills_dict,
             "external_skill_dirs": self.external_skill_dirs,
             "memory": {
