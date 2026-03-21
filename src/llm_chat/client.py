@@ -79,6 +79,14 @@ class LLMClient:
             if "timeout" not in web_fetch_config:
                 web_fetch_config["timeout"] = self.config.llm.timeout
 
+        work_dir = self.config.tools.work_dir
+        if "todo_manager" in skill_configs:
+            if "base_dir" not in skill_configs["todo_manager"]:
+                skill_configs["todo_manager"]["base_dir"] = work_dir
+        if "task_delegator" in skill_configs:
+            if "work_dir" not in skill_configs["task_delegator"]:
+                skill_configs["task_delegator"]["work_dir"] = work_dir
+
         self._skill_manager.load_from_config(skill_configs)
 
         logger.info(
