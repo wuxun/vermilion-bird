@@ -33,6 +33,7 @@ from llm_chat.skills.file_reader.skill import FileReaderSkill
 from llm_chat.skills.file_writer.skill import FileWriterSkill
 from llm_chat.skills.file_editor.skill import FileEditorSkill
 from llm_chat.skills.todo_manager.skill import TodoManagerSkill
+from llm_chat.skills.task_delegator.skill import TaskDelegatorSkill
 
 _BUILTIN_SKILLS["web_search"] = WebSearchSkill
 _BUILTIN_SKILLS["calculator"] = CalculatorSkill
@@ -41,3 +42,4 @@ _BUILTIN_SKILLS["file_reader"] = FileReaderSkill
 _BUILTIN_SKILLS["file_writer"] = FileWriterSkill
 _BUILTIN_SKILLS["file_editor"] = FileEditorSkill
 _BUILTIN_SKILLS["todo_manager"] = TodoManagerSkill
+_BUILTIN_SKILLS["task_delegator"] = TaskDelegatorSkill
