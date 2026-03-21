@@ -212,6 +212,37 @@ class Config(BaseSettings):
             for model_data in available_models_data:
                 if isinstance(model_data, dict):
                     available_models.append(ModelInfo(**model_data))
+
+            # If no models configured, add defaults
+            if not available_models:
+                available_models = [
+                    ModelInfo(
+                        id="gpt-3.5-turbo",
+                        name="GPT-3.5 Turbo",
+                        description="OpenAI GPT-3.5 Turbo - 快速高效",
+                    ),
+                    ModelInfo(
+                        id="gpt-4",
+                        name="GPT-4",
+                        description="OpenAI GPT-4 - 更强大的模型",
+                    ),
+                    ModelInfo(
+                        id="claude-3-opus",
+                        name="Claude 3 Opus",
+                        description="Anthropic Claude 3 Opus - 最强大的模型",
+                    ),
+                    ModelInfo(
+                        id="claude-3-sonnet",
+                        name="Claude 3.5 Sonnet",
+                        description="Anthropic Claude 3.5 Sonnet - 快速且强大",
+                    ),
+                    ModelInfo(
+                        id="gemini-pro",
+                        name="Gemini Pro",
+                        description="Google Gemini Pro - 高效且强大",
+                    ),
+                ]
+
             llm_config.available_models = available_models
 
             mcp_data = config_data.get("mcp", {})
