@@ -150,6 +150,18 @@ class FeishuServer:
             event: P2ImMessageReceiveV1 event object
         """
         try:
+            # Debug: 打印完整事件对象结构
+            self._logger.info(f"DEBUG - Raw event object type: {type(event)}")
+            self._logger.info(
+                f"DEBUG - Event dir: {[a for a in dir(event) if not a.startswith('_')]}"
+            )
+            if hasattr(event, "event"):
+                self._logger.info(f"DEBUG - event.event type: {type(event.event)}")
+                if event.event:
+                    self._logger.info(
+                        f"DEBUG - event.event dir: {[a for a in dir(event.event) if not a.startswith('_')]}"
+                    )
+
             event_id = (
                 getattr(event.header, "event_id", "unknown")
                 if event.header
@@ -168,8 +180,25 @@ class FeishuServer:
                             sender_id, "open_id", None
                         )
                 if event.event.message:
-                    chat_id = getattr(event.event.message, "chat_id", None)
-                    message_content = getattr(event.event.message, "content", None)
+                    msg = event.event.message
+                    self._logger.info(f"DEBUG - message type: {type(msg)}")
+                    self._logger.info(
+                        f"DEBUG - message attrs: {[a for a in dir(msg) if not a.startswith('_')]}"
+                    )
+                    chat_id = getattr(msg, "chat_id", None)
+                    message_content = getattr(msg, "content", None)
+                    self._logger.info(
+                        f"DEBUG - chat_id={chat_id}, content={message_content}"
+                    )
+                    # 打印所有属性值
+                    for attr in dir(msg):
+                        if not attr.startswith("_"):
+                            try:
+                                val = getattr(msg, attr)
+                                if not callable(val):
+                                    self._logger.info(f"DEBUG - message.{attr} = {val}")
+                            except:
+                                pass
 
             masked_sender = _mask_identifier(sender_id)
             masked_chat = _mask_identifier(chat_id)
@@ -183,23 +212,90 @@ class FeishuServer:
                 self._logger.debug(f"Message content: {message_content[:100]}...")
 
             if self.adapter:
-                from llm_chat.frontends.feishu.models import FeishuEvent
+                from llm_chat.frontends.feishu.models import (
+                    FeishuChat,
+                    FeishuEvent,
+                    FeishuMessage,
+                    FeishuUser,
+                )
 
-                event_data = {
-                    "sender": {"user_id": sender_id} if sender_id else {},
-                    "message": {
-                        "chat_id": chat_id,
-                        "content": message_content,
-                    }
-                    if chat_id or message_content
-                    else {},
-                }
+                # 构建 FeishuUser 对象
+                feishu_user = None
+                if sender_id:
+                    feishu_user = FeishuUser(user_id=sender_id)
+
+                # 构建 FeishuChat 对象
+                feishu_chat = None
+                if chat_id:
+                    feishu_chat = FeishuChat(chat_id=chat_id, type="p2p")
+
+                # 解析消息内容
+                import json
+
+                text_content = ""
+                if message_content:
+                    try:
+                        content_dict = (
+                            json.loads(message_content)
+                            if isinstance(message_content, str)
+                            else message_content
+                        )
+                        text_content = content_dict.get("text", "")
+                    except (json.JSONDecodeError, TypeError):
+                        text_content = str(message_content)
+                    # Ensure conversation exists in storage
+                    try:
+                        chat_type = "p2p"
+                        if getattr(event, "event", None) and getattr(
+                            event.event, "message", None
+                        ):
+                            msg = event.event.message
+                            if getattr(msg, "chat", None) and getattr(
+                                msg.chat, "type", None
+                            ):
+                                t = msg.chat.type.lower()
+                                if t in ("p2p", "group"):
+                                    chat_type = t
+                        if chat_id:
+                            from llm_chat.frontends.feishu.mapper import SessionMapper
+
+                            conv_id = SessionMapper.to_conversation_id(
+                                chat_type, chat_id
+                            )
+                            storage = getattr(self.adapter.app, "storage", None)
+                            if storage is not None:
+                                if storage.get_conversation(conv_id) is None:
+                                    storage.create_conversation(conv_id)
+                    except Exception as e:
+                        self._logger.error(
+                            f"Failed to ensure conversation exists: {e}",
+                            exc_info=True,
+                        )
+
+                # 构建 FeishuMessage 对象
+                # Inbound message id (may be missing in some Feishu events)
+                inbound_message_id = (
+                    getattr(event.event.message, "message_id", "")
+                    if getattr(event, "event", None)
+                    and getattr(event.event, "message", None)
+                    else ""
+                )
+                feishu_message = FeishuMessage(
+                    message_id=inbound_message_id,
+                    chat=feishu_chat,
+                    sender=feishu_user,
+                    text=text_content,
+                    content=json.loads(message_content)
+                    if message_content and isinstance(message_content, str)
+                    else message_content,
+                )
 
                 feishu_event = FeishuEvent(
                     event_id=event_id,
                     event_type="im.message.receive_v1",
-                    timestamp=time.time(),
-                    event=event_data,
+                    timestamp=int(time.time()),
+                    message=feishu_message,
+                    user=feishu_user,
                 )
                 self.adapter.handle_event_async(feishu_event)
             else:

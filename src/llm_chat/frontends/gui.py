@@ -489,6 +489,19 @@ class GUIFrontend(BaseFrontend):
         self.display_info("Press Enter to send, Shift+Enter for new line")
 
         self._main_window.show()
+        # If there are preloaded messages (set_current_conversation called before start),
+        # render them now that the UI is constructed.
+        try:
+            if (
+                hasattr(self, "_messages")
+                and isinstance(self._messages, list)
+                and len(self._messages) > 0
+            ):
+                self._refresh_chat_display()
+                self._scroll_to_bottom()
+        except Exception:
+            # Ignore UI rendering errors here; proceed to start the event loop.
+            pass
         sys.exit(self._app.exec())
 
     def _set_window_icon(self):

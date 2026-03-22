@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Dict, Any, List
 from llm_chat.client import LLMClient
 from llm_chat.config import Config

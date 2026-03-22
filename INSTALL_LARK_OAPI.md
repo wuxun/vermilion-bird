@@ -9,11 +9,19 @@ ModuleNotFoundError: No module named 'lark'
 
 ## 问题原因
 
-`lark-oapi` 包尚未安装，导致 `src/llm_chat/frontends/feishu/server.py` 中的导入失败：
+**问题1（已修复）**: `src/llm_chat/frontends/feishu/server.py` 中的导入语句错误
 
 ```python
-from lark import ws  # 失败：lark 模块不存在
+# 错误的导入（已修复）
+from lark import ws  # ❌ 模块名称错误
+
+# 正确的导入（已修复为）
+from lark_oapi import ws  # ✅ 正确的模块名
 ```
+
+**问题2**: `lark-oapi` 包未安装
+
+如果运行时仍然遇到 `ModuleNotFoundError`，说明 `lark-oapi` 包尚未安装。
 
 ---
 

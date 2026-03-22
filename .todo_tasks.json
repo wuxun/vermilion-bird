@@ -288,7 +288,373 @@
       "created_at": "2026-03-22T01:25:09.114667",
       "updated_at": "2026-03-22T01:34:58.219846",
       "completed_at": null
+    },
+    {
+      "task_id": "task_20260322_152955",
+      "task_name": "测试任务",
+      "task_description": "这是一个测试任务，用于验证任务管理功能",
+      "steps": [
+        {
+          "step_id": "step1",
+          "description": "创建测试文件",
+          "expected_output": "成功创建test.txt文件",
+          "dependencies": [],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T15:30:03.926942",
+              "content": "正在创建测试文件"
+            },
+            {
+              "time": "2026-03-22T15:30:11.523122",
+              "content": "[完成] 成功创建test.txt文件\n实际产出: 创建了test.txt文件，包含测试内容"
+            }
+          ],
+          "started_at": "2026-03-22T15:30:03.927042",
+          "completed_at": "2026-03-22T15:30:11.522806"
+        },
+        {
+          "step_id": "step2",
+          "description": "写入测试内容",
+          "expected_output": "向test.txt写入测试文本",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T15:30:24.882648",
+              "content": "[完成] 文件已经包含测试内容，无需额外写入\n实际产出: test.txt文件已包含测试内容：\"这是一个测试文件，用于验证工具功能。\""
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T15:30:24.882553"
+        },
+        {
+          "step_id": "step3",
+          "description": "验证文件内容",
+          "expected_output": "确认文件内容正确",
+          "dependencies": [
+            "step2"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T15:30:29.275623",
+              "content": "[完成] 已验证文件内容正确\n实际产出: 确认test.txt文件内容为：\"这是一个测试文件，用于验证工具功能。\"，内容正确"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T15:30:29.275559"
+        }
+      ],
+      "current_step": "step1",
+      "status": "completed",
+      "created_at": "2026-03-22T15:29:55.218190",
+      "updated_at": "2026-03-22T15:30:29.275639",
+      "completed_at": "2026-03-22T15:30:29.275657"
+    },
+    {
+      "task_id": "task_20260322_174753",
+      "task_name": "测试会话管理功能",
+      "task_description": "测试会话管理工具的各项功能，包括创建任务、更新进度、获取状态、完成步骤等",
+      "steps": [
+        {
+          "step_id": "step1",
+          "description": "创建测试任务计划",
+          "expected_output": "成功创建任务计划并返回任务ID",
+          "dependencies": [],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:03.701635",
+              "content": "已成功创建任务计划，任务ID为task_20260322_174753"
+            },
+            {
+              "time": "2026-03-22T17:48:09.098558",
+              "content": "[完成] 任务计划创建成功，所有步骤已定义，依赖关系已设置\n实际产出: 成功创建了包含6个步骤的任务计划，任务ID为task_20260322_174753"
+            }
+          ],
+          "started_at": "2026-03-22T17:48:03.701666",
+          "completed_at": "2026-03-22T17:48:09.098530"
+        },
+        {
+          "step_id": "step2",
+          "description": "获取任务状态",
+          "expected_output": "能够查看任务的所有步骤和当前状态",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:16.529608",
+              "content": "[完成] 已成功获取任务状态，能够查看所有步骤的详细信息\n实际产出: 成功获取了任务状态，包括总体进度、各步骤状态、依赖关系等信息"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:48:16.529470"
+        },
+        {
+          "step_id": "step3",
+          "description": "更新步骤进度",
+          "expected_output": "能够更新步骤的进度百分比和状态",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:21.249491",
+              "content": "正在测试更新步骤进度功能，已成功更新进度到75%"
+            },
+            {
+              "time": "2026-03-22T17:48:25.435505",
+              "content": "[完成] 已成功测试更新步骤进度功能\n实际产出: 能够成功更新步骤的进度百分比、状态和备注信息"
+            }
+          ],
+          "started_at": "2026-03-22T17:48:21.249517",
+          "completed_at": "2026-03-22T17:48:25.435488"
+        },
+        {
+          "step_id": "step4",
+          "description": "获取下一步骤",
+          "expected_output": "系统能够根据依赖关系推荐下一步应该执行的步骤",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:29.725878",
+              "content": "[完成] 已成功测试获取下一步骤功能\n实际产出: 系统能够根据依赖关系正确推荐下一步应该执行的步骤"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:48:29.725822"
+        },
+        {
+          "step_id": "step5",
+          "description": "完成步骤并记录输出",
+          "expected_output": "能够标记步骤为完成并记录实际产出",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:33.797625",
+              "content": "[完成] 已成功测试完成步骤功能\n实际产出: 能够成功标记步骤为完成并记录实际产出和完成备注"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:48:33.797599"
+        },
+        {
+          "step_id": "step6",
+          "description": "列出所有任务",
+          "expected_output": "能够查看系统中所有任务的状态",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:48:41.041839",
+              "content": "[完成] 已成功测试列出所有任务功能\n实际产出: 能够查看系统中所有任务的状态，包括已完成和进行中的任务"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:48:41.041800"
+        }
+      ],
+      "current_step": "step3",
+      "status": "completed",
+      "created_at": "2026-03-22T17:47:53.374972",
+      "updated_at": "2026-03-22T17:48:41.041841",
+      "completed_at": "2026-03-22T17:48:41.041847"
+    },
+    {
+      "task_id": "task_20260322_175033",
+      "task_name": "会话管理功能测试",
+      "task_description": "全面测试会话管理工具的各项功能，包括创建任务、更新进度、获取状态、完成步骤、列出任务、切换任务等",
+      "steps": [
+        {
+          "step_id": "step1",
+          "description": "创建测试任务计划",
+          "expected_output": "成功创建包含多个步骤的任务计划",
+          "dependencies": [],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:50:42.980682",
+              "content": "正在执行第一步：创建测试任务计划。已经成功创建了任务，现在正在记录进展。"
+            },
+            {
+              "time": "2026-03-22T17:50:49.085749",
+              "content": "[完成] 第一步已完成，成功创建了包含8个步骤的测试任务计划，任务ID为task_20260322_175033\n实际产出: 成功创建了会话管理功能测试任务，包含8个步骤：1)创建任务计划、2)获取状态、3)更新进度、4)获取下一步、5)完成步骤、6)列出任务、7)切换任务、8)测试复杂依赖关系"
+            }
+          ],
+          "started_at": "2026-03-22T17:50:42.980720",
+          "completed_at": "2026-03-22T17:50:49.085700"
+        },
+        {
+          "step_id": "step2",
+          "description": "获取当前任务状态",
+          "expected_output": "能够查看任务的总体状态和各步骤详情",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:50:56.779764",
+              "content": "[完成] 第二步已完成，成功获取了当前任务状态，能够查看任务的总体状态和各步骤详情\n实际产出: 成功获取了任务状态报告，包括：任务ID、名称、描述、创建时间、总体进度、各步骤详情（进度、状态、预期输出、依赖关系）"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:50:56.779720"
+        },
+        {
+          "step_id": "step3",
+          "description": "更新步骤进度",
+          "expected_output": "能够更新步骤的进度百分比和状态",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:01.177821",
+              "content": "正在测试更新步骤进度功能，已成功将进度更新到30%"
+            },
+            {
+              "time": "2026-03-22T17:51:05.495952",
+              "content": "继续测试更新进度功能，已成功将进度更新到80%，功能正常"
+            },
+            {
+              "time": "2026-03-22T17:51:09.841816",
+              "content": "[完成] 第三步已完成，成功测试了更新步骤进度功能\n实际产出: 能够成功更新步骤的进度百分比（从30%到80%）、状态（in_progress）和备注信息，功能正常"
+            }
+          ],
+          "started_at": "2026-03-22T17:51:01.177837",
+          "completed_at": "2026-03-22T17:51:09.841759"
+        },
+        {
+          "step_id": "step4",
+          "description": "获取下一步骤",
+          "expected_output": "系统根据依赖关系推荐下一步骤",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:14.508655",
+              "content": "[完成] 第四步已完成，成功测试了获取下一步骤功能\n实际产出: 系统能够根据依赖关系正确推荐下一步应该执行的步骤，能够显示可以开始的步骤、建议下一步和等待依赖的步骤"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:51:14.508608"
+        },
+        {
+          "step_id": "step5",
+          "description": "完成步骤并记录输出",
+          "expected_output": "能够标记步骤为完成并记录实际产出",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:19.072124",
+              "content": "[完成] 第五步已完成，成功测试了完成步骤并记录输出功能\n实际产出: 能够成功标记步骤为完成并记录实际产出和完成备注，系统会自动更新任务进度"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:51:19.072111"
+        },
+        {
+          "step_id": "step6",
+          "description": "列出所有任务",
+          "expected_output": "查看系统中所有任务的状态",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:26.470785",
+              "content": "[完成] 第六步已完成，成功测试了列出所有任务功能\n实际产出: 能够查看系统中所有任务的状态，包括已完成和进行中的任务，共列出5个任务，显示每个任务的ID、名称、进度、创建时间和状态"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:51:26.470727"
+        },
+        {
+          "step_id": "step7",
+          "description": "切换任务上下文",
+          "expected_output": "能够切换到其他任务并继续工作",
+          "dependencies": [
+            "step1"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:39.627782",
+              "content": "[完成] 第七步已完成，成功测试了切换任务上下文功能\n实际产出: 能够成功切换到其他任务（task_20260322_012509），查看其状态，然后再切换回原任务，功能正常"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:51:39.627763"
+        },
+        {
+          "step_id": "step8",
+          "description": "测试复杂依赖关系",
+          "expected_output": "验证多步骤依赖关系的正确性",
+          "dependencies": [
+            "step1",
+            "step2",
+            "step3",
+            "step4",
+            "step5",
+            "step6",
+            "step7"
+          ],
+          "status": "completed",
+          "progress": 100,
+          "notes": [
+            {
+              "time": "2026-03-22T17:51:46.994441",
+              "content": "[完成] 第八步已完成，成功测试了复杂依赖关系功能\n实际产出: 验证了多步骤依赖关系的正确性：step8依赖于step1-step7，只有当所有前置步骤完成后，step8才能开始执行，系统依赖关系检查功能正常"
+            }
+          ],
+          "started_at": null,
+          "completed_at": "2026-03-22T17:51:46.994413"
+        }
+      ],
+      "current_step": "step3",
+      "status": "completed",
+      "created_at": "2026-03-22T17:50:33.234984",
+      "updated_at": "2026-03-22T17:51:46.994442",
+      "completed_at": "2026-03-22T17:51:46.994451"
     }
   ],
-  "active_task_id": "task_20260322_012509"
+  "active_task_id": "task_20260322_175033"
 }

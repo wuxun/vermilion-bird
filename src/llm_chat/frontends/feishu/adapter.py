@@ -209,7 +209,6 @@ class FeishuAdapter:
         self._executor.submit(self._process_event_background, event)
 
     def _process_event_background(self, event: FeishuEvent) -> None:
-        """Background task to process event and send response."""
         if not event.message:
             return
 
@@ -222,30 +221,12 @@ class FeishuAdapter:
 
             response_text = self._process_with_llm(internal_message, conversation_id)
 
-            if response_text:
-                self._send_response_to_feishu(response_text, message)
-
-        except Exception as e:
-            logger.error(f"Error in background event processing: {e}", exc_info=True)
-
-    def _send_response_to_feishu(
-        self, response_text: str, original_message: FeishuMessage
-    ) -> None:
-        """Send the LLM response back to Feishu."""
-        try:
-            if self._response_callback:
-                content = {"text": response_text}
-                receive_id = (
-                    original_message.chat.chat_id if original_message.chat else ""
-                )
-                self._response_callback(response_text, receive_id, content)
-            elif original_message.message_id:
-                self.reply_to_message(original_message.message_id, response_text)
-            elif original_message.chat and original_message.chat.chat_id:
+            if response_text and message.chat and message.chat.chat_id:
+                card = self._build_markdown_card(response_text)
                 self.send_message(
-                    original_message.chat.chat_id,
-                    "text",
-                    {"text": response_text},
+                    message.chat.chat_id,
+                    "interactive",
+                    card,
                     receive_id_type="chat_id",
                 )
             else:
@@ -253,6 +234,27 @@ class FeishuAdapter:
 
         except Exception as e:
             logger.error(f"Failed to send response to Feishu: {e}", exc_info=True)
+
+    def _build_markdown_card(self, markdown_text: str) -> Dict[str, Any]:
+        """Build a Feishu interactive card with markdown content.
+
+        Args:
+            markdown_text: The markdown text to render
+
+        Returns:
+            Card content dictionary for Feishu API
+        """
+        card = {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": markdown_text,
+                }
+            ],
+        }
+
+        return card
 
     def _convert_to_internal_message(self, event: FeishuEvent) -> Message:
         """Convert a FeishuEvent to internal Message format."""
@@ -338,11 +340,6 @@ class FeishuAdapter:
     def _process_with_llm(
         self, message: Message, conversation_id: str
     ) -> Optional[str]:
-        """Process a message through the LLM using App's conversation manager.
-
-        Thread-safe: Uses per-conversation locks to prevent race conditions
-        when multiple requests arrive for the same conversation.
-        """
         conv_lock = self._get_conversation_lock(conversation_id)
 
         with conv_lock:
@@ -352,9 +349,11 @@ class FeishuAdapter:
                 if self.app.config.enable_tools and self.app.has_tools_available():
                     tools = self.app.get_available_tools()
                     if tools:
+                        conversation.add_user_message(message.content)
                         response = self.app.client.chat_with_tools(
                             message.content, tools, history=conversation.get_history()
                         )
+                        conversation.add_assistant_message(response)
                     else:
                         response = conversation.send_message(message.content)
                 else:
@@ -392,6 +391,8 @@ class FeishuAdapter:
         Raises:
             FeishuAdapterError: If sending fails
         """
+        import json
+
         token = self._get_tenant_access_token()
 
         url = f"{self.FEISHU_API_BASE}/im/v1/messages"
@@ -400,15 +401,24 @@ class FeishuAdapter:
             "Content-Type": "application/json; charset=utf-8",
         }
 
+        content_str = (
+            json.dumps(content, ensure_ascii=False)
+            if isinstance(content, dict)
+            else str(content)
+        )
+
         payload = {
             "receive_id": receive_id,
-            "receive_id_type": receive_id_type,
             "msg_type": msg_type,
-            "content": content,
+            "content": content_str,
         }
 
+        params = {"receive_id_type": receive_id_type}
+
         try:
-            response = self.http_client.post(url, headers=headers, json=payload)
+            response = self.http_client.post(
+                url, headers=headers, json=payload, params=params
+            )
             response.raise_for_status()
             result = response.json()
 
@@ -420,8 +430,14 @@ class FeishuAdapter:
 
             return result
 
-        except httpx.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error sending Feishu message: {e}")
+            if e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    logger.error(f"Feishu API error response: {error_detail}")
+                except:
+                    pass
             raise FeishuAdapterError(f"Failed to send message: {e}")
 
     def reply_to_message(
@@ -437,6 +453,8 @@ class FeishuAdapter:
         Returns:
             API response dictionary
         """
+        import json
+
         token = self._get_tenant_access_token()
 
         url = f"{self.FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
@@ -451,9 +469,11 @@ class FeishuAdapter:
             else (content if isinstance(content, dict) else {"text": content})
         )
 
+        content_str = json.dumps(content_dict, ensure_ascii=False)
+
         payload = {
             "msg_type": msg_type,
-            "content": content_dict,
+            "content": content_str,
         }
 
         try:
