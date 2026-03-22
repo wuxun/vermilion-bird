@@ -6,7 +6,7 @@
 
 - 支持多种大模型 API 协议（OpenAI、Anthropic、Gemini）
 - **MCP (Model Context Protocol) 工具支持** - 连接外部 MCP 服务器
-- **飞书（Lark）集成** - 飞书机器人集成，支持消息推送和会话管理
+- **飞书（Lark）集成** - 飞书机器人集成，支持实时消息处理、Markdown 渲染、会话历史同步
 - **图形化界面 (PyQt6)** - 提供友好的 GUI 交互
 - **会话历史管理** - SQLite 持久化存储，支持会话切换、重命名、删除
 - 配置化模型设置（base URL、模型名称、协议类型等）
@@ -38,6 +38,8 @@ pip install -e .
 - PyQt6 - GUI 界面
 - mcp - MCP 协议支持
 - httpx / httpx-sse - HTTP 客户端
+- lark-oapi - 飞书开放平台 SDK
+- lark-oapi - 飞书 SDK
 
 ## 支持的协议
 
@@ -169,6 +171,70 @@ export LLM_MAX_RETRIES="3"
 ```bash
 vermilion-bird --protocol anthropic --model claude-3-opus-20240229 --api-key your-api-key
 ```
+
+## 飞书（Lark）集成
+
+Vermilion Bird 支持飞书机器人集成，可以接收飞书消息并通过 AI 模型自动回复。
+
+### 飞书配置
+
+在 `config.yaml` 中添加飞书配置：
+
+```yaml
+feishu:
+  enabled: true
+  app_id: "your-feishu-app-id"
+  app_secret: "your-feishu-app-secret"
+  tenant_key: "your-tenant-key"          # 可选
+  encrypt_key: "your-encrypt-key"        # 可选，用于事件加密
+  verification_token: "your-token"       # 可选，用于事件验证
+```
+
+### 飞书机器人配置步骤
+
+1. **创建飞书应用**
+   - 访问 [飞书开放平台](https://open.feishu.cn/)
+   - 创建企业自建应用
+   - 获取 `App ID` 和 `App Secret`
+
+2. **配置事件订阅**
+   - 在应用后台开启「事件订阅」
+   - 订阅 `im.message.receive_v1` 事件（接收消息）
+   - 配置 Encrypt Key 和 Verification Token（可选）
+
+3. **配置权限**
+   - 添加以下权限：
+     - `im:message` - 获取与发送消息
+     - `im:message:send_as_bot` - 以应用身份发消息
+
+4. **发布应用**
+   - 配置完成后发布应用
+   - 将应用添加到需要使用的群聊或开启单聊
+
+### 启动飞书服务
+
+```bash
+vermilion-bird feishu
+```
+
+服务启动后会连接到飞书 WebSocket 服务器，自动接收和处理消息。
+
+### 飞书消息特性
+
+- **Markdown 渲染** - 回复消息以 Markdown 卡片形式渲染，支持代码块、列表等格式
+- **会话历史同步** - 飞书对话历史自动保存到本地数据库，可在 GUI 中查看
+- **多会话支持** - 支持私聊和群聊，自动区分会话类型
+
+### 飞书会话 ID 规则
+
+飞书会话在本地数据库中使用以下 ID 格式：
+
+| 会话类型 | ID 格式 | 示例 |
+|----------|---------|------|
+| 私聊 | `feishu_p2p_<chat_id>` | `feishu_p2p_oc_xxx` |
+| 群聊 | `feishu_group_<chat_id>` | `feishu_group_oc_xxx` |
+
+可以在 GUI 中直接查看飞书会话的历史记录。
 
 ## 使用方法
 
@@ -378,13 +444,34 @@ src/llm_chat/
 │   ├── base.py         # 前端基类
 │   ├── cli.py          # CLI 前端
 │   ├── gui.py          # PyQt6 GUI 前端
-│   └── mcp_dialog.py   # MCP 配置对话框
-└── mcp/                # MCP 客户端
+│   ├── mcp_dialog.py   # MCP 配置对话框
+│   ├── skills_dialog.py # 技能配置对话框
+│   ├── models_dialog.py # 模型配置对话框
+│   └── feishu/         # 飞书集成
+│       ├── __init__.py
+│       ├── adapter.py   # 飞书消息适配器
+│       ├── server.py    # 飞书 WebSocket 服务器
+│       ├── mapper.py    # 会话 ID 映射
+│       └── models.py    # 飞书数据模型
+├── mcp/                # MCP 客户端
+│   ├── __init__.py
+│   ├── types.py        # 类型定义
+│   ├── config.py       # MCP 配置
+│   ├── client.py       # MCP 客户端封装
+│   └── manager.py      # MCP 服务器管理器
+├── memory/             # 记忆系统
+│   ├── __init__.py
+│   ├── storage.py      # 记忆存储
+│   └── manager.py      # 记忆管理器
+├── skills/             # 技能插件
+│   ├── __init__.py
+│   ├── base.py         # 技能基类
+│   ├── web_search/     # 网页搜索技能
+│   ├── calculator/     # 计算器技能
+│   └── web_fetch/      # 网页抓取技能
+└── utils/              # 工具函数
     ├── __init__.py
-    ├── types.py         # 类型定义
-    ├── config.py        # MCP 配置
-    ├── client.py        # MCP 客户端封装
-    └── manager.py       # MCP 服务器管理器
+    └── token_counter.py # Token 计数器
 ```
 
 ## MCP 工具支持
