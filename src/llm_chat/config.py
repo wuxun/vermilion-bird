@@ -30,6 +30,8 @@ class FeishuConfig:
     app_id: Optional[str] = None
     app_secret: Optional[str] = None
     tenant_key: Optional[str] = None
+    encrypt_key: Optional[str] = None
+    verification_token: Optional[str] = None
 
 
 class LLMConfig(BaseSettings):

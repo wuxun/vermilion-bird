@@ -257,8 +257,24 @@ def feishu(config_path=None):
         return
 
     # Create and start the Feishu server
+    from llm_chat.frontends.feishu.adapter import FeishuAdapter
+    from llm_chat.app import App
+
+    # Create App and FeishuAdapter
+    app = App(config=config)
+    adapter = FeishuAdapter(
+        app=app,
+        app_id=feishu_cfg.app_id,
+        app_secret=feishu_cfg.app_secret,
+    )
+
     server = FeishuServer(
-        feishu_cfg.app_id, feishu_cfg.app_secret, feishu_cfg.tenant_key
+        app_id=feishu_cfg.app_id,
+        app_secret=feishu_cfg.app_secret,
+        adapter=adapter,
+        tenant_key=feishu_cfg.tenant_key,
+        encrypt_key=feishu_cfg.encrypt_key or "",
+        verification_token=feishu_cfg.verification_token,
     )
     try:
         server.start()
