@@ -9,6 +9,7 @@ from llm_chat.skills.manager import SkillManager
 from llm_chat.tools.registry import ToolRegistry
 from llm_chat.frontends.feishu.server import FeishuServer
 import signal
+import threading
 
 
 def setup_logging(level=logging.INFO, log_file: str = None):
@@ -282,9 +283,11 @@ def feishu(config_path=None):
         click.echo(f"无法启动 Feishu 服务器: {e}")
         return
 
-    # Graceful shutdown on SIGINT/SIGTERM
+    stop_event = threading.Event()
+
     def _shutdown(signum, frame):
         logging.info("Received signal %s, shutting down FeishuServer", signum)
+        stop_event.set()
         try:
             server.stop()
         except Exception:
@@ -293,8 +296,12 @@ def feishu(config_path=None):
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    click.echo("Feishu 服务器已在后台启动。若需要停止，请发送中断信号（Ctrl+C）。")
-    # Do not block main thread; server runs in background.
+    click.echo("Feishu 服务器已启动。按 Ctrl+C 停止。")
+
+    while not stop_event.is_set():
+        stop_event.wait(timeout=1)
+
+    click.echo("Feishu 服务器已停止。")
 
 
 @click.group()
