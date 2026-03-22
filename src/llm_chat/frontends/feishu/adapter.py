@@ -217,7 +217,13 @@ class FeishuAdapter:
             internal_message = self._convert_to_internal_message(event)
             chat_type = self._get_chat_type(message)
             original_id = message.chat.chat_id if message.chat else ""
-            conversation_id = SessionMapper.to_conversation_id(chat_type, original_id)
+
+            force_new = SessionMapper.check_new_session_command(
+                internal_message.content
+            )
+            conversation_id = SessionMapper.to_conversation_id(
+                chat_type, original_id, force_new_session=force_new
+            )
 
             response_text = self._process_with_llm(internal_message, conversation_id)
 

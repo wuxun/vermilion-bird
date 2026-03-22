@@ -259,8 +259,11 @@ class FeishuServer:
                         if chat_id:
                             from llm_chat.frontends.feishu.mapper import SessionMapper
 
+                            force_new = SessionMapper.is_new_session_request(
+                                text_content
+                            )
                             conv_id = SessionMapper.to_conversation_id(
-                                chat_type, chat_id
+                                chat_type, chat_id, force_new_session=force_new
                             )
                             storage = getattr(self.adapter.app, "storage", None)
                             if storage is not None:
