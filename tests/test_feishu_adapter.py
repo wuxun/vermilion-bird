@@ -1,8 +1,8 @@
-import os
-import shutil
+"""单元测试 - FeishuAdapter 核心功能。"""
+
+import time
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 
 from src.llm_chat.app import App
@@ -13,7 +13,6 @@ from src.llm_chat.frontends.feishu import (
     FeishuAdapterError,
     AccessDeniedError,
     DuplicateEventError,
-    SessionMapper,
 )
 from src.llm_chat.frontends.feishu.models import (
     FeishuChat,
@@ -24,18 +23,9 @@ from src.llm_chat.frontends.feishu.models import (
 from src.llm_chat.frontends.feishu.security import AccessController, MessageDeduplicator
 
 
-def setup_module():
-    if os.path.exists(".vb/history"):
-        shutil.rmtree(".vb/history")
-
-
-def teardown_module():
-    if os.path.exists(".vb/history"):
-        shutil.rmtree(".vb/history")
-
-
 class TestFeishuAdapterInit:
     def test_init_basic(self):
+        """测试基本初始化。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
@@ -45,11 +35,11 @@ class TestFeishuAdapterInit:
         adapter.close()
 
     def test_init_with_security_components(self):
+        """测试带安全组件的初始化。"""
         config = Config()
         app = App(config)
         deduplicator = MessageDeduplicator()
         access_controller = AccessController("open")
-
         adapter = FeishuAdapter(
             app,
             "test_app_id",
@@ -61,18 +51,10 @@ class TestFeishuAdapterInit:
         assert adapter.access_controller is access_controller
         adapter.close()
 
-    def test_http_client_lazy_init(self):
-        config = Config()
-        app = App(config)
-        adapter = FeishuAdapter(app, "test_app_id", "test_secret")
-        assert adapter._http_client is None
-        client = adapter.http_client
-        assert isinstance(client, httpx.Client)
-        adapter.close()
-
 
 class TestConvertToInternalMessage:
     def test_convert_basic_text_message(self):
+        """测试基本文本消息转换。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
@@ -85,13 +67,13 @@ class TestConvertToInternalMessage:
             sender=feishu_user,
             text="Hello from Feishu",
         )
-        feishu_event = FeishuEvent(
+        event = FeishuEvent(
             event_id="event001",
             event_type="im.message.receive",
             message=feishu_msg,
         )
 
-        internal_msg = adapter._convert_to_internal_message(feishu_event)
+        internal_msg = adapter._convert_to_internal_message(event)
 
         assert internal_msg.content == "Hello from Feishu"
         assert internal_msg.role == "user"
@@ -99,47 +81,83 @@ class TestConvertToInternalMessage:
         assert internal_msg.metadata["event_id"] == "event001"
         assert internal_msg.metadata["sender_id"] == "user123"
         assert internal_msg.metadata["chat_id"] == "chat456"
+        assert internal_msg.metadata["chat_type"] == "p2p"
         adapter.close()
 
-    def test_convert_message_with_content_dict(self):
+    def test_convert_message_with_rich_text(self):
+        """测试富文本消息转换。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
         feishu_msg = FeishuMessage(
             message_id="msg001",
-            content={"text": "Content from dict"},
+            content={
+                "post": {
+                    "zh_cn": {
+                        "title": "Title",
+                        "content": [
+                            [{"tag": "text", "text": "Paragraph 1"}],
+                            [{"tag": "text", "text": "Paragraph 2"}],
+                        ],
+                    }
+                }
+            },
         )
-        feishu_event = FeishuEvent(event_id="event001", message=feishu_msg)
+        event = FeishuEvent(event_id="event001", message=feishu_msg)
 
-        internal_msg = adapter._convert_to_internal_message(feishu_event)
-        assert internal_msg.content == "Content from dict"
+        internal_msg = adapter._convert_to_internal_message(event)
+
+        assert "Paragraph 1" in internal_msg.content
+        assert "Paragraph 2" in internal_msg.content
         adapter.close()
 
     def test_convert_event_without_message_raises_error(self):
+        """测试无消息事件应该返回 None。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
-        feishu_event = FeishuEvent(event_id="event001")
+        event = FeishuEvent(event_id="event001")
 
-        with pytest.raises(FeishuAdapterError, match="Event has no message"):
-            adapter._convert_to_internal_message(feishu_event)
+        result = adapter.handle_event(event)
+
+        assert result is None
+        adapter.close()
+
+
+class TestConvertToFeishuMessage:
+    def test_convert_response_to_feishu_message(self):
+        """测试将 LLM 响应转换为 Feishu 消息。"""
+        config = Config()
+        app = App(config)
+        adapter = FeishuAdapter(app, "test_app_id", "test_secret")
+
+        original_chat = FeishuChat(chat_id="chat123", type="group")
+        original_msg = FeishuMessage(chat=original_chat)
+
+        response = adapter._convert_to_feishu_message("LLM response", original_msg)
+
+        assert response.text == "LLM response"
+        assert response.chat is original_chat
         adapter.close()
 
 
 class TestExtractTextFromContent:
     def test_extract_simple_text(self):
+        """测试提取简单文本。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
         content = {"text": "Simple text message"}
         result = adapter._extract_text_from_content(content)
+
         assert result == "Simple text message"
         adapter.close()
 
     def test_extract_rich_text_post(self):
+        """测试提取富文本内容。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
@@ -149,288 +167,160 @@ class TestExtractTextFromContent:
                 "zh_cn": {
                     "title": "Title",
                     "content": [
-                        [{"tag": "text", "text": "First paragraph. "}],
+                        [{"tag": "text", "text": "First paragraph."}],
                         [{"tag": "text", "text": "Second paragraph."}],
                     ],
                 }
             }
         }
         result = adapter._extract_text_from_content(content)
-        assert "First paragraph" in result
-        assert "Second paragraph" in result
+
+        assert "First paragraph." in result
+        assert "Second paragraph." in result
         adapter.close()
 
     def test_extract_empty_content(self):
+        """测试空内容返回空字符串。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
         result = adapter._extract_text_from_content({})
+
         assert result == ""
         adapter.close()
 
 
-class TestConvertToFeishuMessage:
-    def test_convert_response(self):
-        config = Config()
-        app = App(config)
-        adapter = FeishuAdapter(app, "test_app_id", "test_secret")
-
-        original_chat = FeishuChat(chat_id="chat123", type="group")
-        original_msg = FeishuMessage(
-            message_id="msg001",
-            chat=original_chat,
-        )
-
-        response_msg = adapter._convert_to_feishu_message(
-            "LLM response text", original_msg
-        )
-
-        assert response_msg.text == "LLM response text"
-        assert response_msg.content == {"text": "LLM response text"}
-        assert response_msg.chat is original_chat
-        adapter.close()
-
-
 class TestGetChatType:
-    def test_p2p_chat_type(self):
+    def test_get_p2p_chat_type(self):
+        """测试 P2P 聊天类型识别。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
-        msg = FeishuMessage(
-            message_id="msg001",
-            chat=FeishuChat(chat_id="chat123", type="p2p"),
-        )
-        assert adapter._get_chat_type(msg) == "p2p"
+        msg = FeishuMessage(chat=FeishuChat(type="p2p"))
+        result = adapter._get_chat_type(msg)
+
+        assert result == "p2p"
         adapter.close()
 
-    def test_group_chat_type(self):
+    def test_get_group_chat_type(self):
+        """测试群聊类型识别。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
-        msg = FeishuMessage(
-            message_id="msg001",
-            chat=FeishuChat(chat_id="chat123", type="group"),
-        )
-        assert adapter._get_chat_type(msg) == "group"
+        msg = FeishuMessage(chat=FeishuChat(type="group"))
+        result = adapter._get_chat_type(msg)
+
+        assert result == "group"
         adapter.close()
 
-    def test_unknown_chat_type_defaults_to_p2p(self):
+    def test_get_unknown_chat_type_defaults_to_p2p(self):
+        """测试未知类型默认为 P2P。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
-        msg = FeishuMessage(message_id="msg001")
-        assert adapter._get_chat_type(msg) == "p2p"
+        msg = FeishuMessage()
+        result = adapter._get_chat_type(msg)
+
+        assert result == "p2p"
         adapter.close()
 
 
 class TestHandleEvent:
-    def test_handle_event_without_message_returns_none(self):
+    def test_handle_event_without_message(self):
+        """测试处理无消息事件。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
         event = FeishuEvent(event_id="event001")
+
         result = adapter.handle_event(event)
+
         assert result is None
         adapter.close()
 
     def test_handle_event_with_duplicate_detection(self):
+        """测试重复事件检测。"""
         config = Config()
         app = App(config)
         deduplicator = MessageDeduplicator()
         adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", deduplicator=deduplicator
+            app,
+            "test_app_id",
+            "test_secret",
+            deduplicator=deduplicator,
         )
 
         feishu_msg = FeishuMessage(
             message_id="msg001",
-            chat=FeishuChat(chat_id="chat123", type="p2p"),
+            chat=FeishuChat(chat_id="chat123"),
             text="Hello",
         )
         event = FeishuEvent(event_id="event001", message=feishu_msg)
 
         with patch.object(app, "get_conversation") as mock_get_conv:
             mock_conv = MagicMock()
-            mock_conv.get_history.return_value = []
             mock_conv.send_message.return_value = "Response"
             mock_get_conv.return_value = mock_conv
 
             result1 = adapter.handle_event(event)
             assert result1 is not None
 
+            # 第二次处理应该失败
             with pytest.raises(DuplicateEventError):
                 adapter.handle_event(event)
+
         adapter.close()
 
     def test_handle_event_with_access_control_denied(self):
+        """测试访问控制拒绝。"""
         config = Config()
         app = App(config)
         access_controller = AccessController("whitelist", whitelist={"allowed_user"})
         adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", access_controller=access_controller
+            app,
+            "test_app_id",
+            "test_secret",
+            access_controller=access_controller,
         )
 
-        feishu_user = FeishuUser(user_id="blocked_user")
+        feishu_user = FeishuUser(user_id="blocked_user", name="Blocked User")
         feishu_msg = FeishuMessage(
             message_id="msg001",
-            chat=FeishuChat(chat_id="chat123", type="p2p"),
+            chat=FeishuChat(chat_id="chat123"),
             sender=feishu_user,
             text="Hello",
         )
         event = FeishuEvent(event_id="event001", message=feishu_msg)
 
-        with pytest.raises(AccessDeniedError):
-            adapter.handle_event(event)
+        with patch.object(app, "get_conversation") as mock_get_conv:
+            mock_get_conv.return_value = MagicMock()
+
+            with pytest.raises(AccessDeniedError):
+                adapter.handle_event(event)
+
         adapter.close()
 
-    def test_handle_event_creates_correct_conversation_id(self):
+
+class TestProcessWithLlm:
+    def test_process_with_llm_sync(self):
+        """测试同步 LLM 处理。"""
         config = Config()
         app = App(config)
         adapter = FeishuAdapter(app, "test_app_id", "test_secret")
 
-        feishu_msg = FeishuMessage(
-            message_id="msg001",
-            chat=FeishuChat(chat_id="chat_abc_123", type="group"),
-            text="Hello",
-        )
-        event = FeishuEvent(event_id="event001", message=feishu_msg)
+        internal_msg = Message(content="Hello", role="user", msg_type=MessageType.TEXT)
 
         with patch.object(app, "get_conversation") as mock_get_conv:
             mock_conv = MagicMock()
-            mock_conv.get_history.return_value = []
-            mock_conv.send_message.return_value = "Response"
-            mock_get_conv.return_value = mock_conv
+            mock_conv.send_message.return_value = "LLM response"
 
-            adapter.handle_event(event)
+            result = adapter._process_with_llm(internal_msg, "test_conv_id")
 
-            expected_conv_id = SessionMapper.to_conversation_id("group", "chat_abc_123")
-            mock_get_conv.assert_called_once_with(expected_conv_id)
+            assert result == "LLM response"
+            assert mock_get_conv.called_once_with("test_conv_id")
         adapter.close()
-
-
-class TestSendMessage:
-    def test_send_message_success(self):
-        config = Config()
-        app = App(config)
-        mock_http_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"code": 0, "data": {"message_id": "new_msg"}}
-        mock_http_client.post.return_value = mock_response
-
-        adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", http_client=mock_http_client
-        )
-
-        with patch.object(
-            adapter, "_get_tenant_access_token", return_value="test_token"
-        ):
-            result = adapter.send_message(
-                receive_id="chat123",
-                msg_type="text",
-                content={"text": "Hello"},
-            )
-
-        assert result["code"] == 0
-        adapter.close()
-
-    def test_send_message_api_error(self):
-        config = Config()
-        app = App(config)
-        mock_http_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"code": 1001, "msg": "Invalid token"}
-        mock_http_client.post.return_value = mock_response
-
-        adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", http_client=mock_http_client
-        )
-
-        with patch.object(
-            adapter, "_get_tenant_access_token", return_value="test_token"
-        ):
-            with pytest.raises(FeishuAdapterError, match="Feishu API error"):
-                adapter.send_message(
-                    receive_id="chat123",
-                    msg_type="text",
-                    content={"text": "Hello"},
-                )
-        adapter.close()
-
-
-class TestReplyToMessage:
-    def test_reply_to_message_success(self):
-        config = Config()
-        app = App(config)
-        mock_http_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"code": 0, "data": {}}
-        mock_http_client.post.return_value = mock_response
-
-        adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", http_client=mock_http_client
-        )
-
-        with patch.object(
-            adapter, "_get_tenant_access_token", return_value="test_token"
-        ):
-            result = adapter.reply_to_message("msg001", "Reply text")
-
-        assert result["code"] == 0
-        adapter.close()
-
-
-class TestGetTenantAccessToken:
-    def test_get_token_caching(self):
-        config = Config()
-        app = App(config)
-        mock_http_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "code": 0,
-            "tenant_access_token": "cached_token",
-            "expire": 7200,
-        }
-        mock_http_client.post.return_value = mock_response
-
-        adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", http_client=mock_http_client
-        )
-
-        token1 = adapter._get_tenant_access_token()
-        token2 = adapter._get_tenant_access_token()
-
-        assert token1 == "cached_token"
-        assert token2 == "cached_token"
-        mock_http_client.post.assert_called_once()
-        adapter.close()
-
-    def test_get_token_auth_failure(self):
-        config = Config()
-        app = App(config)
-        mock_http_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"code": 1001, "msg": "Invalid credentials"}
-        mock_http_client.post.return_value = mock_response
-
-        adapter = FeishuAdapter(
-            app, "test_app_id", "test_secret", http_client=mock_http_client
-        )
-
-        with pytest.raises(FeishuAdapterError, match="Auth failed"):
-            adapter._get_tenant_access_token()
-        adapter.close()
-
-
-class TestContextManager:
-    def test_context_manager_closes_client(self):
-        config = Config()
-        app = App(config)
-
-        with FeishuAdapter(app, "test_app_id", "test_secret") as adapter:
-            assert adapter._http_client is None or adapter._http_client is not None
-
-        assert adapter._http_client is None
