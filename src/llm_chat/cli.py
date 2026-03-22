@@ -7,6 +7,8 @@ from llm_chat.frontends import get_frontend
 from llm_chat.memory import MemoryStorage
 from llm_chat.skills.manager import SkillManager
 from llm_chat.tools.registry import ToolRegistry
+from llm_chat.frontends.feishu.server import FeishuServer
+import signal
 
 
 def setup_logging(level=logging.INFO, log_file: str = None):
@@ -228,6 +230,55 @@ def chat(
 
 
 cli.add_command(memory)
+
+
+@cli.command()
+@click.option("--config", "config_path", default=None, help="Feishu 配置文件路径")
+def feishu(config_path=None):
+    """启动 Feishu 服务（非阻塞，后台运行）"""
+    import logging
+    import time
+
+    # Load Feishu configuration
+    try:
+        config = Config.from_yaml(config_path)
+    except Exception as e:
+        click.echo(f"加载 Feishu 配置失败: {e}")
+        return
+
+    feishu_cfg = getattr(config, "feishu", None)
+    if not feishu_cfg or not feishu_cfg.enabled:
+        click.echo(
+            "Feishu 集成未开启，请在配置中开启 Feishu 并提供所需凭证（app_id/app_secret）"
+        )
+        return
+    if not feishu_cfg.app_id or not feishu_cfg.app_secret:
+        click.echo("Feishu 集成需要 app_id 与 app_secret，请在配置中设置")
+        return
+
+    # Create and start the Feishu server
+    server = FeishuServer(
+        feishu_cfg.app_id, feishu_cfg.app_secret, feishu_cfg.tenant_key
+    )
+    try:
+        server.start()
+    except Exception as e:
+        click.echo(f"无法启动 Feishu 服务器: {e}")
+        return
+
+    # Graceful shutdown on SIGINT/SIGTERM
+    def _shutdown(signum, frame):
+        logging.info("Received signal %s, shutting down FeishuServer", signum)
+        try:
+            server.stop()
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    click.echo("Feishu 服务器已在后台启动。若需要停止，请发送中断信号（Ctrl+C）。")
+    # Do not block main thread; server runs in background.
 
 
 @click.group()
