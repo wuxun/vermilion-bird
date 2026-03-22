@@ -6,6 +6,7 @@
 
 - 支持多种大模型 API 协议（OpenAI、Anthropic、Gemini）
 - **MCP (Model Context Protocol) 工具支持** - 连接外部 MCP 服务器
+- **飞书（Lark）集成** - 飞书机器人集成，支持消息推送和会话管理
 - **图形化界面 (PyQt6)** - 提供友好的 GUI 交互
 - **会话历史管理** - SQLite 持久化存储，支持会话切换、重命名、删除
 - 配置化模型设置（base URL、模型名称、协议类型等）

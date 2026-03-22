@@ -5,8 +5,43 @@ llm:
   timeout: 30
   max_retries: 3
   protocol: "openai"
+  enable_tools: true
 
-enable_tools: true
+# Feishu (Lark) integration via lark-oapi
+feishu:
+  app_id: ""
+  app_secret: ""
+  enabled: false
+  tenant_key: ""
+  # Feishu 配置
+  encrypt_key: ""
+  verification_token: ""
+  
+  # 推送服务配置（可选）
+  push:
+    enabled: true
+    schedule:
+      enabled: false
+      interval_minutes: 60
+  
+  # 访问控制配置（可选）
+  access_control:
+    enabled: false
+    mode: "open"
+    whitelist: []
+    blacklist: []
+
+  # 限流配置（可选）
+  rate_limit:
+    enabled: true
+    requests_per_minute: 30
+    window_seconds: 60
+
+# Feishu (Lark) integration via lark-oapi
+feishu:
+  app_id: ""
+  app_secret: ""
+  enabled: false
 
 skills:
   web_search:
