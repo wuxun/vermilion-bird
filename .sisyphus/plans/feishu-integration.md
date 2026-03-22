@@ -484,7 +484,7 @@ Max Concurrent: 4 (Waves 1-4)
 
 ---
 
-- [ ] 6. 消息幂等处理器实现 [quick]
+- [x] 6. 消息幂等处理器实现 [quick]
 
   **What to do**:
   - 在 `adapter.py` 新建 `MessageDeduplicator` 类
@@ -697,7 +697,7 @@ Max Concurrent: 4 (Waves 1-4)
 
 ---
 
-- [ ] 9. CLI feishu 命令实现 [quick]
+- [x] 9. CLI feishu 命令实现 [quick]
 
   **What to do**:
   - 在 `cli.py` 添加 `@click.command()` 装饰器 `feishu` 命令
