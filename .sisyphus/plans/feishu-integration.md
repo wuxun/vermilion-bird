@@ -547,7 +547,7 @@ Max Concurrent: 4 (Waves 1-4)
 
 ---
 
-- [ ] 7. FeishuServer 长连接服务实现 [deep]
+- [x] 7. FeishuServer 长连接服务实现 [deep]
 
   **What to do**:
   - 在 `server.py` 新建 `FeishuServer` 类
@@ -634,7 +634,7 @@ Max Concurrent: 4 (Waves 1-4)
 
 ---
 
-- [ ] 8. 错误处理与重试机制实现 [unspecified-high]
+- [x] 8. 错误处理与重试机制实现 [unspecified-high]
 
   **What to do**:
   - 在 `error_handler.py` 定义统一错误处理
