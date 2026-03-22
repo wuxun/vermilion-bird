@@ -11,6 +11,16 @@ from llm_chat.frontends.feishu.adapter import FeishuAdapter, FeishuAdapterError
 logger = logging.getLogger(__name__)
 
 
+def _mask_identifier(identifier: Optional[str]) -> str:
+    """Mask sensitive identifiers for logging purposes."""
+    if not identifier:
+        return "None"
+    s = str(identifier)
+    if len(s) <= 6:
+        return "***"
+    return f"{s[:2]}{'*' * (len(s) - 4)}{s[-2:]}"
+
+
 class PushServiceError(Exception):
     """PushService 异常基类。"""
 
@@ -96,6 +106,11 @@ class PushService:
         """
         content = self._build_content(message, msg_type)
 
+        # Log with safe identifiers and a short preview of the message
+        masked_open_id = _mask_identifier(open_id)
+        preview = message[:30]
+        logger.info(f"Pushing to user {masked_open_id}: preview='{preview}'")
+
         try:
             result = self._adapter.send_message(
                 receive_id=open_id,
@@ -103,10 +118,13 @@ class PushService:
                 content=content,
                 receive_id_type="open_id",
             )
-            logger.info(f"Message pushed to user {open_id}")
+            logger.info(f"Message pushed to user {masked_open_id}")
             return result
         except FeishuAdapterError as e:
-            logger.error(f"Failed to push message to user {open_id}: {e}")
+            logger.error(
+                f"Failed to push message to user {masked_open_id}: {e}",
+                exc_info=True,
+            )
             raise PushServiceError(f"Failed to push to user {open_id}: {e}") from e
 
     def push_to_group(
@@ -133,6 +151,9 @@ class PushService:
             PushServiceError: 推送失败时抛出
         """
         content = self._build_content(message, msg_type)
+        masked_chat_id = _mask_identifier(chat_id)
+        preview = message[:30]
+        logger.info(f"Pushing to group {masked_chat_id}: preview='{preview}'")
 
         try:
             result = self._adapter.send_message(
@@ -141,10 +162,13 @@ class PushService:
                 content=content,
                 receive_id_type="chat_id",
             )
-            logger.info(f"Message pushed to group {chat_id}")
+            logger.info(f"Message pushed to group {masked_chat_id}")
             return result
         except FeishuAdapterError as e:
-            logger.error(f"Failed to push message to group {chat_id}: {e}")
+            logger.error(
+                f"Failed to push message to group {masked_chat_id}: {e}",
+                exc_info=True,
+            )
             raise PushServiceError(f"Failed to push to group {chat_id}: {e}") from e
 
     def broadcast(
@@ -179,8 +203,12 @@ class PushService:
         content = self._build_content(message, msg_type)
 
         for session_id in targets:
+            masked_session = _mask_identifier(session_id)
             try:
                 # 尝试作为 chat_id 发送（群聊优先）
+                logger.info(
+                    f"Broadcast to session {masked_session}: preview='{message[:30]}'"
+                )
                 result = self._adapter.send_message(
                     receive_id=session_id,
                     msg_type=msg_type,
@@ -188,7 +216,7 @@ class PushService:
                     receive_id_type="chat_id",
                 )
                 results[session_id] = result
-                logger.info(f"Broadcast sent to {session_id}")
+                logger.info(f"Broadcast sent to {_mask_identifier(session_id)}")
             except FeishuAdapterError as e:
                 # 如果 chat_id 失败，尝试作为 open_id 发送
                 try:
@@ -199,12 +227,17 @@ class PushService:
                         receive_id_type="open_id",
                     )
                     results[session_id] = result
-                    logger.info(f"Broadcast sent to user {session_id}")
+                    logger.info(f"Broadcast sent to {_mask_identifier(session_id)}")
                 except FeishuAdapterError as e2:
                     results[session_id] = {"error": f"Failed to send: {e2}"}
-                    logger.error(f"Broadcast failed for {session_id}: {e2}")
+                    logger.error(
+                        f"Broadcast failed for {_mask_identifier(session_id)}: {e2}",
+                        exc_info=True,
+                    )
 
-        success_count = sum(1 for r in results.values() if "error" not in r)
+        success_count = sum(
+            1 for r in results.values() if isinstance(r, dict) and "error" not in r
+        )
         logger.info(f"Broadcast completed: {success_count}/{len(targets)} successful")
 
         return results
