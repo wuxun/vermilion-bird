@@ -8,6 +8,7 @@ from typing import Callable, Dict, Optional
 
 from lark_oapi import ws
 from lark_oapi.core.enum import LogLevel
+from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 
 from llm_chat.frontends.feishu.adapter import FeishuAdapter
 
@@ -43,6 +44,8 @@ class FeishuServer:
         app_id: str,
         app_secret: str,
         adapter: FeishuAdapter,
+        encrypt_key: str = "",
+        verification_token: str = "",
         tenant_key: Optional[str] = None,
         reconnect_interval: int = 5,
     ) -> None:
@@ -52,12 +55,16 @@ class FeishuServer:
             app_id: Feishu application ID
             app_secret: Feishu application secret
             adapter: FeishuAdapter instance for handling events
+            encrypt_key: Encrypt key for event verification (optional)
+            verification_token: Verification token for event verification (optional)
             tenant_key: Optional tenant key
             reconnect_interval: Reconnection interval in seconds (default 5)
         """
         self.app_id = app_id
         self.app_secret = app_secret
         self.adapter = adapter
+        self.encrypt_key = encrypt_key
+        self.verification_token = verification_token
         self.tenant_key = tenant_key
         self.reconnect_interval = reconnect_interval
         self._stop_event = threading.Event()
@@ -75,6 +82,7 @@ class FeishuServer:
 
         # WebSocket client (initialized in start())
         self._client: Optional[ws.Client] = None
+        self._event_handler = None
 
     def start(self) -> None:
         """Start Feishu WebSocket server in background thread.
@@ -89,21 +97,22 @@ class FeishuServer:
 
         # Initialize WebSocket client
         try:
-            client_config = {}
-            if self.tenant_key:
-                client_config["tenant_key"] = self.tenant_key
+            # Create event dispatcher handler
+            self._event_handler = (
+                EventDispatcherHandlerBuilder(
+                    encrypt_key=self.encrypt_key,
+                    verification_token=self.verification_token,
+                )
+                .register_p2_im_message_receive_v1(self._handle_message_event)
+                .register_p2_im_chat_member_bot_added_v1(self._handle_bot_added_event)
+                .build()
+            )
 
             self._client = ws.Client(
                 app_id=self.app_id,
                 app_secret=self.app_secret,
-                **client_config,
                 log_level=LogLevel.INFO,
-            )
-
-            # Register event handlers
-            self._client.ws.on("im.message.receive_v1", self._handle_message_event)
-            self._client.ws.on(
-                "im.chat.member.bot.added_v1", self._handle_bot_added_event
+                event_handler=self._event_handler,
             )
 
             # Start WebSocket connection in background thread
@@ -124,50 +133,22 @@ class FeishuServer:
         """Request a graceful shutdown of server."""
         self._logger.info("Stopping FeishuServer...")
         self._stop_event.set()
-
-        # Stop WebSocket client if initialized
-        if self._client:
-            try:
-                self._client.ws.stop()
-            except Exception as e:
-                self._logger.warning(f"Error stopping WebSocket client: {e}")
-
-        # Wait for thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
-            self._logger.info("FeishuServer background thread stopped")
-
-        # Clear current server reference if this is the active one
-        global _CURRENT_SERVER
-        if _CURRENT_SERVER is self:
-            _CURRENT_SERVER = None
+        self._logger.info("FeishuServer stop requested")
 
     def _run_loop(self) -> None:
-        """Main run loop with reconnection logic."""
-        while not self._stop_event.is_set():
-            try:
-                self._logger.info("Connecting to Feishu WebSocket...")
-                self._client.ws.start()
+        """Main run loop - starts WebSocket client.
 
-                # Connection established - wait for stop signal or disconnection
-                while not self._stop_event.is_set():
-                    time.sleep(0.2)
+        This runs in the calling thread and not a background thread.
+        """
+        try:
+            self._logger.info("Connecting to Feishu WebSocket...")
+            self._client.start()
+        except Exception as e:
+            if self._stop_event.is_set():
+                self._logger.info("FeishuServer shutting down")
+                return
 
-            except Exception as e:
-                if self._stop_event.is_set():
-                    self._logger.info("FeishuServer shutting down")
-                    break
-
-                self._logger.error(f"WebSocket error: {e}", exc_info=True)
-
-                # Reconnection logic
-                if not self._stop_event.is_set():
-                    self._logger.info(
-                        f"Reconnecting in {self.reconnect_interval} seconds..."
-                    )
-                    time.sleep(self.reconnect_interval)
-
-        self._logger.info("FeishuServer run loop exited")
+            self._logger.error(f"WebSocket error: {e}", exc_info=True)
 
     def _handle_message_event(self, event: dict) -> None:
         """Handle incoming message event.
