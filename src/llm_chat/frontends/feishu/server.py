@@ -6,7 +6,8 @@ import threading
 import time
 from typing import Callable, Dict, Optional
 
-from lark import ws
+from lark_oapi import ws
+from lark_oapi.core.enum import LogLevel
 
 from llm_chat.frontends.feishu.adapter import FeishuAdapter
 
@@ -96,7 +97,7 @@ class FeishuServer:
                 app_id=self.app_id,
                 app_secret=self.app_secret,
                 **client_config,
-                log_level="INFO",
+                log_level=LogLevel.INFO,
             )
 
             # Register event handlers
