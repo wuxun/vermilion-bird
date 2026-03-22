@@ -1,0 +1,51 @@
+# Vermilion Bird - Python Dependencies
+# Generated for pip installation (alternative to poetry)
+
+# ============================================
+# Core Dependencies
+# ============================================
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+pyyaml>=6.0.0,<7.0.0
+
+# LLM Client
+requests>=2.31.0,<3.0.0
+httpx>=0.27.0,<1.0.0
+httpx-sse>=0.4.0,<1.0.0
+tiktoken>=0.7.0,<1.0.0
+
+# Feishu Integration (NEW)
+lark-oapi>=1.0.0,<2.0.0
+
+# MCP Integration
+mcp>=1.0.0,<2.0.0
+
+# CLI
+click>=8.1.7,<9.0.0
+
+# GUI
+PyQt6>=6.6.0,<7.0.0
+
+# Markdown Processing
+markdown>=3.5.0,<4.0.0
+
+# Search
+duckduckgo-search>=6.0.0,<7.0.0
+ddgs>=9.0.0,<10.0.0
+
+# Web Scraping
+beautifulsoup4>=4.12.0,<5.0.0
+
+# ============================================
+# Development Dependencies
+# ============================================
+pytest>=7.4.0,<8.0.0
+pytest-cov>=4.1.0,<5.0.0
+black>=23.11.0,<24.0.0
+flake8>=6.1.0,<7.0.0
+
+# Playwright for Testing
+playwright>=1.40.0,<2.0.0
+
+# Python Version
+# Requires Python >= 3.9
