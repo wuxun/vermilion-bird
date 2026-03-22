@@ -292,6 +292,7 @@ def feishu(config_path=None):
             server.stop()
         except Exception:
             pass
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
@@ -302,6 +303,7 @@ def feishu(config_path=None):
         stop_event.wait(timeout=1)
 
     click.echo("Feishu 服务器已停止。")
+    sys.exit(0)
 
 
 @click.group()
