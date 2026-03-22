@@ -1,8 +1,10 @@
 """FeishuAdapter - Bridge between Feishu webhook events and internal LLM processing."""
 
 import logging
+import threading
 import time
-from typing import Any, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, Optional
 
 import httpx
 
@@ -54,10 +56,18 @@ class FeishuAdapter:
     """Adapter for processing Feishu events and integrating with the LLM application.
 
     Does NOT inherit from BaseFrontend per plan guardrails.
+
+    Features:
+    - Thread-safe concurrent request handling
+    - Async LLM processing via ThreadPoolExecutor
+    - Automatic response delivery back to Feishu
+    - Session ID mapping via SessionMapper
+    - Conversation persistence via Storage
     """
 
     FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
     TOKEN_EXPIRY_BUFFER_SECONDS = 300
+    DEFAULT_MAX_WORKERS = 4
 
     def __init__(
         self,
@@ -69,7 +79,23 @@ class FeishuAdapter:
         access_controller: Optional[AccessController] = None,
         deduplicator: Optional[MessageDeduplicator] = None,
         http_client: Optional[httpx.Client] = None,
+        max_workers: int = DEFAULT_MAX_WORKERS,
+        response_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
     ):
+        """Initialize the FeishuAdapter.
+
+        Args:
+            app: The App instance for LLM processing
+            app_id: Feishu application ID
+            app_secret: Feishu application secret
+            signature_verifier: Optional signature verifier for security
+            rate_limiter: Optional rate limiter
+            access_controller: Optional access controller
+            deduplicator: Optional message deduplicator
+            http_client: Optional HTTP client for Feishu API calls
+            max_workers: Maximum number of concurrent LLM workers
+            response_callback: Optional callback(response_text, receive_id, content) for custom response handling
+        """
         self.app = app
         self.app_id = app_id
         self.app_secret = app_secret
@@ -81,14 +107,32 @@ class FeishuAdapter:
         self._tenant_access_token: Optional[str] = None
         self._token_expires_at: int = 0
 
+        # Thread-safe components
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="feishu_llm_"
+        )
+        self._token_lock = threading.Lock()
+        self._conversation_locks: Dict[str, threading.Lock] = {}
+        self._conversation_locks_lock = threading.Lock()
+        self._response_callback = response_callback
+
     @property
     def http_client(self) -> httpx.Client:
         if self._http_client is None:
             self._http_client = httpx.Client(timeout=30.0)
         return self._http_client
 
+    def _get_conversation_lock(self, conversation_id: str) -> threading.Lock:
+        """Get or create a lock for a specific conversation to ensure thread-safety."""
+        with self._conversation_locks_lock:
+            if conversation_id not in self._conversation_locks:
+                self._conversation_locks[conversation_id] = threading.Lock()
+            return self._conversation_locks[conversation_id]
+
     def handle_event(self, event: FeishuEvent) -> Optional[FeishuMessage]:
-        """Process a Feishu event and return a response message.
+        """Process a Feishu event synchronously and return a response message.
+
+        For async processing, use handle_event_async instead.
 
         Args:
             event: The Feishu event to process
@@ -129,6 +173,86 @@ class FeishuAdapter:
             return None
 
         return self._convert_to_feishu_message(response_text, message)
+
+    def handle_event_async(self, event: FeishuEvent) -> None:
+        """Process a Feishu event asynchronously.
+
+        The LLM response will be sent back to Feishu automatically after processing.
+        This method returns immediately after basic validation.
+
+        Args:
+            event: The Feishu event to process
+
+        Raises:
+            DuplicateEventError: If the event is a duplicate
+            AccessDeniedError: If access is denied
+        """
+        if self.deduplicator:
+            if self.deduplicator.is_duplicate(event.event_id):
+                logger.warning(f"Duplicate event detected: {event.event_id}")
+                raise DuplicateEventError(f"Event {event.event_id} already processed")
+            self.deduplicator.mark_processed(event.event_id)
+
+        if not event.message:
+            logger.warning(f"Event {event.event_id} has no message")
+            return
+
+        message = event.message
+
+        if self.access_controller:
+            user_id = message.sender.user_id if message.sender else ""
+            chat_id = message.chat.chat_id if message.chat else ""
+            if not self.access_controller.is_allowed(user_id, chat_id):
+                logger.warning(f"Access denied for user={user_id}, chat={chat_id}")
+                raise AccessDeniedError(f"Access denied for user {user_id}")
+
+        self._executor.submit(self._process_event_background, event)
+
+    def _process_event_background(self, event: FeishuEvent) -> None:
+        """Background task to process event and send response."""
+        if not event.message:
+            return
+
+        message = event.message
+        try:
+            internal_message = self._convert_to_internal_message(event)
+            chat_type = self._get_chat_type(message)
+            original_id = message.chat.chat_id if message.chat else ""
+            conversation_id = SessionMapper.to_conversation_id(chat_type, original_id)
+
+            response_text = self._process_with_llm(internal_message, conversation_id)
+
+            if response_text:
+                self._send_response_to_feishu(response_text, message)
+
+        except Exception as e:
+            logger.error(f"Error in background event processing: {e}", exc_info=True)
+
+    def _send_response_to_feishu(
+        self, response_text: str, original_message: FeishuMessage
+    ) -> None:
+        """Send the LLM response back to Feishu."""
+        try:
+            if self._response_callback:
+                content = {"text": response_text}
+                receive_id = (
+                    original_message.chat.chat_id if original_message.chat else ""
+                )
+                self._response_callback(response_text, receive_id, content)
+            elif original_message.message_id:
+                self.reply_to_message(original_message.message_id, response_text)
+            elif original_message.chat and original_message.chat.chat_id:
+                self.send_message(
+                    original_message.chat.chat_id,
+                    "text",
+                    {"text": response_text},
+                    receive_id_type="chat_id",
+                )
+            else:
+                logger.warning("No valid way to send response to Feishu")
+
+        except Exception as e:
+            logger.error(f"Failed to send response to Feishu: {e}", exc_info=True)
 
     def _convert_to_internal_message(self, event: FeishuEvent) -> Message:
         """Convert a FeishuEvent to internal Message format."""
@@ -214,26 +338,36 @@ class FeishuAdapter:
     def _process_with_llm(
         self, message: Message, conversation_id: str
     ) -> Optional[str]:
-        """Process a message through the LLM using App's conversation manager."""
-        try:
-            conversation = self.app.get_conversation(conversation_id)
+        """Process a message through the LLM using App's conversation manager.
 
-            if self.app.config.enable_tools and self.app.has_tools_available():
-                tools = self.app.get_available_tools()
-                if tools:
-                    response = self.app.client.chat_with_tools(
-                        message.content, tools, history=conversation.get_history()
-                    )
+        Thread-safe: Uses per-conversation locks to prevent race conditions
+        when multiple requests arrive for the same conversation.
+        """
+        conv_lock = self._get_conversation_lock(conversation_id)
+
+        with conv_lock:
+            try:
+                conversation = self.app.get_conversation(conversation_id)
+
+                if self.app.config.enable_tools and self.app.has_tools_available():
+                    tools = self.app.get_available_tools()
+                    if tools:
+                        response = self.app.client.chat_with_tools(
+                            message.content, tools, history=conversation.get_history()
+                        )
+                    else:
+                        response = conversation.send_message(message.content)
                 else:
                     response = conversation.send_message(message.content)
-            else:
-                response = conversation.send_message(message.content)
 
-            return response
+                logger.info(
+                    f"LLM response generated for conversation {conversation_id}"
+                )
+                return response
 
-        except Exception as e:
-            logger.error(f"Error processing message with LLM: {e}", exc_info=True)
-            return f"处理消息时发生错误: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error processing message with LLM: {e}", exc_info=True)
+                return f"处理消息时发生错误: {str(e)}"
 
     def send_message(
         self,
@@ -340,51 +474,49 @@ class FeishuAdapter:
             raise FeishuAdapterError(f"Failed to reply to message: {e}")
 
     def _get_tenant_access_token(self) -> str:
-        """Get tenant access token for Feishu API calls with caching."""
-        if self._tenant_access_token and time.time() < self._token_expires_at:
-            return self._tenant_access_token
+        """Get tenant access token for Feishu API calls with caching.
 
-        url = f"{self.FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
-        payload = {
-            "app_id": self.app_id,
-            "app_secret": self.app_secret,
-        }
+        Thread-safe: Uses lock to prevent concurrent token requests.
+        """
+        with self._token_lock:
+            if self._tenant_access_token and time.time() < self._token_expires_at:
+                return self._tenant_access_token
 
-        try:
-            response = self.http_client.post(url, json=payload)
-            response.raise_for_status()
-            result = response.json()
+            url = f"{self.FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
+            payload = {
+                "app_id": self.app_id,
+                "app_secret": self.app_secret,
+            }
 
-            if result.get("code") != 0:
-                logger.error(f"Failed to get tenant access token: {result}")
-                raise FeishuAdapterError(
-                    f"Auth failed: {result.get('msg', 'Unknown error')}"
+            try:
+                response = self.http_client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+
+                if result.get("code") != 0:
+                    logger.error(f"Failed to get tenant access token: {result}")
+                    raise FeishuAdapterError(
+                        f"Auth failed: {result.get('msg', 'Unknown error')}"
+                    )
+
+                token = result["tenant_access_token"]
+                self._tenant_access_token = token
+                self._token_expires_at = (
+                    int(time.time())
+                    + result.get("expire", 7200)
+                    - self.TOKEN_EXPIRY_BUFFER_SECONDS
                 )
 
-            token = result["tenant_access_token"]
-            self._tenant_access_token = token
-            self._token_expires_at = (
-                int(time.time())
-                + result.get("expire", 7200)
-                - self.TOKEN_EXPIRY_BUFFER_SECONDS
-            )
+                logger.info("Successfully obtained Feishu tenant access token")
+                return token
 
-            logger.info("Successfully obtained Feishu tenant access token")
-            return token
-
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error getting Feishu token: {e}")
-            raise FeishuAdapterError(f"Failed to get access token: {e}")
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error getting Feishu token: {e}")
+                raise FeishuAdapterError(f"Failed to get access token: {e}")
 
     def close(self):
-        """Close the HTTP client and clean up resources."""
+        """Close the HTTP client, thread pool, and clean up resources."""
+        self._executor.shutdown(wait=True)
         if self._http_client:
             self._http_client.close()
             self._http_client = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-        return False

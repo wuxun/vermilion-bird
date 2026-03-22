@@ -1,0 +1,6 @@
+- Implement Feishu frontend data models (Task 2):
+- Created package src/llm_chat/frontends/feishu with __init__.py and models.py
+- Defined dataclasses: FeishuUser, FeishuChat, FeishuMessage, FeishuEvent
+- Used type annotations and Optional[...] where applicable
+- Avoided dependency on internal lark-oapi types; kept lightweight and self-contained
+- Used from __future__ import annotations to allow forward references

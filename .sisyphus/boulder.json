@@ -1,13 +1,23 @@
 {
-  "active_plan": "/Users/xunwu/Documents/git/vermilion-bird/.sisyphus/plans/task-delegator.md",
-  "started_at": "2026-03-21T14:27:27.221Z",
+  "active_plan": "/Users/xunwu/Documents/git/vermilion-bird/.sisyphus/plans/feishu-integration.md",
+  "started_at": "2026-03-22T02:30:00.000Z",
   "session_ids": [
     "ses_2f42cbdebffemGHTzI12PFmhaH",
-    "ses_2ef33ffbeffezshlhlxsvxl0zX",
-    "ses_2ef33de39ffehwGoBEuRLzvy0M",
-    "ses_2ef33bcd2ffe7oOoaQlQ9XNMFl",
-    "ses_2ef339b5affewXcC43FLQhGfoh"
+    "ses_2ee4e2c3effeyOiopprZDbDxDK",
+    "ses_2ee4e4d98ffeVo07d96uaqbejj",
+    "ses_2ee4e19c5ffeCyl9o2pVWclk1H",
+    "ses_2ee38d354ffeFsfYvJIaSKwXXB",
+    "ses_2ee376e4effe38Ique31gvHNvh",
+    "ses_2ee373204ffevgJWP66b7mU6GM",
+    "ses_2ee31fe0bffesJWLUtZ8w5lip7",
+    "ses_2ee2dcc56ffeuObLC8yOpjLNEr",
+    "ses_2ee2c0f67ffeUjTlMJj99jTGHF",
+    "ses_2ee2ab3d8ffek2fsrmO4EUbtyQ",
+    "ses_2ee1dbd21ffezqUFTAzod1MHun",
+    "ses_2eccb6d40ffeQTp7QYaXxuha8K",
+    "ses_2ecb158acffe7rE3fNvZGgM5an",
+    "ses_2ecadb12bffeXFsLN3dBbOtIif"
   ],
-  "plan_name": "task-delegator",
+  "plan_name": "feishu-integration",
   "agent": "atlas"
 }

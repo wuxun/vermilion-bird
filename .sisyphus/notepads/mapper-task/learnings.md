@@ -1,0 +1,4 @@
+- Implement SessionMapper in src/llm_chat/frontends/feishu/mapper.py
+- Added tests for edge cases in tests/test_feishu_mapper.py
+- Coverage ensures to_conversation_id and from_conversation_id round-trip and sanitization
+- Edge cases covered: invalid chat_type, invalid prefixes, empty original_id after prefix, and sanitization of non-alphanumeric characters

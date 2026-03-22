@@ -1,0 +1,2 @@
+FeishuConfig imported successfully
+FeishuConfig created: app_id=test, enabled=True
