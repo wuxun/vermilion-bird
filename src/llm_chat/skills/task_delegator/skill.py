@@ -49,10 +49,11 @@ class TaskDelegatorSkill(BaseSkill):
         ]
 
     def on_load(self, config: Dict[str, Any]) -> None:
-        from llm_chat.config import Config
+        import llm_chat.config as config_module
 
-        if config is not None:
-            self._config = Config(**config) if isinstance(config, dict) else config
-        else:
-            self._config = Config()
+        self._config = config_module.config
+
+        if config and "work_dir" in config:
+            self._config.tools.work_dir = config["work_dir"]
+
         self.logger.info(f"TaskDelegatorSkill loaded with config: {config}")
