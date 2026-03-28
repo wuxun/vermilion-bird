@@ -1,0 +1,50 @@
+[Unit]
+Description=Vermilion Bird - CLI Chat Service (Headless)
+Documentation=https://github.com/your-org/vermilion-bird
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vermilion-bird
+Group=vermilion-bird
+
+# 工作目录
+WorkingDirectory=/opt/vermilion-bird
+
+# 环境变量
+Environment="PATH=/opt/vermilion-bird/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="LANG=en_US.UTF-8"
+Environment="LC_ALL=en_US.UTF-8"
+
+# 启动命令 - CLI 聊天模式
+# 注意：这是无界面的后台服务，适用于 API 调用场景
+ExecStart=/opt/vermilion-bird/.venv/bin/vermilion-bird chat --frontend cli --log-file /var/log/vermilion-bird/chat.log
+
+# 重启策略
+Restart=always
+RestartSec=10
+
+# 资源限制
+LimitNOFILE=65535
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vermilion-bird-chat
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vermilion-bird /var/lib/vermilion-bird /var/log/vermilion-bird
+
+# 优雅关闭
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
