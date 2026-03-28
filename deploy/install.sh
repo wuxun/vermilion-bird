@@ -100,14 +100,9 @@ if command -v python3 &> /dev/null; then
     fi
     
     # 安装依赖
-    if command -v poetry &> /dev/null; then
-        log_info "使用 Poetry 安装依赖..."
-        .venv/bin/pip install poetry
-        .venv/bin/poetry install --no-dev
-    else
-        log_info "使用 pip 安装依赖..."
-        .venv/bin/pip install -e .
-    fi
+    log_info "使用 pip 安装依赖..."
+    .venv/bin/pip install --upgrade pip
+    .venv/bin/pip install -e .
     
     chown -R $USER_NAME:$GROUP_NAME $INSTALL_DIR
 fi

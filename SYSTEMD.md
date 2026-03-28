@@ -2,7 +2,19 @@
 
 ## 安装步骤
 
-### 1. 编辑配置文件
+### 1. 创建虚拟环境并安装依赖
+
+```bash
+cd /path/to/vermilion-bird
+
+# 创建虚拟环境
+python3 -m venv .venv
+
+# 安装依赖
+.venv/bin/pip install -e .
+```
+
+### 2. 编辑配置文件
 
 修改 `vermilion-bird.service` 中的以下内容：
 
@@ -10,16 +22,8 @@
 User=%USER%        # 替换为你的用户名
 Group=%GROUP%      # 替换为你的组名
 WorkingDirectory=/path/to/vermilion-bird  # 替换为项目实际路径
+ExecStart=/path/to/vermilion-bird/.venv/bin/vermilion-bird  # 替换为实际路径
 Environment="LLM_API_KEY=your-api-key-here"  # 设置你的 API Key
-```
-
-### 2. 获取 Poetry 虚拟环境路径（可选）
-
-如果使用绝对路径方式运行：
-
-```bash
-cd /path/to/vermilion-bird
-poetry env info --path
 ```
 
 ### 3. 安装服务
