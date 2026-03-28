@@ -101,7 +101,7 @@ if command -v python3 &> /dev/null; then
     
     # 安装依赖
     log_info "使用 pip 安装依赖..."
-    .venv/bin/pip install --upgrade pip
+    .venv/bin/pip install --upgrade pip setuptools wheel poetry-core
     .venv/bin/pip install -e .
     
     chown -R $USER_NAME:$GROUP_NAME $INSTALL_DIR

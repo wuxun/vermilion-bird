@@ -187,6 +187,21 @@ class SkillsConfig(BaseSettings):
         return configs
 
 
+class SchedulerConfig(BaseSettings):
+    """Scheduler 配置，用于调度并发执行任务的参数。
+
+    注意：不包含 db_path 字段，复用现有数据库。
+    """
+
+    enabled: bool = Field(default=True, description="是否启用调度器")
+    max_workers: int = Field(default=4, description="调度器并发最大工作线程数")
+    default_timezone: str = Field(default="local", description="默认时区")
+
+    class Config:
+        env_prefix = "SCHEDULER_"
+        case_sensitive = False
+
+
 class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
@@ -200,6 +215,7 @@ class Config(BaseSettings):
     external_skill_dirs: List[str] = Field(
         default_factory=list, description="外部 Skill 目录列表"
     )
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
 
     class Config:
         env_prefix = ""
@@ -289,6 +305,14 @@ class Config(BaseSettings):
             memory_data = config_data.get("memory", {})
             memory_config = cls._parse_memory(memory_data)
 
+            # Scheduler 配置
+            scheduler_data = config_data.get("scheduler", {})
+            scheduler_config = (
+                SchedulerConfig(**scheduler_data)
+                if scheduler_data is not None
+                else SchedulerConfig()
+            )
+
             config_instance = cls(
                 llm=llm_config,
                 mcp=mcp_config,
@@ -297,6 +321,7 @@ class Config(BaseSettings):
                 feishu=feishu_config,
                 external_skill_dirs=external_skill_dirs,
                 memory=memory_config,
+                scheduler=scheduler_config,
             )
             config_instance.validate_feishu_config()
             return config_instance
@@ -412,6 +437,7 @@ class Config(BaseSettings):
                 "long_term": self.memory.long_term.model_dump(),
                 "exclude_patterns": self.memory.exclude_patterns,
             },
+            "scheduler": self.scheduler.model_dump(),
         }
 
         with open(config_path, "w", encoding="utf-8") as f:

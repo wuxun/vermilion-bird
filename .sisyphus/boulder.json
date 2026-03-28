@@ -1,23 +1,35 @@
 {
-  "active_plan": "/Users/xunwu/Documents/git/vermilion-bird/.sisyphus/plans/feishu-integration.md",
-  "started_at": "2026-03-22T02:30:00.000Z",
+  "active_plan": "/Users/xunwu/Documents/git/vermilion-bird/.sisyphus/plans/scheduled-tasks.md",
+  "started_at": "2026-03-28T16:32:58.379Z",
   "session_ids": [
-    "ses_2f42cbdebffemGHTzI12PFmhaH",
-    "ses_2ee4e2c3effeyOiopprZDbDxDK",
-    "ses_2ee4e4d98ffeVo07d96uaqbejj",
-    "ses_2ee4e19c5ffeCyl9o2pVWclk1H",
-    "ses_2ee38d354ffeFsfYvJIaSKwXXB",
-    "ses_2ee376e4effe38Ique31gvHNvh",
-    "ses_2ee373204ffevgJWP66b7mU6GM",
-    "ses_2ee31fe0bffesJWLUtZ8w5lip7",
-    "ses_2ee2dcc56ffeuObLC8yOpjLNEr",
-    "ses_2ee2c0f67ffeUjTlMJj99jTGHF",
-    "ses_2ee2ab3d8ffek2fsrmO4EUbtyQ",
-    "ses_2ee1dbd21ffezqUFTAzod1MHun",
-    "ses_2eccb6d40ffeQTp7QYaXxuha8K",
-    "ses_2ecb158acffe7rE3fNvZGgM5an",
-    "ses_2ecadb12bffeXFsLN3dBbOtIif"
+    "ses_2cad99652ffe76VvMNBie6oR0c",
+    "ses_2cab4403bffehZZO92QracNTN7",
+    "ses_2cab40290ffep8Jl1B0xdOkNyS",
+    "ses_2caac3c7effed3It0avHh6yuyD",
+    "ses_2caa85985ffeIus2J8cVMZ9Foq",
+    "ses_2caa813a0ffeb4l6bBMaR7iVbE",
+    "ses_2caa89346ffegWHjNa9hCFjucv"
   ],
-  "plan_name": "feishu-integration",
-  "agent": "atlas"
+  "plan_name": "scheduled-tasks",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "定义数据模型",
+      "session_id": "ses_2caac3c7effed3It0avHh6yuyD",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-03-28T16:46:10.029Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "扩展现有存储层（复用数据库）",
+      "session_id": "ses_2caa89346ffegWHjNa9hCFjucv",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-03-28T16:52:06.217Z"
+    }
+  }
 }

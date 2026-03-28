@@ -1,0 +1,34 @@
+llm:
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-3.5-turbo"
+  api_key: null
+  timeout: 30
+  max_retries: 3
+  protocol: "openai"
+
+enable_tools: true
+
+mcp:
+  servers: []
+
+# Scheduler 配置：不包含 db_path，复用现有数据库
+scheduler:
+  enabled: true
+  max_workers: 4
+  default_timezone: "local"
+
+memory:
+  enabled: true
+  storage_dir: "~/.vermilion-bird/memory"
+  short_term:
+    max_items: 10
+  mid_term:
+    max_days: 30
+  long_term:
+    auto_evolve: true
+    evolve_interval_days: 7
+  exclude_patterns:
+    - "密码"
+    - "password"
+    - "token"
+    - "api_key"

@@ -8,13 +8,20 @@ from llm_chat.config import Config, LLMConfig
 def test_default_config():
     """测试默认配置"""
     # 清除可能存在的环境变量
-    env_vars = ["LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT", "LLM_MAX_RETRIES", "LLM_PROTOCOL"]
+    env_vars = [
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "LLM_API_KEY",
+        "LLM_TIMEOUT",
+        "LLM_MAX_RETRIES",
+        "LLM_PROTOCOL",
+    ]
     original_values = {}
     for var in env_vars:
         if var in os.environ:
             original_values[var] = os.environ[var]
             del os.environ[var]
-    
+
     try:
         config = Config()
         assert config.llm.base_url == "https://api.openai.com/v1"
@@ -30,7 +37,7 @@ def test_default_config():
 
 def test_yaml_config():
     """测试从 YAML 文件加载配置"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         config_data = {
             "llm": {
                 "base_url": "https://api.example.com/v1",
@@ -38,7 +45,7 @@ def test_yaml_config():
                 "api_key": "test-api-key",
                 "timeout": 60,
                 "max_retries": 5,
-                "protocol": "anthropic"
+                "protocol": "anthropic",
             }
         }
         yaml.dump(config_data, f)
@@ -80,3 +87,42 @@ def test_env_vars():
         del os.environ["LLM_TIMEOUT"]
         del os.environ["LLM_MAX_RETRIES"]
         del os.environ["LLM_PROTOCOL"]
+
+
+def test_scheduler_defaults():
+    """测试 Scheduler 默认配置加载是否正确"""
+    config = Config()
+    assert hasattr(config, "scheduler")
+    assert config.scheduler.enabled is True
+    assert config.scheduler.max_workers == 4
+    assert config.scheduler.default_timezone == "local"
+
+
+def test_scheduler_from_yaml_basic():
+    """测试从 YAML 加载 Scheduler 配置"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        config_data = {
+            "llm": {
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-3.5-turbo",
+                "timeout": 30,
+                "protocol": "openai",
+            },
+            "scheduler": {
+                "enabled": False,
+                "max_workers": 2,
+                "default_timezone": "UTC",
+            },
+        }
+        yaml.dump(config_data, f)
+        config_path = f.name
+
+    try:
+        cfg = Config.from_yaml(config_path)
+        assert cfg.scheduler.enabled is False
+        assert cfg.scheduler.max_workers == 2
+        assert cfg.scheduler.default_timezone == "UTC"
+    finally:
+        import os
+
+        os.unlink(config_path)
