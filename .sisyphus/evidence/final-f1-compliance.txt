@@ -1,0 +1,180 @@
+# Plan Compliance Audit Report - Task F1
+# Generated: 2026-03-29
+# Plan: scheduled-tasks.md
+
+## SUMMARY
+
+Must Have [7/8] | Must NOT Have [4/4] | Tasks [11/16 completed] | VERDICT: REJECT
+
+---
+
+## MUST HAVE REQUIREMENTS
+
+### 1. Three task types implemented (LLM chat, skill execution, maintenance)
+STATUS: PASS
+Evidence:
+- src/llm_chat/scheduler/models.py:10-13 - TaskType enum with LLM_CHAT, SKILL_EXECUTION, SYSTEM_MAINTENANCE
+- src/llm_chat/scheduler/task_executor.py:105-187 - All three execute methods implemented
+
+### 2. Cron + one-time trigger support
+STATUS: PASS
+Evidence:
+- src/llm_chat/scheduler/scheduler.py:239-281 - _build_trigger() supports:
+  - cron: {"cron": "0 0 * * *"}
+  - interval: {"interval": 3600}
+  - date: {"date": "2026-04-01 10:00:00"} (one-time)
+
+### 3. Task persistence working (SQLite)
+STATUS: PASS
+Evidence:
+- src/llm_chat/storage.py:74-103 - tasks and task_executions tables created
+- src/llm_chat/storage.py:189-270 - save_task(), load_task(), load_all_tasks(), delete_task()
+- Database path: .vb/vermilion_bird.db (no separate scheduler.db)
+
+### 4. GUI management interface exists
+STATUS: FAIL
+Evidence:
+- src/llm_chat/frontends/scheduler_dialog.py - FILE NOT FOUND
+- Plan Tasks 12-14 (GUI tasks) are unchecked and not implemented
+
+### 5. Execution history saved
+STATUS: PASS
+Evidence:
+- src/llm_chat/storage.py:272-337 - save_execution(), load_executions()
+- task_executions table stores: id, task_id, status, started_at, finished_at, result, error, retry_count
+
+### 6. Retry logic implemented
+STATUS: PASS
+Evidence:
+- src/llm_chat/scheduler/task_executor.py:43-87 - Retry loop with:
+  - max_attempts = task.max_retries + 1
+  - Exponential backoff: delay = base_delay * (2 ** (retry_count - 1))
+  - max_delay = 60.0 seconds
+
+### 7. Manual trigger/pause/resume working
+STATUS: PASS
+Evidence:
+- src/llm_chat/scheduler/scheduler.py:199-218 - trigger_task()
+- src/llm_chat/scheduler/scheduler.py:157-176 - pause_task()
+- src/llm_chat/scheduler/scheduler.py:178-197 - resume_task()
+- src/llm_chat/cli.py - CLI commands: task-trigger, task-pause, task-resume
+
+### 8. CLI mode supported (no Qt dependency in scheduler core)
+STATUS: PASS
+Evidence:
+- src/llm_chat/scheduler/*.py - No Qt imports found
+- src/llm_chat/cli.py:473-683 - Scheduler CLI commands implemented:
+  - task-add, task-list, task-remove, task-pause, task-resume, task-trigger, task-show
+
+---
+
+## MUST NOT HAVE (GUARDRAILS)
+
+### 1. No QThreadPool usage in scheduler
+STATUS: PASS
+Evidence:
+- grep "QThreadPool" in src/llm_chat/scheduler/ - No matches found
+- Uses apscheduler.executors.pool.ThreadPoolExecutor instead
+
+### 2. No QThread usage in scheduler
+STATUS: PASS
+Evidence:
+- grep "QThread" in src/llm_chat/scheduler/ - No matches found
+
+### 3. No @ts-ignore
+STATUS: PASS
+Evidence:
+- grep "@ts-ignore" in src/llm_chat/ - No matches found
+
+### 4. No as any
+STATUS: PASS
+Evidence:
+- grep "as any" in src/llm_chat/ - No matches found
+
+---
+
+## IMPLEMENTATION FILES CHECK
+
+| File | Status | Notes |
+|------|--------|-------|
+| src/llm_chat/scheduler/__init__.py | EXISTS | Module exports |
+| src/llm_chat/scheduler/scheduler.py | EXISTS | 413 lines, SchedulerService |
+| src/llm_chat/scheduler/task_executor.py | EXISTS | 281 lines, TaskExecutor |
+| src/llm_chat/scheduler/models.py | EXISTS | 44 lines, Task, TaskType, TaskStatus, TaskExecution |
+| src/llm_chat/app.py | EXISTS | scheduler integration at lines 41-45, 69-70, 250-251, 263-264 |
+| src/llm_chat/cli.py | EXISTS | scheduler commands at lines 473-683 |
+| src/llm_chat/storage.py | EXISTS | task persistence at lines 74-337 |
+| src/llm_chat/config.py | EXISTS | SchedulerConfig at lines 190-203 |
+| src/llm_chat/frontends/scheduler_dialog.py | MISSING | GUI management interface not implemented |
+
+---
+
+## TEST FILES CHECK
+
+| File | Status |
+|------|--------|
+| tests/test_scheduler/__init__.py | EXISTS |
+| tests/test_scheduler/conftest.py | EXISTS |
+| tests/test_scheduler/test_models.py | EXISTS |
+| tests/test_scheduler/test_executor.py | EXISTS |
+| tests/test_scheduler/test_scheduler.py | EXISTS |
+
+---
+
+## PLAN TASK STATUS
+
+Wave 1 (6 tasks): ALL COMPLETE [6/6]
+- Task 1: APScheduler dependency - COMPLETE
+- Task 2: Data models - COMPLETE
+- Task 3: Config extension - COMPLETE
+- Task 4: Storage extension - COMPLETE
+- Task 5: Test infrastructure - COMPLETE
+- Task 6: Module entry - COMPLETE
+
+Wave 2 (5 tasks): ALL COMPLETE [5/5]
+- Task 7: Scheduler core - COMPLETE
+- Task 8: Task executor - COMPLETE
+- Task 9: LLM chat task - COMPLETE
+- Task 10: Skill execution task - COMPLETE
+- Task 11: System maintenance task - COMPLETE
+
+Wave 3 (5 tasks): PARTIAL [1/5]
+- Task 12: GUI task list - NOT COMPLETE
+- Task 13: GUI task editor - NOT COMPLETE
+- Task 14: GUI execution history - NOT COMPLETE
+- Task 15: App integration - COMPLETE
+- Task 16: CLI integration tests - NOT COMPLETE
+
+---
+
+## VERDICT: REJECT
+
+### Critical Issues:
+1. GUI management interface (scheduler_dialog.py) does not exist
+2. Tasks 12-14 (GUI) are incomplete
+3. Task 16 (CLI integration tests) is incomplete
+
+### Recommendations:
+1. Implement scheduler_dialog.py with:
+   - Task list view (QTableWidget)
+   - Task editor dialog
+   - Execution history dialog
+2. Complete CLI integration tests
+3. Create evidence files for all QA scenarios
+
+---
+
+## EVIDENCE COMMANDS RUN
+
+```bash
+# Forbidden pattern checks
+grep -r "QThreadPool" src/llm_chat/scheduler/  # No matches
+grep -r "QThread" src/llm_chat/scheduler/     # No matches
+grep -r "@ts-ignore" src/llm_chat/            # No matches
+grep -r "as any" src/llm_chat/                # No matches
+
+# File existence checks
+ls -la src/llm_chat/scheduler/*.py            # All exist
+ls -la src/llm_chat/frontends/scheduler_dialog.py  # NOT FOUND
+ls -la tests/test_scheduler/*.py              # All exist
+```

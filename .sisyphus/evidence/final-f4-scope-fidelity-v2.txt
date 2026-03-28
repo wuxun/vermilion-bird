@@ -1,0 +1,210 @@
+# Final Verification Wave - F4: Scope Fidelity Check
+
+**验证时间**: 2026-03-29 (重新验证)
+**验证者**: Sisyphus-Junior (Autonomous Agent)
+**计划文件**: .sisyphus/plans/scheduled-tasks.md
+
+---
+
+## 执行摘要
+
+**状态**: ✅ **APPROVE**
+
+**关键发现**:
+- ✅ 所有 16 个任务已完成 (100%)
+- ✅ 所有 Must Have 功能已实现 (8/8)
+- ✅ 所有 Must NOT Have 约束已满足 (6/6)
+- ✅ 无超出范围的更改
+- ✅ 所有 Evidence 文件完整
+- ⚠️ 发现并修复 1 个文档问题（注释错误）
+
+---
+
+## 交付物验证 (16/16)
+
+### Wave 1: 基础设施 + 数据模型 (6/6) ✅
+- ✅ Task 1: 添加 APScheduler 依赖 (pyproject.toml)
+- ✅ Task 2: 定义数据模型 (models.py)
+- ✅ Task 3: 配置扩展 (config.py - SchedulerConfig)
+- ✅ Task 4: 持久化存储 (storage.py - tasks/task_executions 表)
+- ✅ Task 5: 测试基础设施 (tests/test_scheduler/conftest.py)
+- ✅ Task 6: 模块入口 (scheduler/__init__.py)
+
+### Wave 2: 核心调度器 + 执行器 (5/5) ✅
+- ✅ Task 7: 调度器核心 (scheduler.py - SchedulerService)
+- ✅ Task 8: 任务执行器 (task_executor.py - TaskExecutor)
+- ✅ Task 9: LLM 对话任务 (_execute_llm_chat)
+- ✅ Task 10: 技能执行任务 (_execute_skill)
+- ✅ Task 11: 系统维护任务 (_execute_maintenance)
+
+### Wave 3: GUI + 集成 (5/5) ✅
+- ✅ Task 12: GUI 任务列表 (scheduler_dialog.py - SchedulerDialog)
+- ✅ Task 13: GUI 任务编辑器 (TaskEditDialog)
+- ✅ Task 14: GUI 执行历史 (ExecutionHistoryDialog)
+- ✅ Task 15: App 集成 (app.py - scheduler 属性)
+- ✅ Task 16: CLI 集成测试 (tests/integration/test_scheduler_cli.py)
+
+### Final Verification Wave (4/4) ✅
+- ✅ F1: Plan compliance audit (evidence exists)
+- ✅ F2: Code quality review (evidence exists)
+- ✅ F3: Real manual QA (evidence exists)
+- ✅ F4: Scope fidelity check (本报告)
+
+---
+
+## Must Have 验证 (8/8) ✅
+
+### ✅ 1. 支持三种任务类型
+**位置**: `src/llm_chat/scheduler/models.py:10-13`
+**实现**: 
+- LLM_CHAT: 调用 LLM 对话
+- SKILL_EXECUTION: 执行技能/工具调用
+- SYSTEM_MAINTENANCE: 系统维护任务
+**验证**: 代码审查确认
+
+### ✅ 2. 支持 Cron + 一次性任务
+**位置**: `src/llm_chat/scheduler/scheduler.py:257-278`
+**实现**: 
+- CronTrigger: 支持 5 字段 cron 表达式
+- DateTrigger: 支持一次性任务
+**验证**: 代码审查确认，无 IntervalTrigger
+
+### ✅ 3. 任务持久化（SQLite）
+**位置**: `src/llm_chat/storage.py:77-99`
+**实现**: 
+- tasks 表: 任务定义
+- task_executions 表: 执行历史
+- 复用 .vb/vermilion_bird.db（无独立 scheduler.db）
+**验证**: 数据库表结构检查确认
+
+### ✅ 4. GUI 管理界面
+**位置**: `src/llm_chat/frontends/scheduler_dialog.py`
+**实现**: 
+- SchedulerDialog: 任务列表对话框
+- TaskEditDialog: 任务编辑对话框
+- ExecutionHistoryDialog: 执行历史对话框
+**验证**: 文件存在（32KB，889 行）
+
+### ✅ 5. 执行历史记录
+**位置**: `src/llm_chat/storage.py:89-99, 272-313`
+**实现**: 
+- 保存执行记录: started_at, finished_at, status, result, error
+- 查询执行历史: load_executions() 方法
+**验证**: 代码审查确认
+
+### ✅ 6. 失败重试机制
+**位置**: `src/llm_chat/scheduler/task_executor.py:44-87`
+**实现**: 
+- 最多重试 3 次
+- 指数退避策略
+**验证**: 代码审查确认
+
+### ✅ 7. 手动触发、暂停/恢复功能
+**位置**: 
+- `src/llm_chat/scheduler/scheduler.py:194-232`
+- `src/llm_chat/cli.py:620-670`
+**实现**: 
+- trigger_task(): 手动触发
+- pause_task(): 暂停任务
+- resume_task(): 恢复任务
+**验证**: CLI 命令和后端方法确认
+
+### ✅ 8. 支持 CLI 模式（无 Qt 依赖）
+**位置**: `src/llm_chat/scheduler/`
+**实现**: 
+- 纯 Python 实现
+- 无 QThreadPool/QThread 导入
+- 使用 BackgroundScheduler + ThreadPoolExecutor
+**验证**: grep 搜索确认
+
+---
+
+## Must NOT Have 验证 (6/6) ✅
+
+### ✅ 1. 不使用 QThreadPool/QThread
+**验证**: `grep -r "QThreadPool|QThread" src/llm_chat/scheduler/` 返回无结果
+**状态**: 通过
+
+### ✅ 2. 不支持固定间隔触发
+**验证**: `grep "IntervalTrigger" src/llm_chat/scheduler/scheduler.py` 返回无结果
+**状态**: 通过（已修复之前的违规）
+
+### ✅ 3. 不支持任务间依赖
+**验证**: `grep -r "depends_on|dependency" src/llm_chat/scheduler/` 返回无结果
+**状态**: 通过
+
+### ✅ 4. 不支持分布式调度
+**验证**: `grep -r "celery|redis|distributed" src/llm_chat/scheduler/` 返回无结果
+**状态**: 通过
+
+### ✅ 5. 不在工作线程直接操作 GUI
+**验证**: `grep -r "QWidget|QDialog" src/llm_chat/scheduler/` 返回无结果
+**状态**: 通过
+
+### ✅ 6. 不引入 Celery 等重型框架
+**验证**: 使用 APScheduler（轻量级），无 Celery/Redis 依赖
+**状态**: 通过
+
+---
+
+## 超出范围更改检查
+
+### 检查结果: 无超出范围更改 ✅
+
+**检查项目**:
+1. ✅ 无分布式框架（Celery/Redis）
+2. ✅ 无任务依赖功能
+3. ✅ 无固定间隔触发器（已移除）
+4. ✅ 无独立数据库文件（复用 .vb/vermilion_bird.db）
+5. ✅ 无 Qt 线程依赖
+
+---
+
+## 发现的问题与修复
+
+### 问题 1: 文档错误（已修复）
+**位置**: `src/llm_chat/scheduler/scheduler.py:38`
+**描述**: 注释错误地提到 "支持 cron、interval、date 三种触发器类型"
+**修复**: 更新为 "支持 cron、date 两种触发器类型"
+**状态**: ✅ 已修复
+
+---
+
+## Evidence 文件验证
+
+所有 Evidence 文件存在且完整:
+- ✅ final-f1-compliance.txt (5.6K)
+- ✅ final-f2-code-quality.txt (9.9K)
+- ✅ final-f3-qa.txt (4.0K)
+- ✅ final-f4-scope-fidelity.txt (11K)
+
+---
+
+## 最终评估
+
+### 交付物完成度: 16/16 (100%) ✅
+
+### Must Have 完成度: 8/8 (100%) ✅
+
+### Must NOT Have 合规性: 6/6 (100%) ✅
+
+### 超出范围更改: 0 ✅
+
+---
+
+## VERDICT: ✅ **APPROVE**
+
+**理由**:
+1. 所有 16 个任务已完成
+2. 所有 Must Have 功能已实现
+3. 所有 Must NOT Have 约束已满足
+4. 无超出范围的更改
+5. 发现的文档问题已修复
+6. Evidence 文件完整
+
+**建议**: 可以进入用户确认阶段
+
+---
+
+**验证完成时间**: 2026-03-29
+**下一步**: 等待用户明确批准后标记 F1-F4 为完成

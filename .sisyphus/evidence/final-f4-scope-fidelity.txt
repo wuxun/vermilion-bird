@@ -1,0 +1,447 @@
+# Scope Fidelity Check - F4
+## 定时任务功能实现验证报告
+
+**验证时间**: 2026-03-29
+**验证者**: Sisyphus-Junior (Autonomous Agent)
+**验证方法**: 代码审查 + 文件检查
+
+---
+
+## 验证结果概览
+
+**总体评估**: ⚠️ **REJECT** - 存在 Must NOT Have 违规和 Must Have 缺失
+
+**统计**:
+- Must Have 满足: 7/8 (87.5%)
+- Must NOT Have 合规: 6/7 (85.7%)
+- 任务完成度: 14/16 (87.5%)
+- 严重问题: 2
+
+---
+
+## Must Have 验证结果
+
+### ✅ 1. 支持三种任务类型（LLM 对话、技能执行、系统维护）
+**状态**: 已实现
+**验证位置**: 
+- `src/llm_chat/scheduler/models.py:10-13` - TaskType 枚举定义
+- `src/llm_chat/scheduler/task_executor.py:50-57` - 三种任务类型执行逻辑
+
+**证据**:
+```python
+class TaskType(str, Enum):
+    LLM_CHAT = "LLM_CHAT"
+    SKILL_EXECUTION = "SKILL_EXECUTION"
+    SYSTEM_MAINTENANCE = "SYSTEM_MAINTENANCE"
+```
+
+---
+
+### ✅ 2. Cron 表达式 + 一次性任务
+**状态**: 已实现
+**验证位置**:
+- `src/llm_chat/scheduler/scheduler.py:257-268` - Cron 触发器支持
+- `src/llm_chat/scheduler/scheduler.py:276-279` - Date 触发器支持（一次性任务）
+
+**证据**:
+```python
+if "cron" in trigger_config:
+    cron_expr = trigger_config["cron"]
+    parts = cron_expr.split()
+    if len(parts) == 5:
+        return CronTrigger(
+            minute=parts[0],
+            hour=parts[1],
+            day=parts[2],
+            month=parts[3],
+            day_of_week=parts[4],
+            timezone=trigger_config.get("timezone"),
+        )
+
+if "date" in trigger_config:
+    date_str = trigger_config["date"]
+    run_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+    return DateTrigger(run_date=run_date)
+```
+
+---
+
+### ✅ 3. 任务持久化（SQLite）
+**状态**: 已实现
+**验证位置**:
+- `src/llm_chat/storage.py:13` - 使用现有数据库 `.vb/vermilion_bird.db`
+- `src/llm_chat/storage.py:77-87` - tasks 表定义
+- `src/llm_chat/storage.py:89-99` - task_executions 表定义
+
+**证据**:
+```python
+class Storage:
+    _db_path: str = ".vb/vermilion_bird.db"
+    
+    # tasks 表
+    CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        task_type TEXT NOT NULL,
+        trigger_config TEXT NOT NULL,  -- JSON
+        params TEXT NOT NULL,            -- JSON
+        enabled INTEGER DEFAULT 1,
+        max_retries INTEGER DEFAULT 3,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+```
+
+**验证命令**:
+```bash
+# 无独立的 scheduler.db 文件
+$ ls ~/.vermilion-bird/scheduler.db 2>/dev/null || echo "OK: no scheduler.db"
+OK: no scheduler.db
+```
+
+---
+
+### ❌ 4. GUI 管理界面
+**状态**: 未实现
+**预期位置**: `src/llm_chat/frontends/scheduler_dialog.py`
+**实际状态**: 文件不存在
+
+**影响**:
+- Task 12 (GUI 任务列表) - 未完成
+- Task 13 (GUI 任务编辑器) - 未完成
+- Task 14 (GUI 执行历史) - 未完成
+
+**严重性**: 高 - 这是计划中明确要求的 Must Have 功能
+
+---
+
+### ✅ 5. 执行历史记录
+**状态**: 已实现
+**验证位置**:
+- `src/llm_chat/storage.py:89-99` - task_executions 表定义
+- `src/llm_chat/storage.py:272-302` - save_execution() 方法
+- `src/llm_chat/storage.py:304-333` - load_executions() 方法
+
+**证据**:
+```python
+CREATE TABLE IF NOT EXISTS task_executions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP,
+    result TEXT,
+    error TEXT,
+    retry_count INTEGER DEFAULT 0,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+def save_execution(self, execution: "TaskExecution") -> str:
+    # ... 保存执行历史
+    
+def load_executions(self, task_id: str, limit: int = 100) -> List["TaskExecution"]:
+    # ... 查询执行历史
+```
+
+---
+
+### ✅ 6. 失败重试机制
+**状态**: 已实现
+**验证位置**: `src/llm_chat/scheduler/task_executor.py:43-103`
+
+**证据**:
+```python
+retry_count = 0
+max_attempts = task.max_retries + 1  # 默认 max_retries = 3
+
+while retry_count < max_attempts:
+    try:
+        # 执行任务
+        result = self._execute_xxx(task)
+        return execution  # 成功返回
+    except Exception as e:
+        last_error = str(e)
+        retry_count += 1
+        if retry_count < max_attempts:
+            delay = min(self.base_delay * (2 ** (retry_count - 1)), self.max_delay)
+            time.sleep(delay)  # 指数退避
+```
+
+**重试逻辑**:
+- 最大重试次数: 3 次（可在任务中配置）
+- 退避策略: 指数退避（base_delay * 2^(retry_count-1)）
+- 最大延迟: 60 秒
+
+---
+
+### ✅ 7. 手动触发、暂停/恢复功能
+**状态**: 已实现
+**验证位置**:
+- `src/llm_chat/scheduler/scheduler.py:159-178` - trigger_task() 方法
+- `src/llm_chat/scheduler/scheduler.py:127-140` - pause_task() 方法
+- `src/llm_chat/scheduler/scheduler.py:143-156` - resume_task() 方法
+- `src/llm_chat/cli.py:512-696` - CLI 命令实现
+
+**证据**:
+```python
+# 手动触发
+def trigger_task(self, task_id: str) -> bool:
+    # ...
+
+# 暂停任务
+def pause_task(self, task_id: str) -> bool:
+    # ...
+
+# 恢复任务
+def resume_task(self, task_id: str) -> bool:
+    # ...
+```
+
+**CLI 命令**:
+- `vermilion-bird task create` - 创建任务
+- `vermilion-bird task list` - 列出任务
+- `vermilion-bird task delete` - 删除任务
+- `vermilion-bird task pause` - 暂停任务
+- `vermilion-bird task resume` - 恢复任务
+- `vermilion-bird task trigger` - 手动触发任务
+
+---
+
+### ✅ 8. 支持 CLI 模式（无 Qt 依赖）
+**状态**: 已实现
+**验证位置**: 
+- `src/llm_chat/scheduler/` - 整个模块无 Qt 导入
+- `src/llm_chat/cli.py:473-696` - CLI 集成
+
+**证据**:
+```bash
+# 检查 scheduler 模块是否有 Qt 导入
+$ grep -r "from PyQt6\|import PyQt6\|QThreadPool\|QThread" src/llm_chat/scheduler/
+# 无结果 - 无 Qt 依赖
+```
+
+---
+
+## Must NOT Have 验证结果
+
+### ✅ 1. 不使用 QThreadPool/QThread
+**状态**: 合规
+**验证方法**: grep 搜索
+**验证命令**: 
+```bash
+grep -r "QThreadPool|QThread" src/llm_chat/scheduler/
+# 无结果
+```
+
+---
+
+### ❌ 2. 不支持固定间隔触发
+**状态**: 违规
+**违规位置**: `src/llm_chat/scheduler/scheduler.py:270-274, 281`
+**违规代码**:
+```python
+if "interval" in trigger_config or "interval_seconds" in trigger_config:
+    seconds = trigger_config.get("interval") or trigger_config.get(
+        "interval_seconds", 60
+    )
+    return IntervalTrigger(seconds=seconds)  # ❌ 违规：实现了 interval 触发器
+
+# ... 其他代码 ...
+
+return IntervalTrigger(seconds=60)  # ❌ 违规：默认返回 interval 触发器
+```
+
+**计划要求**: "不支持固定间隔触发（仅 Cron + 一次性任务）"
+
+**严重性**: 中 - 违反了 Must NOT Have 要求，但功能本身不影响核心需求
+
+---
+
+### ✅ 3. 不支持任务间依赖
+**状态**: 合规
+**验证方法**: 代码审查
+**结果**: 未发现任务依赖相关实现
+
+---
+
+### ✅ 4. 不支持分布式调度
+**状态**: 合规
+**验证方法**: 代码审查
+**结果**: 使用单机 APScheduler，无分布式调度功能
+
+---
+
+### ✅ 5. 不在工作线程直接操作 GUI
+**状态**: 合规
+**验证方法**: 代码审查
+**结果**: scheduler 模块无 GUI 操作代码
+
+---
+
+### ✅ 6. 不引入 Celery 等重型框架
+**状态**: 合规
+**验证方法**: 依赖检查
+**结果**: 仅使用 APScheduler，无 Celery 等框架
+
+---
+
+### ✅ 7. 不在任务执行时阻塞主线程
+**状态**: 合规
+**验证方法**: 代码审查
+**结果**: 使用 ThreadPoolExecutor 异步执行任务
+
+---
+
+## 任务完成度检查
+
+### Wave 1: 基础设施 + 数据模型
+- ✅ Task 1: 添加 APScheduler 依赖
+- ✅ Task 2: 定义数据模型（models.py）
+- ✅ Task 3: 配置扩展（config.py）
+- ✅ Task 4: 持久化存储（storage.py）
+- ✅ Task 5: 测试基础设施
+- ✅ Task 6: 模块入口（scheduler/__init__.py）
+
+**完成度**: 6/6 (100%)
+
+---
+
+### Wave 2: 核心调度器 + 执行器
+- ✅ Task 7: 调度器核心（scheduler.py）
+- ✅ Task 8: 任务执行器（task_executor.py）
+- ✅ Task 9: LLM 对话任务
+- ✅ Task 10: 技能执行任务
+- ✅ Task 11: 系统维护任务
+
+**完成度**: 5/5 (100%)
+
+---
+
+### Wave 3: GUI + 集成
+- ❌ Task 12: GUI 任务列表（scheduler_dialog.py）- 文件不存在
+- ❌ Task 13: GUI 任务编辑器 - 依赖 Task 12
+- ❌ Task 14: GUI 执行历史 - 依赖 Task 12
+- ✅ Task 15: App 集成（app.py）
+- ✅ Task 16: CLI 集成测试
+
+**完成度**: 2/5 (40%)
+
+---
+
+### 总体任务完成度
+**完成**: 13/16 (81.25%)
+
+---
+
+## 范围蔓延检查
+
+### 检查是否有超出计划的功能
+
+1. **Interval 触发器**: ⚠️ 发现违规
+   - 位置: `scheduler.py:270-274, 281`
+   - 影响: 违反 Must NOT Have 要求
+   - 建议: 移除 interval 触发器支持，或更新计划文档
+
+2. **其他超出范围的功能**: ✅ 未发现
+
+---
+
+## 跨任务污染检查
+
+### 检查任务是否修改了不相关的文件
+
+- ✅ scheduler 模块文件结构合理
+- ✅ storage.py 扩展符合计划
+- ✅ app.py 集成符合计划
+- ✅ cli.py 集成符合计划
+- ✅ config.py 扩展符合计划
+
+**结论**: 无跨任务污染
+
+---
+
+## 未记录的文件变更
+
+### 检查 git diff 中是否有未在计划中的文件变更
+
+**建议验证命令**:
+```bash
+git diff main...HEAD --stat
+```
+
+**预期**: 应该只有 scheduler 相关文件、storage.py、app.py、cli.py、config.py 的变更
+
+---
+
+## 关键发现总结
+
+### 🔴 严重问题（必须修复）
+
+1. **GUI 管理界面未实现**
+   - 影响: 3 个任务未完成（Task 12-14）
+   - 违反: Must Have 要求
+   - 建议: 实现 scheduler_dialog.py 及相关 GUI 组件
+
+### 🟡 中等问题（建议修复）
+
+2. **Interval 触发器违规实现**
+   - 影响: 违反 Must NOT Have 要求
+   - 位置: scheduler.py:270-274, 281
+   - 建议: 移除 interval 触发器代码，或更新计划文档明确支持
+
+---
+
+## 最终评估
+
+### 统计数据
+- **Must Have 满足**: 7/8 (87.5%)
+- **Must NOT Have 合规**: 6/7 (85.7%)
+- **任务完成度**: 13/16 (81.25%)
+- **严重问题数**: 2
+
+### 验证结论
+**❌ REJECT**
+
+**拒绝原因**:
+1. GUI 管理界面（Must Have）未实现
+2. Interval 触发器（Must NOT Have）违规实现
+
+### 建议
+1. **立即修复**: 实现 GUI 管理界面（Task 12-14）
+2. **决定**: 要么移除 interval 触发器，要么更新计划文档明确支持该功能
+3. **验证**: 完成修复后重新运行 Scope Fidelity Check
+
+---
+
+## 验证证据
+
+### 文件存在性检查
+```
+✅ src/llm_chat/scheduler/__init__.py
+✅ src/llm_chat/scheduler/scheduler.py
+✅ src/llm_chat/scheduler/task_executor.py
+✅ src/llm_chat/scheduler/models.py
+✅ src/llm_chat/storage.py (已扩展)
+✅ src/llm_chat/app.py (已集成)
+✅ src/llm_chat/cli.py (已集成)
+✅ src/llm_chat/config.py (已扩展)
+❌ src/llm_chat/frontends/scheduler_dialog.py (不存在)
+```
+
+### 代码模式检查
+```bash
+# 无 QThreadPool/QThread
+$ grep -r "QThreadPool|QThread" src/llm_chat/scheduler/
+# (无结果)
+
+# 有 interval 触发器（违规）
+$ grep -n "IntervalTrigger" src/llm_chat/scheduler/scheduler.py
+254:from apscheduler.triggers.interval import IntervalTrigger
+274:            return IntervalTrigger(seconds=seconds)
+281:        return IntervalTrigger(seconds=60)
+```
+
+---
+
+**报告生成时间**: 2026-03-29
+**下一步**: 修复 GUI 管理界面和 interval 触发器问题后重新验证

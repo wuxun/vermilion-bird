@@ -35,7 +35,7 @@ class SchedulerService:
     """调度器服务，管理定时任务的调度和执行。
 
     使用 APScheduler BackgroundScheduler + ThreadPoolExecutor，
-    支持 cron、interval、date 三种触发器类型。
+    支持 cron、date 两种触发器类型。
     """
 
     def __init__(self, config: "SchedulerConfig", task_storage: "Storage", app: "App"):
@@ -241,7 +241,6 @@ class SchedulerService:
 
         支持的配置格式：
         - cron: {"cron": "0 0 * * *"} 或 {"cron": "0 0 * * *", "timezone": "UTC"}
-        - interval: {"interval": 3600} 或 {"interval_seconds": 3600}
         - date: {"date": "2026-04-01 10:00:00"}
 
         Args:
@@ -249,9 +248,11 @@ class SchedulerService:
 
         Returns:
             APScheduler Trigger 对象
+
+        Raises:
+            ValueError: 如果触发器配置无效
         """
         from apscheduler.triggers.cron import CronTrigger
-        from apscheduler.triggers.interval import IntervalTrigger
         from apscheduler.triggers.date import DateTrigger
 
         if "cron" in trigger_config:
@@ -267,18 +268,14 @@ class SchedulerService:
                     timezone=trigger_config.get("timezone"),
                 )
 
-        if "interval" in trigger_config or "interval_seconds" in trigger_config:
-            seconds = trigger_config.get("interval") or trigger_config.get(
-                "interval_seconds", 60
-            )
-            return IntervalTrigger(seconds=seconds)
-
         if "date" in trigger_config:
             date_str = trigger_config["date"]
             run_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
             return DateTrigger(run_date=run_date)
 
-        return IntervalTrigger(seconds=60)
+        raise ValueError(
+            f"Invalid trigger configuration: {trigger_config}. Supported types: cron, date"
+        )
 
     def _execute_task(self, task_id: str):
         """执行任务（由调度器调用）。
