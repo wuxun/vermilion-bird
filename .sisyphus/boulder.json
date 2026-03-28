@@ -12,7 +12,10 @@
     "ses_2c995ff89ffecwl0oy5v7F5baS",
     "ses_2c9928d64ffehoqL43twd7ve3W",
     "ses_2c9926d88ffeKSNyfGAMm2UNIs",
-    "ses_2c992a7b5ffeT4NFxpAy3DbMFO"
+    "ses_2c992a7b5ffeT4NFxpAy3DbMFO",
+    "ses_2c98fa523ffeCCz7uxYZ5oVI5y",
+    "ses_2c987cc8bffeNW6wySz3qtthSv",
+    "ses_2c987684effeWA7fKpjbM379S2"
   ],
   "plan_name": "scheduled-tasks",
   "agent": "atlas",
@@ -52,6 +55,15 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-03-28T21:52:52.645Z"
+    },
+    "todo:12": {
+      "task_key": "todo:12",
+      "task_label": "12",
+      "task_title": "GUI 任务列表",
+      "session_id": "ses_2c987cc8bffeNW6wySz3qtthSv",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-03-28T22:03:18.871Z"
     }
   }
 }

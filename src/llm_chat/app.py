@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
+
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
 from llm_chat.conversation import Conversation, ConversationManager
@@ -12,6 +13,9 @@ from llm_chat.frontends.base import (
 from llm_chat.mcp import MCPManager, MCPServerStatus
 from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
+
+if TYPE_CHECKING:
+    from llm_chat.scheduler.scheduler import SchedulerService
 
 
 class App:
@@ -34,6 +38,12 @@ class App:
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
 
+        self.scheduler: Optional["SchedulerService"] = None
+        if self.config.scheduler.enabled:
+            from llm_chat.scheduler.scheduler import SchedulerService
+
+            self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
+
     def _build_memory_config(self) -> Dict[str, Any]:
         if not self.config.memory.enabled:
             return {"enabled": False}
@@ -55,6 +65,9 @@ class App:
 
     def get_skill_manager(self) -> SkillManager:
         return self.client.get_skill_manager()
+
+    def get_scheduler(self) -> Optional["SchedulerService"]:
+        return self.scheduler
 
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:
@@ -234,6 +247,9 @@ class App:
             if self.config.mcp.servers:
                 self.enable_tools()
 
+        if self.scheduler:
+            self.scheduler.start()
+
         try:
             frontend.start()
         except KeyboardInterrupt:
@@ -244,6 +260,8 @@ class App:
             raise
 
     def stop(self):
+        if self.scheduler:
+            self.scheduler.shutdown()
         self.disable_tools()
         if self.current_frontend:
             self.current_frontend.stop()

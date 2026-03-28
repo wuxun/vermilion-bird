@@ -1084,7 +1084,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/frontends/scheduler_dialog.py, tests/test_frontend/test_scheduler_dialog.py`
   - Pre-commit: `poetry run pytest tests/test_frontend/test_scheduler_dialog.py::test_history_dialog`
 
-- [ ] 15. App 集成
+- [x] 15. App 集成
 
   **What to do**:
   - 修改 `src/llm_chat/app.py`:
