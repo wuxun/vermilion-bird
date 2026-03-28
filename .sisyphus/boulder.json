@@ -8,7 +8,11 @@
     "ses_2caac3c7effed3It0avHh6yuyD",
     "ses_2caa85985ffeIus2J8cVMZ9Foq",
     "ses_2caa813a0ffeb4l6bBMaR7iVbE",
-    "ses_2caa89346ffegWHjNa9hCFjucv"
+    "ses_2caa89346ffegWHjNa9hCFjucv",
+    "ses_2c995ff89ffecwl0oy5v7F5baS",
+    "ses_2c9928d64ffehoqL43twd7ve3W",
+    "ses_2c9926d88ffeKSNyfGAMm2UNIs",
+    "ses_2c992a7b5ffeT4NFxpAy3DbMFO"
   ],
   "plan_name": "scheduled-tasks",
   "agent": "atlas",
@@ -30,6 +34,24 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-03-28T16:52:06.217Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "调度器核心",
+      "session_id": "ses_2c995ff89ffecwl0oy5v7F5baS",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-03-28T21:49:22.665Z"
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "LLM 对话任务",
+      "session_id": "ses_2c992a7b5ffeT4NFxpAy3DbMFO",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-03-28T21:52:52.645Z"
     }
   }
 }

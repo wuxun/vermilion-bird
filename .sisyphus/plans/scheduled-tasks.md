@@ -580,7 +580,7 @@ Max Concurrent: 6 (Wave 1)
 
 ### Wave 2: 核心调度器 + 执行器（5 个任务，依赖 Wave 1）
 
-- [ ] 7. 调度器核心
+- [x] 7. 调度器核心
 
   **What to do**:
   - 创建 `src/llm_chat/scheduler/scheduler.py`
@@ -661,7 +661,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/scheduler/scheduler.py, tests/test_scheduler/test_scheduler.py`
   - Pre-commit: `poetry run pytest tests/test_scheduler/`
 
-- [ ] 8. 任务执行器
+- [x] 8. 任务执行器
 
   **What to do**:
   - 创建 `src/llm_chat/scheduler/task_executor.py`
@@ -733,7 +733,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/scheduler/task_executor.py, tests/test_scheduler/test_executor.py`
   - Pre-commit: `poetry run pytest tests/test_scheduler/test_executor.py`
 
-- [ ] 9. LLM 对话任务
+- [x] 9. LLM 对话任务
 
   **What to do**:
   - 在 `task_executor.py` 中完善 `_execute_llm_chat` 方法
@@ -787,7 +787,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/scheduler/task_executor.py, tests/test_scheduler/test_executor.py`
   - Pre-commit: `poetry run pytest tests/test_scheduler/test_executor.py::test_llm`
 
-- [ ] 10. 技能执行任务
+- [x] 10. 技能执行任务
 
   **What to do**:
   - 在 `task_executor.py` 中完善 `_execute_skill` 方法
@@ -841,7 +841,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/scheduler/task_executor.py, tests/test_scheduler/test_executor.py`
   - Pre-commit: `poetry run pytest tests/test_scheduler/test_executor.py::test_skill`
 
-- [ ] 11. 系统维护任务
+- [x] 11. 系统维护任务
 
   **What to do**:
   - 在 `task_executor.py` 中完善 `_execute_maintenance` 方法
