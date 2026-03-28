@@ -259,7 +259,7 @@ class FeishuServer:
                         if chat_id:
                             from llm_chat.frontends.feishu.mapper import SessionMapper
 
-                            force_new = SessionMapper.is_new_session_request(
+                            force_new = SessionMapper.check_new_session_command(
                                 text_content
                             )
                             conv_id = SessionMapper.to_conversation_id(
