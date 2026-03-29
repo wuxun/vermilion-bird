@@ -19,7 +19,17 @@
     "ses_2c97f378effed7AjNQj0GoK1AW",
     "ses_2c97f173fffeEnvyBkk3OZ1fEA",
     "ses_2c97ef43bffeSOdY0ir3vyGnBt",
-    "ses_2c97ed004ffeR73LxeNumE2kpP"
+    "ses_2c97ed004ffeR73LxeNumE2kpP",
+    "ses_2c94ac8c1ffeJ8pGYpYPLb63nx",
+    "ses_2c9436983ffeOLyCxi2cuwQ345",
+    "ses_2c94315d0ffef14ri1vhmqFHWi",
+    "ses_2c9433c0effeEJc46cF3sMghXX",
+    "ses_2c80ec118ffetekdt0FGgRORtS",
+    "ses_2c80d82cfffeZpTuWdQ9hyhttk",
+    "ses_2c80d742dffetGwkoi4mY4vymf",
+    "ses_2c80d61d8ffeaN5Y7iT4DhulAU",
+    "ses_2c80d5233ffeRKYi4nI22s08G0",
+    "ses_2c7f3ac10ffeZNXjSBZICgU6ai"
   ],
   "plan_name": "scheduled-tasks",
   "agent": "atlas",
@@ -68,6 +78,24 @@
       "agent": "Sisyphus-Junior",
       "category": "deep",
       "updated_at": "2026-03-28T22:13:36.660Z"
+    },
+    "todo:16": {
+      "task_key": "todo:16",
+      "task_label": "16",
+      "task_title": "CLI 集成测试",
+      "session_id": "ses_2c94ac8c1ffeJ8pGYpYPLb63nx",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-03-28T23:16:05.787Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_2c81dfe92ffemNt8WQaP51hYY1",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-03-29T04:38:34.252Z"
     }
   }
 }

@@ -40,7 +40,7 @@ class App:
 
         self.scheduler: Optional["SchedulerService"] = None
         if self.config.scheduler.enabled:
-            from llm_chat.scheduler.scheduler import SchedulerService
+            from llm_chat.scheduler import SchedulerService
 
             self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
 
@@ -142,6 +142,10 @@ class App:
         # Set config for frontends that support it
         if hasattr(frontend, "set_config"):
             frontend.set_config(self.config)
+
+        # Set app instance for frontends that support it (e.g., GUIFrontend for scheduler dialog)
+        if hasattr(frontend, "set_app"):
+            frontend.set_app(self)
 
         frontend.set_conversation_callbacks(
             on_new=self._on_new_conversation,

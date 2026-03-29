@@ -314,6 +314,9 @@ class GUIFrontend(BaseFrontend):
         self._clear_button: Optional[QPushButton] = None
         self._mcp_button: Optional[QPushButton] = None
         self._mcp_dialog = None
+        self._scheduler_button: Optional[QPushButton] = None
+        self._scheduler_dialog = None
+        self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
         self._conv_list_signals: Optional[ConversationListSignals] = None
@@ -341,12 +344,17 @@ class GUIFrontend(BaseFrontend):
         self._on_list_conversation: Optional[Callable] = None
         self._config: Optional[Any] = None
         self._model_combo: Optional[QComboBox] = None
+        self._scheduler_button: Optional[QPushButton] = None
+        self._scheduler_dialog = None
 
     def set_storage(self, storage: Any):
         self._storage = storage
 
     def set_config(self, config: Any):
         self._config = config
+
+    def set_app(self, app: Any):
+        self._app_instance = app
 
     def _init_model_combo(self):
         if self._model_combo is None:
@@ -620,6 +628,11 @@ class GUIFrontend(BaseFrontend):
         self._models_button.clicked.connect(self._on_models_config)
         header_layout.addWidget(self._models_button)
 
+        self._scheduler_button = QPushButton("Scheduler")
+        self._scheduler_button.setFixedWidth(100)
+        self._scheduler_button.clicked.connect(self._on_scheduler_config)
+        header_layout.addWidget(self._scheduler_button)
+
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
         self._clear_button.clicked.connect(self._on_clear)
@@ -869,6 +882,18 @@ class GUIFrontend(BaseFrontend):
         """)
 
         self._models_button.setStyleSheet("""
+            QPushButton {
+                background-color: #D4652F;
+                color: white;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #C84B31;
+            }
+        """)
+
+        self._scheduler_button.setStyleSheet("""
             QPushButton {
                 background-color: #D4652F;
                 color: white;
@@ -1658,6 +1683,53 @@ class GUIFrontend(BaseFrontend):
         except ImportError as e:
             QMessageBox.warning(
                 self._main_window, "Error", f"Models module not available: {e}"
+            )
+
+    def _on_scheduler_config(self):
+        """打开定时任务管理对话框"""
+        try:
+            from llm_chat.frontends.scheduler_dialog import SchedulerDialog
+
+            if not hasattr(self, "_app_instance") or self._app_instance is None:
+                QMessageBox.warning(
+                    self._main_window, "Error", "App instance not available"
+                )
+                return
+
+            if (
+                not hasattr(self._app_instance, "scheduler")
+                or self._app_instance.scheduler is None
+            ):
+                QMessageBox.warning(
+                    self._main_window,
+                    "Error",
+                    "Scheduler is disabled or not initialized",
+                )
+                return
+
+            if self._scheduler_dialog is None:
+                self._scheduler_dialog = SchedulerDialog(
+                    self._main_window,
+                    scheduler=self._app_instance.scheduler,
+                    storage=self._storage,
+                )
+            self._scheduler_dialog.exec()
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window, "Error", f"Scheduler module not available: {e}"
+            )
+        except Exception as e:
+            QMessageBox.warning(
+                self._main_window, "Error", f"Failed to open scheduler: {str(e)}"
+            )
+            self._scheduler_dialog.exec()
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window, "Error", f"Scheduler module not available: {e}"
+            )
+        except AttributeError:
+            QMessageBox.warning(
+                self._main_window, "Error", "Scheduler is not initialized"
             )
 
     def _on_close(self):

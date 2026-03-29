@@ -26,15 +26,30 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 def check_scheduler_available():
     try:
         import importlib
+        from unittest.mock import MagicMock
 
-        importlib.import_module("apscheduler.schedulers.background")
-        importlib.import_module("apscheduler.jobstores.sqlalchemy")
-        return True
+        bg_scheduler = importlib.import_module("apscheduler.schedulers.background")
+        sqlalchemy_store = importlib.import_module("apscheduler.jobstores.sqlalchemy")
+
+        if isinstance(bg_scheduler, MagicMock):
+            return False
+
+        if hasattr(bg_scheduler, "BackgroundScheduler"):
+            scheduler = bg_scheduler.BackgroundScheduler()
+            if isinstance(scheduler, MagicMock):
+                return False
+            return True
+        return False
     except Exception:
         return False
 
 
 SCHEDULER_AVAILABLE = check_scheduler_available()
+
+
+def skip_if_no_scheduler():
+    if not SCHEDULER_AVAILABLE:
+        pytest.skip("APScheduler/SQLAlchemy not available or incompatible")
 
 
 def create_temp_config(db_path: str, config_path: str) -> dict:
@@ -91,29 +106,16 @@ def test_cli_schedule_create_command(tmp_path):
     assert "message" in saved.params
 
 
-@pytest.mark.skipif(
-    not SCHEDULER_AVAILABLE,
-    reason="APScheduler/SQLAlchemy not available or incompatible",
-)
 class TestCLISchedulerWithSubprocess:
-    """需要完整调度器环境的集成测试"""
+    """需要完整调度器环境的集成测试
 
-    pytestmark = pytest.mark.skipif(
-        not SCHEDULER_AVAILABLE,
-        reason="APScheduler/SQLAlchemy not available or incompatible",
-    )
-
-    @pytest.fixture(autouse=True)
-    def setup_storage(self):
-        if not SCHEDULER_AVAILABLE:
-            pytest.skip("Scheduler not available")
-        from llm_chat.storage import Storage
-
-        Storage._instance = None
-        yield
-        Storage._instance = None
+    这些测试使用 subprocess 运行独立的 Python 进程来测试调度器功能。
+    当 APScheduler/SQLAlchemy 不可用或与当前 Python 版本不兼容时，测试会被跳过。
+    """
 
     def test_cli_one_time_task_execution(self, tmp_path):
+        skip_if_no_scheduler()
+
         from llm_chat.storage import Storage
         from llm_chat.scheduler.models import Task, TaskType, TaskStatus
 
@@ -212,6 +214,8 @@ print("Scheduler shutdown")
         )
 
     def test_task_recovery_after_restart(self, tmp_path):
+        skip_if_no_scheduler()
+
         from llm_chat.storage import Storage
         from llm_chat.scheduler.models import Task, TaskType
 
@@ -347,6 +351,8 @@ print("Second start: Scheduler shutdown")
         assert "test-cron-recovery-001" in result2.stdout
 
     def test_multiple_tasks_scheduling(self, tmp_path):
+        skip_if_no_scheduler()
+
         from llm_chat.storage import Storage
         from llm_chat.scheduler.models import Task, TaskType
 

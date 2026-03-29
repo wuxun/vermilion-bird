@@ -901,7 +901,7 @@ Max Concurrent: 6 (Wave 1)
 
 ### Wave 3: GUI + 集成（5 个任务，依赖 Wave 1-2）
 
-- [ ] 12. GUI 任务列表
+- [x] 12. GUI 任务列表
 
   **What to do**:
   - 创建 `src/llm_chat/frontends/scheduler_dialog.py`
@@ -960,7 +960,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/frontends/scheduler_dialog.py, tests/test_frontend/test_scheduler_dialog.py`
   - Pre-commit: `poetry run pytest tests/test_frontend/test_scheduler_dialog.py`
 
-- [ ] 13. GUI 任务编辑器
+- [x] 13. GUI 任务编辑器
 
   **What to do**:
   - 在 `scheduler_dialog.py` 添加 `TaskEditDialog` 类
@@ -1025,7 +1025,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/frontends/scheduler_dialog.py, tests/test_frontend/test_scheduler_dialog.py`
   - Pre-commit: `poetry run pytest tests/test_frontend/test_scheduler_dialog.py::test_edit_dialog`
 
-- [ ] 14. GUI 执行历史
+- [x] 14. GUI 执行历史
 
   **What to do**:
   - 在 `scheduler_dialog.py` 添加 `ExecutionHistoryDialog` 类
@@ -1180,7 +1180,7 @@ Max Concurrent: 6 (Wave 1)
   - Files: `src/llm_chat/app.py, src/llm_chat/config.py, config.yaml, tests/test_app.py`
   - Pre-commit: `poetry run pytest tests/test_app.py::test_scheduler_integration`
 
-- [ ] 16. CLI 集成测试
+- [x] 16. CLI 集成测试
 
   **What to do**:
   - 创建 `tests/integration/test_scheduler_cli.py`

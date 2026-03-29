@@ -195,7 +195,7 @@ class SchedulerConfig(BaseSettings):
 
     enabled: bool = Field(default=True, description="是否启用调度器")
     max_workers: int = Field(default=4, description="调度器并发最大工作线程数")
-    default_timezone: str = Field(default="local", description="默认时区")
+    default_timezone: str = Field(default="UTC", description="默认时区")
 
     class Config:
         env_prefix = "SCHEDULER_"

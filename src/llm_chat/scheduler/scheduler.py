@@ -10,12 +10,13 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, List, Callable, Any
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.executors.pool import ThreadPoolExecutor
+# APScheduler imports are delayed to avoid pkg_resources dependency at module load time
+# This is critical for Python 3.14 compatibility (pkg_resources deprecated)
 
 from .models import Task, TaskType, TaskStatus, TaskExecution
 
 if TYPE_CHECKING:
+    from apscheduler.schedulers.background import BackgroundScheduler
     from llm_chat.config import SchedulerConfig
     from llm_chat.storage import Storage
     from llm_chat.app import App
@@ -42,7 +43,8 @@ class SchedulerService:
         self._config = config
         self._storage = task_storage
         self._app = app
-        self._scheduler: Optional[BackgroundScheduler] = None
+        # Use string annotation to avoid importing BackgroundScheduler at module load time
+        self._scheduler: Optional["BackgroundScheduler"] = None
         self._running = False
 
         self._setup_scheduler()
@@ -50,6 +52,11 @@ class SchedulerService:
     def _setup_scheduler(self):
         """配置调度器组件"""
         # 延迟导入以避免在模块加载时触发 pkg_resources 依赖
+        # Critical: Import pkg_resources shim BEFORE importing apscheduler to ensure it's in sys.modules
+        # This is necessary for Python 3.14 compatibility (pkg_resources deprecated)
+        import llm_chat.pkg_resources  # noqa: F401
+
+        from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
         from apscheduler.executors.pool import ThreadPoolExecutor
         from apscheduler.events import (
