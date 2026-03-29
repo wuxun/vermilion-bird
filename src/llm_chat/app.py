@@ -44,6 +44,10 @@ class App:
 
             self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
 
+            # 加载scheduler技能，传入scheduler实例
+            skill_manager = self.get_skill_manager()
+            skill_manager.load_skill("scheduler", {"scheduler": self.scheduler})
+
     def _build_memory_config(self) -> Dict[str, Any]:
         if not self.config.memory.enabled:
             return {"enabled": False}
