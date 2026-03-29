@@ -12,13 +12,6 @@ from typing import TYPE_CHECKING, Optional, List, Callable, Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from apscheduler.events import (
-    EVENT_JOB_EXECUTED,
-    EVENT_JOB_ERROR,
-    EVENT_JOB_MISSED,
-    JobEvent,
-)
 
 from .models import Task, TaskType, TaskStatus, TaskExecution
 
@@ -56,6 +49,16 @@ class SchedulerService:
 
     def _setup_scheduler(self):
         """配置调度器组件"""
+        # 延迟导入以避免在模块加载时触发 pkg_resources 依赖
+        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+        from apscheduler.executors.pool import ThreadPoolExecutor
+        from apscheduler.events import (
+            EVENT_JOB_EXECUTED,
+            EVENT_JOB_ERROR,
+            EVENT_JOB_MISSED,
+            JobEvent,
+        )
+
         jobstores = {
             "default": SQLAlchemyJobStore(
                 url="sqlite:///.vb/vermilion_bird.db",
