@@ -163,6 +163,7 @@ class SkillsConfig(BaseSettings):
     task_delegator: SkillConfig = Field(
         default_factory=lambda: SkillConfig(enabled=True)
     )
+    scheduler: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
 
     class Config:
         extra = "allow"

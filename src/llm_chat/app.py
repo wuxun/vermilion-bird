@@ -1,6 +1,8 @@
 import logging
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
+logger = logging.getLogger(__name__)
+
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
 from llm_chat.conversation import Conversation, ConversationManager
@@ -44,9 +46,25 @@ class App:
 
             self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
 
-            # 加载scheduler技能，传入scheduler实例
+            # 重新加载scheduler技能，传入scheduler实例
             skill_manager = self.get_skill_manager()
+            # 先卸载旧的（如果已经加载）
+            if "scheduler" in skill_manager._skills:
+                del skill_manager._skills["scheduler"]
+                # 移除旧的工具注册
+                from llm_chat.tools import get_tool_registry
+
+                registry = get_tool_registry()
+                for tool_name in [
+                    "create_scheduled_task",
+                    "list_scheduled_tasks",
+                    "delete_scheduled_task",
+                ]:
+                    if tool_name in registry._tools:
+                        del registry._tools[tool_name]
+            # 重新加载，传入scheduler实例
             skill_manager.load_skill("scheduler", {"scheduler": self.scheduler})
+            logger.info("Scheduler skill reloaded with scheduler instance")
 
     def _build_memory_config(self) -> Dict[str, Any]:
         if not self.config.memory.enabled:
