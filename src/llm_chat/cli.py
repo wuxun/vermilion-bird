@@ -238,10 +238,19 @@ cli.add_command(memory)
 
 @cli.command()
 @click.option("--config", "config_path", default=None, help="Feishu 配置文件路径")
-def feishu(config_path=None):
+@click.option("--log-file", default=None, help="日志文件路径")
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    default="INFO",
+    help="日志级别",
+)
+def feishu(config_path=None, log_file=None, log_level="INFO"):
     """启动 Feishu 服务（非阻塞，后台运行）"""
     import logging
     import time
+
+    setup_logging(getattr(logging, log_level), log_file)
 
     # Load Feishu configuration
     try:

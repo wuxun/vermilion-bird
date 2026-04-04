@@ -385,30 +385,50 @@ class FeishuAdapter:
     ) -> Optional[str]:
         conv_lock = self._get_conversation_lock(conversation_id)
 
+        logger.info(f"开始处理 LLM 请求: conversation_id={conversation_id}")
+        logger.info(f"用户消息长度: {len(message.content)} 字符")
+        logger.debug(
+            f"用户消息内容: {message.content[:200]}..."
+            if len(message.content) > 200
+            else f"用户消息内容: {message.content}"
+        )
+
         with conv_lock:
             try:
                 conversation = self.app.get_conversation(conversation_id)
 
+                history_count = len(conversation.get_history())
+                logger.info(f"历史消息数量: {history_count}")
+
                 if self.app.config.enable_tools and self.app.has_tools_available():
                     tools = self.app.get_available_tools()
                     if tools:
+                        tool_names = [t["function"]["name"] for t in tools]
+                        logger.info(f"使用工具调用: {tool_names}")
                         conversation.add_user_message(message.content)
                         response = self.app.client.chat_with_tools(
                             message.content, tools, history=conversation.get_history()
                         )
                         conversation.add_assistant_message(response)
                     else:
+                        logger.info("无可用工具，使用普通聊天")
                         response = conversation.send_message(message.content)
                 else:
+                    logger.info("工具调用已禁用，使用普通聊天")
                     response = conversation.send_message(message.content)
 
                 logger.info(
-                    f"LLM response generated for conversation {conversation_id}"
+                    f"LLM 响应生成完成: conversation_id={conversation_id}, response_length={len(response)}"
+                )
+                logger.debug(
+                    f"响应内容预览: {response[:200]}..."
+                    if len(response) > 200
+                    else f"响应内容: {response}"
                 )
                 return response
 
             except Exception as e:
-                logger.error(f"Error processing message with LLM: {e}", exc_info=True)
+                logger.error(f"处理 LLM 消息时发生错误: {e}", exc_info=True)
                 return f"处理消息时发生错误: {str(e)}"
 
     def send_message(
