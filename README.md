@@ -18,6 +18,7 @@
 - 工具调用支持（Function Calling / Tool Use）
 - **多层记忆系统** - 短期/中期/长期记忆，让AI更懂你
 - **人格设定** - 自定义AI助手的性格和行为准则
+- **Shell 执行技能** - 受控Shell命令执行，白名单限制确保安全
 
 ## 安装
 
@@ -468,7 +469,8 @@ src/llm_chat/
 │   ├── base.py         # 技能基类
 │   ├── web_search/     # 网页搜索技能
 │   ├── calculator/     # 计算器技能
-│   └── web_fetch/      # 网页抓取技能
+│   ├── web_fetch/      # 网页抓取技能
+│   └── shell_exec/     # Shell执行技能（白名单限制）
 └── utils/              # 工具函数
     ├── __init__.py
     └── token_counter.py # Token 计数器
@@ -499,6 +501,81 @@ MCP (Model Context Protocol) 是 Anthropic 推出的开放协议，用于连接 
 | brave-search | Brave 搜索 | `npx -y @modelcontextprotocol/server-brave-search` |
 | filesystem | 文件系统操作 | `npx -y @modelcontextprotocol/server-filesystem` |
 | sqlite | SQLite 数据库 | `npx -y @modelcontextprotocol/server-sqlite` |
+
+## Shell 执行技能
+
+Vermilion Bird 内置了Shell执行技能，允许模型在受控环境中执行系统命令获取外部信息。
+
+### 安全特性
+
+- **白名单限制**：仅允许执行配置中指定的命令
+- **工作目录限制**：仅允许在项目目录内执行命令
+- **超时控制**：命令执行超时自动终止（默认5秒）
+- **输出截断**：超过长度限制时自动截断（默认10000字符）
+- **完整日志**：所有命令执行均记录日志
+
+### 配置
+
+在 `config.yaml` 中配置Shell执行技能：
+
+```yaml
+skills:
+  shell_exec:
+    enabled: true
+    whitelist:
+      - "ls"
+      - "pwd"
+      - "cat"
+      - "grep"
+      - "head"
+      - "tail"
+      - "wc"
+      - "du"
+      - "df"
+      - "git"
+      - "find"
+      - "echo"
+      - "date"
+      - "whoami"
+      - "uname"
+      - "env"
+      - "printenv"
+    default_timeout: 5
+    max_output_length: 10000
+    allowed_workdir: "./"
+```
+
+### 使用示例
+
+模型可以调用 `shell_exec` 工具执行白名单内的命令：
+
+```
+用户：当前目录有哪些文件？
+模型：我来查看一下当前目录的文件列表。
+     [调用 shell_exec: command="ls"]
+     输出：README.md  config.yaml  src/  tests/ ...
+```
+
+### 默认白名单
+
+| 命令 | 说明 |
+|------|------|
+| ls | 列出目录内容 |
+| pwd | 显示当前工作目录 |
+| cat | 查看文件内容 |
+| grep | 文本搜索 |
+| head | 查看文件头部 |
+| tail | 查看文件尾部 |
+| wc | 统计行数/字数 |
+| du | 磁盘使用情况 |
+| df | 文件系统空间 |
+| git | Git 版本控制（常用命令） |
+| find | 文件查找 |
+| echo | 输出文本 |
+| date | 显示日期时间 |
+| whoami | 显示当前用户 |
+| uname | 系统信息 |
+| env/printenv | 环境变量 |
 
 ## 扩展协议
 

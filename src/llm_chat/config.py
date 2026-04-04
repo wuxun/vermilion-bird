@@ -34,6 +34,17 @@ class FeishuConfig:
     verification_token: Optional[str] = None
 
 
+@dataclass
+class NotificationConfig:
+    """任务通知配置"""
+
+    enabled: bool = True
+    # 默认通知目标（可以在任务级别覆盖）
+    default_targets: Optional[list] = None
+    # 飞书通知相关配置
+    feishu: Optional[dict] = None
+
+
 class LLMConfig(BaseSettings):
     base_url: str = Field(
         default="https://api.openai.com/v1", description="模型 API 基础 URL"
@@ -164,6 +175,7 @@ class SkillsConfig(BaseSettings):
         default_factory=lambda: SkillConfig(enabled=True)
     )
     scheduler: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    shell_exec: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
 
     class Config:
         extra = "allow"
@@ -209,6 +221,9 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     feishu: FeishuConfig = Field(default_factory=lambda: FeishuConfig())
+    notification: NotificationConfig = Field(
+        default_factory=lambda: NotificationConfig()
+    )
     enable_tools: bool = Field(default=True, description="是否启用工具调用")
     skills: SkillsConfig = Field(
         default_factory=SkillsConfig, description="Skills 配置"

@@ -116,6 +116,30 @@ class FeishuAdapter:
         self._conversation_locks_lock = threading.Lock()
         self._response_callback = response_callback
 
+        # 记录最近的对话，用于任务通知
+        self._recent_chat: Optional[Dict[str, str]] = None
+
+    def set_recent_chat(self, chat_id: str, chat_type: str = "chat_id"):
+        """记录最近的对话，用于任务通知。
+
+        Args:
+            chat_id: 群聊 ID 或用户 ID
+            chat_type: ID 类型，'chat_id' 或 'open_id' 或 'user_id'
+        """
+        self._recent_chat = {
+            "type": "feishu",
+            chat_type: chat_id,
+        }
+        logger.info(f"Recent chat recorded: {chat_type}={chat_id}")
+
+    def get_recent_chat(self) -> Optional[Dict[str, str]]:
+        """获取最近的对话。
+
+        Returns:
+            最近对话的信息字典，或 None
+        """
+        return self._recent_chat
+
     @property
     def http_client(self) -> httpx.Client:
         if self._http_client is None:
@@ -217,6 +241,19 @@ class FeishuAdapter:
             internal_message = self._convert_to_internal_message(event)
             chat_type = self._get_chat_type(message)
             original_id = message.chat.chat_id if message.chat else ""
+
+            # 记录最近的对话，用于任务通知
+            if original_id:
+                chat_id_type = "chat_id"
+                self.set_recent_chat(original_id, chat_id_type)
+                # 同时保存到数据库
+                try:
+                    from llm_chat.storage import Storage
+
+                    storage = Storage()
+                    storage.set_recent_feishu_chat(original_id, chat_id_type)
+                except Exception as e:
+                    logger.error(f"Failed to save recent chat to database: {e}")
 
             force_new = SessionMapper.check_new_session_command(
                 internal_message.content

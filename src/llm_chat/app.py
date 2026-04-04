@@ -41,30 +41,27 @@ class App:
         self._current_conversation_id: str = "default"
 
         self.scheduler: Optional["SchedulerService"] = None
+        logger.info(f"Scheduler enabled config: {self.config.scheduler.enabled}")
         if self.config.scheduler.enabled:
+            logger.info("Initializing SchedulerService...")
             from llm_chat.scheduler import SchedulerService
 
-            self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
+            try:
+                self.scheduler = SchedulerService(
+                    self.config.scheduler, self.storage, self
+                )
+                logger.info(f"SchedulerService created: {self.scheduler}")
 
-            # 重新加载scheduler技能，传入scheduler实例
-            skill_manager = self.get_skill_manager()
-            # 先卸载旧的（如果已经加载）
-            if "scheduler" in skill_manager._skills:
-                del skill_manager._skills["scheduler"]
-                # 移除旧的工具注册
-                from llm_chat.tools import get_tool_registry
+                skill_manager = self.get_skill_manager()
+                skill_manager.reload_skill("scheduler", {"scheduler": self.scheduler})
+                logger.info("Scheduler skill reloaded with scheduler instance")
+            except Exception as e:
+                logger.error(f"Failed to initialize scheduler: {e}")
+                import traceback
 
-                registry = get_tool_registry()
-                for tool_name in [
-                    "create_scheduled_task",
-                    "list_scheduled_tasks",
-                    "delete_scheduled_task",
-                ]:
-                    if tool_name in registry._tools:
-                        del registry._tools[tool_name]
-            # 重新加载，传入scheduler实例
-            skill_manager.load_skill("scheduler", {"scheduler": self.scheduler})
-            logger.info("Scheduler skill reloaded with scheduler instance")
+                traceback.print_exc()
+        else:
+            logger.warning("Scheduler is disabled in config")
 
     def _build_memory_config(self) -> Dict[str, Any]:
         if not self.config.memory.enabled:

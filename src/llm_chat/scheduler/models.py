@@ -31,6 +31,13 @@ class Task(BaseModel):
     max_retries: int = 3
     created_at: datetime
     updated_at: datetime
+    # 通知配置
+    notify_enabled: bool = True
+    notify_targets: Optional[list] = (
+        None  # 通知目标列表，如 [{"type": "feishu", "chat_id": "oc_xxx"}]
+    )
+    notify_on_success: bool = True
+    notify_on_failure: bool = True
 
 
 class TaskExecution(BaseModel):

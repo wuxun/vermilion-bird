@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, skip_skills_setup: bool = False):
         self.config = config
         self.session = requests.Session()
         self.session.timeout = config.llm.timeout
@@ -49,7 +49,8 @@ class LLMClient:
             retry_delay=config.tools.retry_delay,
             timeout=config.tools.timeout,
         )
-        self._setup_skills()
+        if not skip_skills_setup:
+            self._setup_skills()
 
     def _setup_skills(self):
         self._tool_registry.clear()
@@ -107,7 +108,7 @@ class LLMClient:
         return len(self._tool_registry.get_all_tools()) > 0
 
     def execute_builtin_tool(self, name: str, arguments: Dict[str, Any]) -> str:
-        return self._tool_registry.execute_tool(name, **arguments)
+        return self._tool_registry.execute_tool(name, arguments=arguments)
 
     def chat(
         self,

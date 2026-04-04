@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, List, Callable, Any
+from typing import TYPE_CHECKING, Optional, List, Callable, Any, Dict
 
 # APScheduler imports are delayed to avoid pkg_resources dependency at module load time
 # This is critical for Python 3.14 compatibility (pkg_resources deprecated)
@@ -23,6 +23,22 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# 全局注册表，用于从 job 函数访问 SchedulerService 实例
+_scheduler_registry: Dict[str, "SchedulerService"] = {}
+
+
+def _execute_job_wrapper(task_id: str, scheduler_id: str):
+    """模块级别的 job 包装函数，避免绑定方法的 pickle 问题。"""
+    scheduler = _scheduler_registry.get(scheduler_id)
+    if scheduler:
+        scheduler._execute_task(task_id)
+    else:
+        logger.error(f"Scheduler instance not found: {scheduler_id}")
+        # 尝试使用第一个可用的 scheduler 实例
+        if _scheduler_registry:
+            scheduler = next(iter(_scheduler_registry.values()))
+            scheduler._execute_task(task_id)
 
 
 class SchedulerService:
@@ -46,8 +62,18 @@ class SchedulerService:
         # Use string annotation to avoid importing BackgroundScheduler at module load time
         self._scheduler: Optional["BackgroundScheduler"] = None
         self._running = False
+        # 生成唯一的 scheduler ID 用于注册表
+        self._scheduler_id = str(uuid.uuid4())
+        # 立即注册到全局注册表
+        _scheduler_registry[self._scheduler_id] = self
 
         self._setup_scheduler()
+
+    def _get_notification_service(self):
+        """动态创建通知服务"""
+        from .notification import NotificationService
+
+        return NotificationService(self._app, self._app.config)
 
     def _setup_scheduler(self):
         """配置调度器组件"""
@@ -115,6 +141,9 @@ class SchedulerService:
 
         if self._scheduler:
             self._scheduler.shutdown(wait=wait)
+            # 从全局注册表移除
+            if self._scheduler_id in _scheduler_registry:
+                del _scheduler_registry[self._scheduler_id]
             self._running = False
             logger.info("Scheduler shutdown")
 
@@ -132,10 +161,10 @@ class SchedulerService:
         trigger = self._build_trigger(task.trigger_config)
 
         self._scheduler.add_job(
-            self._execute_task,
+            _execute_job_wrapper,
             trigger=trigger,
             id=task.id,
-            args=[task.id],
+            args=[task.id, self._scheduler_id],
             name=task.name,
             replace_existing=True,
         )
@@ -155,13 +184,26 @@ class SchedulerService:
         Returns:
             删除成功返回 True，任务不存在返回 False
         """
+        # 首先检查任务是否存在于存储中
+        task = self._storage.load_task(task_id)
+        if not task:
+            logger.debug(f"Task not found in storage: {task_id}")
+            return False
+
+        # 尝试从调度器删除（任务可能已不存在，如一次性触发任务）
         try:
             self._scheduler.remove_job(task_id)
+            logger.debug(f"Job removed from scheduler: {task_id}")
+        except Exception as e:
+            logger.debug(f"Job not found in scheduler (continuing): {task_id} - {e}")
+
+        # 从存储删除
+        try:
             self._storage.delete_task(task_id)
             logger.info(f"Task removed: {task_id}")
             return True
         except Exception as e:
-            logger.warning(f"Failed to remove task {task_id}: {e}")
+            logger.warning(f"Failed to delete task from storage {task_id}: {e}")
             return False
 
     def pause_task(self, task_id: str) -> bool:
@@ -215,14 +257,34 @@ class SchedulerService:
         Returns:
             触发成功返回 True
         """
-        try:
-            job = self._scheduler.get_job(task_id)
-            if not job:
-                return False
+        # 首先检查任务是否存在于存储中
+        task = self._storage.load_task(task_id)
+        if not task:
+            logger.debug(f"Task not found in storage: {task_id}")
+            return False
 
-            self._scheduler.modify_job(task_id, next_run_time=datetime.now())
-            logger.info(f"Task triggered: {task_id}")
-            return True
+        try:
+            # 尝试获取 job
+            job = self._scheduler.get_job(task_id)
+            if job:
+                # Job 存在，使用 modify_job 立即执行
+                self._scheduler.modify_job(task_id, next_run_time=datetime.now())
+                logger.info(f"Task triggered (existing job): {task_id}")
+                return True
+            else:
+                # Job 不存在（可能是已执行的一次性任务），直接调用执行方法
+                logger.debug(
+                    f"Job not found in scheduler, executing directly: {task_id}"
+                )
+                # 在新线程中执行任务以避免阻塞 UI
+                import threading
+
+                thread = threading.Thread(
+                    target=self._execute_task, args=(task_id,), daemon=True
+                )
+                thread.start()
+                logger.info(f"Task triggered (direct execution): {task_id}")
+                return True
         except Exception as e:
             logger.warning(f"Failed to trigger task {task_id}: {e}")
             return False
@@ -280,11 +342,29 @@ class SchedulerService:
 
         if "date" in trigger_config:
             date_str = trigger_config["date"]
-            run_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+            run_date = self._parse_datetime(date_str)
             return DateTrigger(run_date=run_date)
 
         raise ValueError(
             f"Invalid trigger configuration: {trigger_config}. Supported types: cron, date"
+        )
+
+    def _parse_datetime(self, date_str: str) -> datetime:
+        formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%d",
+        ]
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        raise ValueError(
+            f"无法解析时间格式: {date_str}，支持的格式: YYYY-MM-DD HH:MM:SS 或 ISO 格式"
         )
 
     def _execute_task(self, task_id: str):
@@ -319,6 +399,7 @@ class SchedulerService:
             self._storage.save_execution(execution)
 
             logger.info(f"Task completed: {task_id}")
+            self._notify_task_completion(task, result, success=True)
 
         except Exception as e:
             execution.status = TaskStatus.FAILED
@@ -327,6 +408,7 @@ class SchedulerService:
             self._storage.save_execution(execution)
 
             logger.error(f"Task failed: {task_id} - {e}")
+            self._notify_task_completion(task, str(e), success=False)
 
     def _run_task(self, task: Task) -> str:
         """运行任务逻辑。
@@ -406,12 +488,56 @@ class SchedulerService:
         else:
             return f"Unknown maintenance action: {action}"
 
-    def _on_job_event(self, event: JobEvent):
+    def _notify_task_completion(self, task: Task, result: str, success: bool = True):
+        try:
+            from llm_chat.frontends.base import Message, MessageType
+
+            # 1. 发送到前端（保留原有功能）
+            frontend = self._app.current_frontend
+            if frontend:
+                status = "✅" if success else "❌"
+                if success:
+                    content = f"{status} **定时任务完成**: {task.name}\n\n{result}"
+                else:
+                    content = (
+                        f"{status} **定时任务失败**: {task.name}\n\n错误: {result}"
+                    )
+
+                message = Message(
+                    content=content,
+                    role="assistant",
+                    msg_type=MessageType.TEXT,
+                    metadata={"task_id": task.id, "is_notification": True},
+                )
+
+                frontend.display_message(message)
+                logger.info(f"Frontend notification sent for task: {task.name}")
+
+            # 2. 发送到配置的通知目标（飞书等）
+            try:
+                logger.info(
+                    f"Attempting to send external notification for task: {task.id}"
+                )
+                notification_service = self._get_notification_service()
+                notification_service.send_notification(task, result, success)
+            except Exception as e:
+                logger.error(f"Failed to send external notification: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to send notification: {e}")
+
+    def _on_job_event(self, event):
         """处理任务事件。
 
         Args:
             event: 任务事件对象
         """
+        from apscheduler.events import (
+            EVENT_JOB_EXECUTED,
+            EVENT_JOB_ERROR,
+            EVENT_JOB_MISSED,
+        )
+
         if event.code == EVENT_JOB_EXECUTED:
             logger.debug(f"Job executed: {event.job_id}")
         elif event.code == EVENT_JOB_ERROR:

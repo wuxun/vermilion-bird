@@ -5,9 +5,11 @@
 from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
+import uuid
 from llm_chat.skills.base import BaseSkill
 from llm_chat.tools.base import BaseTool
 from llm_chat.scheduler import TaskType, SchedulerService
+from llm_chat.scheduler.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,8 @@ class CreateScheduledTaskTool(BaseTool):
                 },
                 "task_type": {
                     "type": "string",
-                    "enum": ["llm_chat", "skill_execution", "system_maintenance"],
-                    "description": "任务类型：llm_chat=定时调用LLM对话，skill_execution=定时执行技能/工具，system_maintenance=系统维护任务",
+                    "enum": ["LLM_CHAT", "SKILL_EXECUTION", "SYSTEM_MAINTENANCE"],
+                    "description": "任务类型：LLM_CHAT=定时调用LLM对话，SKILL_EXECUTION=定时执行技能/工具，SYSTEM_MAINTENANCE=系统维护任务",
                 },
                 "trigger_type": {
                     "type": "string",
@@ -46,13 +48,33 @@ class CreateScheduledTaskTool(BaseTool):
                 "parameters": {
                     "type": "object",
                     "description": "任务参数，根据任务类型不同而不同：\n"
-                    "- llm_chat: 需要包含 'message'（对话消息）、可选 'model'（模型名称）、'model_params'（模型参数）\n"
-                    "- skill_execution: 需要包含 'skill_name'（技能名称）、'tool_name'（工具名称）、'arguments'（工具参数）\n"
-                    "- system_maintenance: 需要包含 'action'（维护操作：cleanup_memory/archive_sessions等）",
+                    "- LLM_CHAT: 需要包含 'message'（对话消息）、可选 'model'（模型名称）、'model_params'（模型参数）\n"
+                    "- SKILL_EXECUTION: 需要包含 'skill_name'（技能名称）、'tool_name'（工具名称）、'arguments'（工具参数）\n"
+                    "- SYSTEM_MAINTENANCE: 需要包含 'action'（维护操作：cleanup_memory/archive_sessions等）",
                 },
                 "description": {
                     "type": "string",
                     "description": "任务详细描述，可选",
+                },
+                "notify": {
+                    "type": "boolean",
+                    "description": "是否在任务完成后通知用户，默认为true",
+                    "default": True,
+                },
+                "notify_targets": {
+                    "type": "array",
+                    "description": '通知目标列表，例如：[{"type": "feishu", "chat_id": "oc_xxx"}]',
+                    "default": None,
+                },
+                "notify_on_success": {
+                    "type": "boolean",
+                    "description": "任务成功时是否通知，默认为true",
+                    "default": True,
+                },
+                "notify_on_failure": {
+                    "type": "boolean",
+                    "description": "任务失败时是否通知，默认为true",
+                    "default": True,
                 },
             },
             "required": [
@@ -75,31 +97,47 @@ class CreateScheduledTaskTool(BaseTool):
         trigger_value: str,
         parameters: Dict[str, Any],
         description: str = "",
+        notify: bool = True,
+        notify_targets: Optional[List[Dict[str, Any]]] = None,
+        notify_on_success: bool = True,
+        notify_on_failure: bool = True,
     ) -> str:
         if self._scheduler is None:
             return "错误：调度器未初始化，无法创建定时任务"
 
         try:
-            # 转换任务类型
             task_type_enum = TaskType(task_type)
+            if "notify" not in parameters:
+                parameters["notify"] = notify
 
-            # 创建任务
-            task = self._scheduler.add_task(
+            trigger_config = {trigger_type: trigger_value}
+            now = datetime.now()
+
+            task = Task(
+                id=str(uuid.uuid4()),
                 name=name,
                 task_type=task_type_enum,
-                trigger_type=trigger_type,
-                trigger_value=trigger_value,
-                parameters=parameters,
-                description=description,
+                trigger_config=trigger_config,
+                params=parameters,
+                enabled=True,
+                max_retries=3,
+                created_at=now,
+                updated_at=now,
+                notify_enabled=notify,
+                notify_targets=notify_targets,
+                notify_on_success=notify_on_success,
+                notify_on_failure=notify_on_failure,
             )
+
+            task_id = self._scheduler.add_task(task)
 
             return (
                 f"✅ 定时任务创建成功！\n"
-                f"任务ID: {task.id}\n"
-                f"任务名称: {task.name}\n"
+                f"任务ID: {task_id}\n"
+                f"任务名称: {name}\n"
                 f"任务类型: {task_type}\n"
                 f"触发方式: {trigger_type} = {trigger_value}\n"
-                f"下次执行: {task.next_run_time or '未安排'}"
+                f"通知: {'是' if notify else '否'}"
             )
 
         except ValueError as e:

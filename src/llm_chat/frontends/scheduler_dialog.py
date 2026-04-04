@@ -237,6 +237,39 @@ class TaskEditDialog(QDialog):
         options_layout.addStretch()
         layout.addLayout(options_layout)
 
+        # 通知配置
+        notify_group = QGroupBox("通知配置")
+        notify_layout = QVBoxLayout(notify_group)
+
+        self._notify_enabled_check = QCheckBox("启用通知")
+        self._notify_enabled_check.setChecked(True)
+        self._notify_enabled_check.toggled.connect(self._on_notify_enabled_changed)
+        notify_layout.addWidget(self._notify_enabled_check)
+
+        # 通知时机
+        notify_timing_layout = QHBoxLayout()
+        notify_timing_layout.addWidget(QLabel("通知时机:"))
+        self._notify_success_check = QCheckBox("成功时")
+        self._notify_success_check.setChecked(True)
+        notify_timing_layout.addWidget(self._notify_success_check)
+        self._notify_failure_check = QCheckBox("失败时")
+        self._notify_failure_check.setChecked(True)
+        notify_timing_layout.addWidget(self._notify_failure_check)
+        notify_timing_layout.addStretch()
+        notify_layout.addLayout(notify_timing_layout)
+
+        # 通知目标
+        notify_target_layout = QHBoxLayout()
+        notify_target_layout.addWidget(QLabel("通知目标 (JSON):"))
+        self._notify_targets_edit = QLineEdit()
+        self._notify_targets_edit.setPlaceholderText(
+            '如: [{"type": "feishu", "chat_id": "oc_xxx"}]'
+        )
+        notify_target_layout.addWidget(self._notify_targets_edit)
+        notify_layout.addLayout(notify_target_layout)
+
+        layout.addWidget(notify_group)
+
         # 按钮区
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -253,6 +286,7 @@ class TaskEditDialog(QDialog):
 
         # 初始化显示
         self._on_type_changed(self._type_combo.currentText())
+        self._on_notify_enabled_changed(self._notify_enabled_check.isChecked())
 
     def _on_type_changed(self, task_type: str):
         """任务类型改变时更新参数配置区。"""
@@ -276,6 +310,12 @@ class TaskEditDialog(QDialog):
             self._cron_group.show()
         elif trigger_type == "一次性任务":
             self._date_group.show()
+
+    def _on_notify_enabled_changed(self, enabled: bool):
+        """通知启用状态改变时更新UI。"""
+        self._notify_success_check.setEnabled(enabled)
+        self._notify_failure_check.setEnabled(enabled)
+        self._notify_targets_edit.setEnabled(enabled)
 
     def _load_task(self, task: Task):
         """加载现有任务数据到编辑器。"""
@@ -324,6 +364,16 @@ class TaskEditDialog(QDialog):
 
         self._enabled_check.setChecked(task.enabled)
         self._max_retries_spin.setValue(task.max_retries)
+
+        # 加载通知配置
+        self._notify_enabled_check.setChecked(getattr(task, "notify_enabled", True))
+        self._notify_success_check.setChecked(getattr(task, "notify_on_success", True))
+        self._notify_failure_check.setChecked(getattr(task, "notify_on_failure", True))
+        notify_targets = getattr(task, "notify_targets", None)
+        if notify_targets:
+            self._notify_targets_edit.setText(
+                json.dumps(notify_targets, ensure_ascii=False)
+            )
 
     def _on_save(self):
         """保存任务。"""
@@ -389,6 +439,16 @@ class TaskEditDialog(QDialog):
             QMessageBox.warning(self, "错误", "无效的触发类型")
             return
 
+        # 解析通知目标
+        notify_targets = None
+        notify_targets_text = self._notify_targets_edit.text().strip()
+        if notify_targets_text:
+            try:
+                notify_targets = json.loads(notify_targets_text)
+            except json.JSONDecodeError as e:
+                QMessageBox.warning(self, "错误", f"通知目标格式错误: {e}")
+                return
+
         # 创建或更新任务
         task_id = self._task.id if self._task else None
         task = Task(
@@ -401,6 +461,10 @@ class TaskEditDialog(QDialog):
             max_retries=self._max_retries_spin.value(),
             created_at=datetime.now(),
             updated_at=datetime.now(),
+            notify_enabled=self._notify_enabled_check.isChecked(),
+            notify_targets=notify_targets,
+            notify_on_success=self._notify_success_check.isChecked(),
+            notify_on_failure=self._notify_failure_check.isChecked(),
         )
 
         self.result_task = task

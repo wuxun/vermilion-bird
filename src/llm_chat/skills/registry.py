@@ -35,6 +35,7 @@ from llm_chat.skills.file_editor.skill import FileEditorSkill
 from llm_chat.skills.todo_manager.skill import TodoManagerSkill
 from llm_chat.skills.task_delegator.skill import TaskDelegatorSkill
 from llm_chat.skills.scheduler.skill import SchedulerSkill
+from llm_chat.skills.shell_exec.skill import ShellExecSkill
 
 _BUILTIN_SKILLS["web_search"] = WebSearchSkill
 _BUILTIN_SKILLS["calculator"] = CalculatorSkill
@@ -45,3 +46,4 @@ _BUILTIN_SKILLS["file_editor"] = FileEditorSkill
 _BUILTIN_SKILLS["todo_manager"] = TodoManagerSkill
 _BUILTIN_SKILLS["task_delegator"] = TaskDelegatorSkill
 _BUILTIN_SKILLS["scheduler"] = SchedulerSkill
+_BUILTIN_SKILLS["shell_exec"] = ShellExecSkill

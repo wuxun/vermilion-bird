@@ -2,10 +2,14 @@ import sqlite3
 import json
 import os
 import time
+import logging
 from typing import List, Dict, Any, Optional
 from .scheduler.models import Task, TaskExecution, TaskType, TaskStatus
 from datetime import datetime
 from contextlib import contextmanager
+
+
+logger = logging.getLogger(__name__)
 
 
 class Storage:
@@ -78,10 +82,14 @@ class Storage:
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     task_type TEXT NOT NULL,
-                    trigger_config TEXT NOT NULL,  -- JSON
-                    params TEXT NOT NULL,            -- JSON
+                    trigger_config TEXT NOT NULL,
+                    params TEXT NOT NULL,
                     enabled INTEGER DEFAULT 1,
                     max_retries INTEGER DEFAULT 3,
+                    notify_enabled INTEGER DEFAULT 1,
+                    notify_targets TEXT,
+                    notify_on_success INTEGER DEFAULT 1,
+                    notify_on_failure INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
@@ -100,7 +108,36 @@ class Storage:
                 
                 CREATE INDEX IF NOT EXISTS idx_task_executions_task_id ON task_executions(task_id);
                 CREATE INDEX IF NOT EXISTS idx_task_executions_started_at ON task_executions(started_at);
-            """)
+                """)
+
+                # Check and add missing columns for existing databases
+                cursor = conn.execute("PRAGMA table_info(tasks)")
+                columns = [row[1] for row in cursor.fetchall()]
+
+                def add_column_if_missing(col_name, col_def):
+                    if col_name not in columns:
+                        try:
+                            conn.execute(
+                                f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass
+
+                add_column_if_missing("notify_enabled", "INTEGER DEFAULT 1")
+                add_column_if_missing("notify_targets", "TEXT")
+                add_column_if_missing("notify_on_success", "INTEGER DEFAULT 1")
+                add_column_if_missing("notify_on_failure", "INTEGER DEFAULT 1")
+
+            # 创建表来保存最近的飞书对话
+            with self._get_connection() as conn:
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS recent_feishu_chat (
+                    id INTEGER PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    chat_id_type TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
 
     @contextmanager
     def _get_connection(self):
@@ -203,8 +240,10 @@ class Storage:
             updated_at = (
                 task.updated_at.isoformat() if hasattr(task, "updated_at") else None
             )
+            notify_targets = getattr(task, "notify_targets", None)
+            notify_targets_json = json.dumps(notify_targets) if notify_targets else None
             conn.execute(
-                "INSERT OR REPLACE INTO tasks (id, name, task_type, trigger_config, params, enabled, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO tasks (id, name, task_type, trigger_config, params, enabled, max_retries, notify_enabled, notify_targets, notify_on_success, notify_on_failure, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task.id,
                     task.name,
@@ -215,6 +254,10 @@ class Storage:
                     params,
                     int(getattr(task, "enabled", True)),
                     int(getattr(task, "max_retries", 3)),
+                    int(getattr(task, "notify_enabled", True)),
+                    notify_targets_json,
+                    int(getattr(task, "notify_on_success", True)),
+                    int(getattr(task, "notify_on_failure", True)),
                     created_at,
                     updated_at,
                 ),
@@ -238,18 +281,32 @@ class Storage:
             updated_at = (
                 datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None
             )
+            notify_targets = None
+            if "notify_targets" in row.keys() and row["notify_targets"]:
+                try:
+                    notify_targets = json.loads(row["notify_targets"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # 将 Row 转换为字典以便使用 get()
+            row_dict = dict(row)
             return Task(
-                id=row["id"],
-                name=row["name"],
-                task_type=TaskType(row["task_type"])
-                if isinstance(row["task_type"], str)
-                else row["task_type"],
+                id=row_dict["id"],
+                name=row_dict["name"],
+                task_type=TaskType(row_dict["task_type"])
+                if isinstance(row_dict["task_type"], str)
+                else row_dict["task_type"],
                 trigger_config=trigger_config,
                 params=params,
-                enabled=bool(row["enabled"]),
-                max_retries=row["max_retries"] if row["max_retries"] is not None else 3,
+                enabled=bool(row_dict["enabled"]),
+                max_retries=row_dict["max_retries"]
+                if row_dict["max_retries"] is not None
+                else 3,
                 created_at=created_at,
                 updated_at=updated_at,
+                notify_enabled=bool(row_dict.get("notify_enabled", True)),
+                notify_targets=notify_targets,
+                notify_on_success=bool(row_dict.get("notify_on_success", True)),
+                notify_on_failure=bool(row_dict.get("notify_on_failure", True)),
             )
 
     def load_all_tasks(self) -> List["Task"]:
@@ -490,3 +547,84 @@ class Storage:
                 print(f"迁移 {filename} 失败: {e}")
 
         return migrated
+
+    def set_recent_feishu_chat(self, chat_id: str, chat_id_type: str = "chat_id"):
+        """保存最近的飞书对话到数据库。
+
+        Args:
+            chat_id: 群聊 ID 或用户 ID
+            chat_id_type: ID 类型，'chat_id' 或 'open_id' 或 'user_id'
+        """
+        with self._get_connection() as conn:
+            # 先删除旧记录
+            conn.execute("DELETE FROM recent_feishu_chat")
+            # 插入新记录
+            conn.execute(
+                "INSERT INTO recent_feishu_chat (chat_id, chat_id_type) VALUES (?, ?)",
+                (chat_id, chat_id_type),
+            )
+            logger.info(f"Saved recent Feishu chat: {chat_id_type}={chat_id}")
+
+    def get_recent_feishu_chat(self) -> Optional[Dict[str, str]]:
+        """从数据库查询最近的飞书对话。
+
+        Returns:
+            飞书对话信息字典，格式为 {"type": "feishu", "chat_id": "xxx"} 或 None
+        """
+        with self._get_connection() as conn:
+            # 先从专门的表查询
+            row = conn.execute(
+                "SELECT chat_id, chat_id_type FROM recent_feishu_chat ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+
+            if row:
+                logger.info(
+                    f"Found recent Feishu chat from recent_feishu_chat: {row['chat_id_type']}={row['chat_id']}"
+                )
+                return {
+                    "type": "feishu",
+                    row["chat_id_type"]: row["chat_id"],
+                }
+
+            # 如果专门表中没有，尝试从会话表中查找（向后兼容）
+            rows = conn.execute(
+                "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 20"
+            ).fetchall()
+
+            for row in rows:
+                conv_id = row["id"]
+                # 检查是否是飞书会话
+                if conv_id.startswith("feishu_p2p_") or conv_id.startswith(
+                    "feishu_group_"
+                ):
+                    # 从会话 ID 中提取原始 ID
+                    try:
+                        if conv_id.startswith("feishu_p2p_"):
+                            rest = conv_id[len("feishu_p2p_") :]
+                        else:  # feishu_group_
+                            rest = conv_id[len("feishu_group_") :]
+
+                        # 移除会话编号部分（如果有）
+                        parts = rest.rsplit("_", 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            original_id = parts[0]
+                        else:
+                            original_id = rest
+
+                        # 将下划线还原回原始字符（SessionMapper 会替换非字母数字字符为下划线）
+                        # 注意：这里我们无法完全还原原始 ID，但大多数情况下飞书 ID 只包含字母数字和下划线
+                        logger.info(
+                            f"Found recent Feishu chat from conversations: {original_id}"
+                        )
+                        return {
+                            "type": "feishu",
+                            "chat_id": original_id,
+                        }
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to parse Feishu conversation ID {conv_id}: {e}"
+                        )
+                        continue
+
+            logger.info("No recent Feishu chat found in database")
+            return None

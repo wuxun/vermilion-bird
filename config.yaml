@@ -15,7 +15,33 @@ mcp:
 scheduler:
   enabled: true
   max_workers: 4
-  default_timezone: "local"
+  default_timezone: "Asia/Shanghai"
+
+# Shell 执行技能配置
+skills:
+  shell_exec:
+    enabled: true
+    whitelist:
+      - "ls"
+      - "pwd"
+      - "cat"
+      - "grep"
+      - "head"
+      - "tail"
+      - "wc"
+      - "du"
+      - "df"
+      - "git"
+      - "find"
+      - "echo"
+      - "date"
+      - "whoami"
+      - "uname"
+      - "env"
+      - "printenv"
+    default_timeout: 5
+    max_output_length: 10000
+    allowed_workdir: "./"
 
 memory:
   enabled: true

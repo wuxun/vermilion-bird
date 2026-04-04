@@ -1057,7 +1057,7 @@ class GUIFrontend(BaseFrontend):
 
                 memory_storage = MemoryStorage(self._config.memory.storage_dir)
                 # 使用临时 client 仅用于 memory manager
-                temp_client = LLMClient(self._config)
+                temp_client = LLMClient(self._config, skip_skills_setup=True)
                 memory_manager = MemoryManager(
                     storage=memory_storage,
                     db_storage=None,
@@ -1080,7 +1080,7 @@ class GUIFrontend(BaseFrontend):
                 from llm_chat.client import LLMClient
                 import json
 
-                temp_client = LLMClient(self._config)
+                temp_client = LLMClient(self._config, skip_skills_setup=True)
                 if temp_client.has_builtin_tools():
                     tools = temp_client.get_builtin_tools()
                     if tools:
@@ -1195,7 +1195,7 @@ class GUIFrontend(BaseFrontend):
                 setup_logging(logging.INFO)
 
                 config = Config.from_yaml()
-                client = LLMClient(config)
+                client = LLMClient(config, skip_skills_setup=True)
 
                 history = [
                     {"role": m["role"], "content": m["content"]}
@@ -1371,7 +1371,7 @@ class GUIFrontend(BaseFrontend):
                     return
 
                 memory_storage = MemoryStorage(config.memory.storage_dir)
-                client = LLMClient(config)
+                client = LLMClient(config, skip_skills_setup=True)
 
                 memory_manager = MemoryManager(
                     storage=memory_storage,
