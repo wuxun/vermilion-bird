@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, Optional
 
 import httpx
 
+from llm_chat.utils.retry import retry
+
 from llm_chat.app import App
 from llm_chat.frontends.base import Message, MessageType
 from llm_chat.frontends.feishu.mapper import SessionMapper
@@ -431,6 +433,12 @@ class FeishuAdapter:
                 logger.error(f"处理 LLM 消息时发生错误: {e}", exc_info=True)
                 return f"处理消息时发生错误: {str(e)}"
 
+    @retry(
+        max_retries=3,
+        retry_delay=1.0,
+        backoff_factor=2.0,
+        exceptions=(httpx.HTTPError, httpx.TimeoutException),
+    )
     def send_message(
         self,
         receive_id: str,
@@ -503,6 +511,12 @@ class FeishuAdapter:
                     pass
             raise FeishuAdapterError(f"Failed to send message: {e}")
 
+    @retry(
+        max_retries=3,
+        retry_delay=1.0,
+        backoff_factor=2.0,
+        exceptions=(httpx.HTTPError, httpx.TimeoutException),
+    )
     def reply_to_message(
         self, message_id: str, content: str, msg_type: str = "text"
     ) -> Dict[str, Any]:
@@ -556,6 +570,12 @@ class FeishuAdapter:
             logger.error(f"HTTP error replying to Feishu message: {e}")
             raise FeishuAdapterError(f"Failed to reply to message: {e}")
 
+    @retry(
+        max_retries=3,
+        retry_delay=1.0,
+        backoff_factor=2.0,
+        exceptions=(httpx.HTTPError, httpx.TimeoutException),
+    )
     def _get_tenant_access_token(self) -> str:
         """Get tenant access token for Feishu API calls with caching.
 
