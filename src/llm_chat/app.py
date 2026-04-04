@@ -15,6 +15,7 @@ from llm_chat.frontends.base import (
 from llm_chat.mcp import MCPManager, MCPServerStatus
 from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
+from llm_chat.service_manager import ServiceManager
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -40,7 +41,10 @@ class App:
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
 
+        # 初始化服务管理器
+        self.service_manager = ServiceManager()
         self.scheduler: Optional["SchedulerService"] = None
+
         logger.info(f"Scheduler enabled config: {self.config.scheduler.enabled}")
         if self.config.scheduler.enabled:
             logger.info("Initializing SchedulerService...")
@@ -51,6 +55,10 @@ class App:
                     self.config.scheduler, self.storage, self
                 )
                 logger.info(f"SchedulerService created: {self.scheduler}")
+
+                # 注册到服务管理器
+                self.service_manager.register_service(self.scheduler)
+                logger.info(f"SchedulerService registered with ServiceManager")
 
                 skill_manager = self.get_skill_manager()
                 skill_manager.reload_skill("scheduler", {"scheduler": self.scheduler})
@@ -270,8 +278,8 @@ class App:
             if self.config.mcp.servers:
                 self.enable_tools()
 
-        if self.scheduler:
-            self.scheduler.start()
+        # 使用服务管理器启动所有服务
+        self.service_manager.start_all()
 
         try:
             frontend.start()
@@ -283,8 +291,8 @@ class App:
             raise
 
     def stop(self):
-        if self.scheduler:
-            self.scheduler.shutdown()
+        # 使用服务管理器停止所有服务
+        self.service_manager.stop_all()
         self.disable_tools()
         if self.current_frontend:
             self.current_frontend.stop()

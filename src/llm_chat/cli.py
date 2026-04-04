@@ -280,10 +280,10 @@ def feishu(config_path=None, log_file=None, log_level="INFO"):
         app_secret=feishu_cfg.app_secret,
     )
 
-    if app.scheduler:
-        logging.info("Starting scheduler service...")
-        app.scheduler.start()
-        logging.info("Scheduler service started")
+    # 使用服务管理器启动所有服务
+    logging.info("Starting all services...")
+    app.service_manager.start_all()
+    logging.info("All services started")
 
     server = FeishuServer(
         app_id=feishu_cfg.app_id,
@@ -308,10 +308,10 @@ def feishu(config_path=None, log_file=None, log_level="INFO"):
             server.stop()
         except Exception:
             pass
-        if app.scheduler:
-            logging.info("Shutting down scheduler service...")
-            app.scheduler.shutdown()
-            logging.info("Scheduler service shut down")
+        # 使用服务管理器停止所有服务
+        logging.info("Shutting down all services...")
+        app.service_manager.stop_all()
+        logging.info("All services shut down")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)

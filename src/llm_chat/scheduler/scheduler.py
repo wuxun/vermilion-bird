@@ -48,6 +48,11 @@ class SchedulerService:
     支持 cron、date 两种触发器类型。
     """
 
+    @property
+    def name(self) -> str:
+        """服务名称"""
+        return "scheduler"
+
     def __init__(self, config: "SchedulerConfig", task_storage: "Storage", app: "App"):
         """初始化调度器服务。
 
