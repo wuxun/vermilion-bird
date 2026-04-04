@@ -1,9 +1,8 @@
 from __future__ import annotations
 import os
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 import yaml
 
 from llm_chat.mcp import MCPConfig
@@ -23,26 +22,54 @@ class ModelInfo(BaseSettings):
     class Config:
         extra = "allow"
 
-
-@dataclass
-class FeishuConfig:
-    enabled: bool = False
-    app_id: Optional[str] = None
-    app_secret: Optional[str] = None
-    tenant_key: Optional[str] = None
-    encrypt_key: Optional[str] = None
-    verification_token: Optional[str] = None
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ["openai", "anthropic", "gemini"]:
+            raise ValueError(f"协议类型必须是 openai, anthropic, 或 gemini，得到: {v}")
+        return v
 
 
-@dataclass
-class NotificationConfig:
+class FeishuConfig(BaseSettings):
+    enabled: bool = Field(default=False, description="是否启用飞书集成")
+    app_id: Optional[str] = Field(default=None, description="飞书应用 ID")
+    app_secret: Optional[str] = Field(default=None, description="飞书应用密钥")
+    tenant_key: Optional[str] = Field(default=None, description="飞书租户密钥")
+    encrypt_key: Optional[str] = Field(default=None, description="飞书事件加密密钥")
+    verification_token: Optional[str] = Field(
+        default=None, description="飞书事件验证令牌"
+    )
+
+    @model_validator(mode="after")
+    def validate_credentials_when_enabled(self) -> "FeishuConfig":
+        """当 enabled=True 时，验证 app_id 和 app_secret 必须不为空"""
+        if self.enabled:
+            if not self.app_id or not self.app_secret:
+                raise ValueError("飞书集成已启用但 app_id 或 app_secret 为空")
+        return self
+
+
+class NotificationConfig(BaseSettings):
     """任务通知配置"""
 
-    enabled: bool = True
+    enabled: bool = Field(default=True, description="是否启用通知")
     # 默认通知目标（可以在任务级别覆盖）
-    default_targets: Optional[list] = None
+    default_targets: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="默认通知目标列表"
+    )
     # 飞书通知相关配置
-    feishu: Optional[dict] = None
+    feishu: Optional[Dict[str, Any]] = Field(default=None, description="飞书通知配置")
+
+    @field_validator("default_targets")
+    @classmethod
+    def validate_default_targets(
+        cls, v: Optional[List[Dict[str, Any]]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        if v is not None:
+            for target in v:
+                if "type" not in target:
+                    raise ValueError("每个通知目标必须包含 'type' 字段")
+        return v
 
 
 class LLMConfig(BaseSettings):
@@ -80,6 +107,55 @@ class LLMConfig(BaseSettings):
         env_prefix = "LLM_"
         case_sensitive = False
 
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, v: str) -> str:
+        if v not in ["openai", "anthropic", "gemini"]:
+            raise ValueError(f"协议类型必须是 openai, anthropic, 或 gemini，得到: {v}")
+        return v
+
+    @field_validator("timeout")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"超时时间必须大于0，得到: {v}")
+        return v
+
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"最大重试次数不能为负数，得到: {v}")
+        return v
+
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < 0 or v > 2):
+            raise ValueError(f"温度参数必须在 0-2 之间，得到: {v}")
+        return v
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError(f"最大输出token数必须大于0，得到: {v}")
+        return v
+
+    @field_validator("top_p")
+    @classmethod
+    def validate_top_p(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < 0 or v > 1):
+            raise ValueError(f"Top-p 参数必须在 0-1 之间，得到: {v}")
+        return v
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ["low", "medium", "high"]:
+            raise ValueError(f"推理深度必须是 low, medium, 或 high，得到: {v}")
+        return v
+
     def get_model_params(self) -> Dict[str, Any]:
         """获取非空的模型参数"""
         params = {}
@@ -104,6 +180,34 @@ class ToolsConfig(BaseSettings):
     class Config:
         env_prefix = "TOOLS_"
         case_sensitive = False
+
+    @field_validator("max_workers")
+    @classmethod
+    def validate_max_workers(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"最大工作线程数必须大于0，得到: {v}")
+        return v
+
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"最大重试次数不能为负数，得到: {v}")
+        return v
+
+    @field_validator("retry_delay")
+    @classmethod
+    def validate_retry_delay(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError(f"重试间隔时间不能为负数，得到: {v}")
+        return v
+
+    @field_validator("timeout")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"超时时间必须大于0，得到: {v}")
+        return v
 
 
 class ShortTermMemoryConfig(BaseSettings):
@@ -213,6 +317,26 @@ class SchedulerConfig(BaseSettings):
     class Config:
         env_prefix = "SCHEDULER_"
         case_sensitive = False
+
+    @field_validator("max_workers")
+    @classmethod
+    def validate_max_workers(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"最大工作线程数必须大于0，得到: {v}")
+        return v
+
+    @field_validator("default_timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        try:
+            import pytz
+
+            pytz.timezone(v)
+        except ImportError:
+            pass
+        except Exception:
+            raise ValueError(f"无效的时区: {v}")
+        return v
 
 
 class Config(BaseSettings):
@@ -344,13 +468,12 @@ class Config(BaseSettings):
         return cls()
 
     def validate_feishu_config(self) -> None:
-        # Feishu 配置有效性校验：当 enabled=True 时，app_id/app_secret 必须不为空
+        # FeishuConfig 现在有自己的 model_validator，这里保留向后兼容性
         if getattr(self, "feishu", None) is None:
             return
-        if self.feishu.enabled and (
-            not self.feishu.app_id or not self.feishu.app_secret
-        ):
-            raise ValueError("Feishu 集成已启用但 app_id 或 app_secret 为空")
+        # 触发 FeishuConfig 的验证（如果还没有验证过）
+        if hasattr(self.feishu, "model_validate"):
+            pass
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -437,22 +560,11 @@ class Config(BaseSettings):
             "llm": self.llm.model_dump(),
             "mcp": self.mcp.to_dict(),
             "enable_tools": self.enable_tools,
-            "feishu": {
-                "enabled": self.feishu.enabled,
-                "app_id": self.feishu.app_id,
-                "app_secret": self.feishu.app_secret,
-                "tenant_key": self.feishu.tenant_key,
-            },
+            "feishu": self.feishu.model_dump(),
+            "notification": self.notification.model_dump(),
             "skills": skills_dict,
             "external_skill_dirs": self.external_skill_dirs,
-            "memory": {
-                "enabled": self.memory.enabled,
-                "storage_dir": self.memory.storage_dir,
-                "short_term": self.memory.short_term.model_dump(),
-                "mid_term": self.memory.mid_term.model_dump(),
-                "long_term": self.memory.long_term.model_dump(),
-                "exclude_patterns": self.memory.exclude_patterns,
-            },
+            "memory": self.memory.model_dump(),
             "scheduler": self.scheduler.model_dump(),
         }
 
