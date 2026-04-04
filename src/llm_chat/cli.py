@@ -273,13 +273,17 @@ def feishu(config_path=None, log_file=None, log_level="INFO"):
     from llm_chat.frontends.feishu.adapter import FeishuAdapter
     from llm_chat.app import App
 
-    # Create App and FeishuAdapter
     app = App(config=config)
     adapter = FeishuAdapter(
         app=app,
         app_id=feishu_cfg.app_id,
         app_secret=feishu_cfg.app_secret,
     )
+
+    if app.scheduler:
+        logging.info("Starting scheduler service...")
+        app.scheduler.start()
+        logging.info("Scheduler service started")
 
     server = FeishuServer(
         app_id=feishu_cfg.app_id,
@@ -304,6 +308,10 @@ def feishu(config_path=None, log_file=None, log_level="INFO"):
             server.stop()
         except Exception:
             pass
+        if app.scheduler:
+            logging.info("Shutting down scheduler service...")
+            app.scheduler.shutdown()
+            logging.info("Scheduler service shut down")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
