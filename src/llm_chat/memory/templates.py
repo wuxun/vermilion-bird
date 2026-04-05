@@ -90,17 +90,30 @@ SOUL_TEMPLATE = """# 人格设定
 - 项目架构设计
 - 文档编写
 
+## 工具使用指南
+### web_search + web_fetch 高效使用策略
+1. 使用 web_search 搜索问题
+2. 在获取搜索结果后，**使用一次 fetch_url 调用来并行抓取多个链接**
+3. fetch_url 支持两种调用方式：
+   - 单 URL：`{"url": "https://example.com"}`
+   - 多 URL 并行（推荐）：`{"url": ["url1", "url2", "url3"], "max_workers": 5}`
+4. 并行抓取可以大幅提高效率，避免多次往返调用
+
 ---
 创建时间：{created_at}
 """
 
 
 def get_short_term_template() -> str:
-    return SHORT_TERM_TEMPLATE.format(updated_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
+    return SHORT_TERM_TEMPLATE.format(
+        updated_at=datetime.now().strftime("%Y-%m-%d %H:%M")
+    )
 
 
 def get_mid_term_template() -> str:
-    return MID_TERM_TEMPLATE.format(updated_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
+    return MID_TERM_TEMPLATE.format(
+        updated_at=datetime.now().strftime("%Y-%m-%d %H:%M")
+    )
 
 
 def get_long_term_template() -> str:

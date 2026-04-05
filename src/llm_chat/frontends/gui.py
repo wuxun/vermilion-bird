@@ -1753,9 +1753,21 @@ class GUIFrontend(BaseFrontend):
 
     def _render_markdown(self, text: str) -> str:
         if MARKDOWN_AVAILABLE:
-            md = markdown.Markdown(extensions=["tables", "fenced_code", "codehilite"])
-            html = md.convert(text)
-            return f"{MARKDOWN_CSS}{html}"
+            try:
+                md = markdown.Markdown(extensions=["tables", "fenced_code"])
+                html = md.convert(text)
+                return f"{MARKDOWN_CSS}{html}"
+            except Exception:
+                try:
+                    md = markdown.Markdown(extensions=["tables"])
+                    html = md.convert(text)
+                    return f"{MARKDOWN_CSS}{html}"
+                except Exception as e:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        f"Markdown 渲染失败，使用纯文本: {e}"
+                    )
         return text.replace("\n", "<br>")
 
     def display_message(self, message: Message):

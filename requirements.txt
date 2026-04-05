@@ -35,6 +35,8 @@ ddgs>=9.0.0,<10.0.0
 
 # Web Scraping
 beautifulsoup4>=4.12.0,<5.0.0
+trafilatura>=1.7.0,<2.0.0
+playwright>=1.40.0,<2.0.0
 
 # Scheduler
 apscheduler>=3.9.1,<4.0.0
@@ -47,9 +49,6 @@ pytest>=7.4.0,<8.0.0
 pytest-cov>=4.1.0,<5.0.0
 black>=23.11.0,<24.0.0
 flake8>=6.1.0,<7.0.0
-
-# Playwright for Testing
-playwright>=1.40.0,<2.0.0
 
 # Python Version
 # Requires Python >= 3.9
