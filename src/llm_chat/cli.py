@@ -274,6 +274,9 @@ def feishu(config_path=None, log_file=None, log_level="INFO"):
     from llm_chat.app import App
 
     app = App(config=config)
+    # 启用工具（包括 MCP）
+    if config.enable_tools and config.mcp.servers:
+        app.enable_tools()
     adapter = FeishuAdapter(
         app=app,
         app_id=feishu_cfg.app_id,
