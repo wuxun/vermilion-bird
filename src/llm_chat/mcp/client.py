@@ -1,14 +1,15 @@
 import asyncio
-import json
+import logging
 import os
 import subprocess
 from typing import Any, Dict, List, Optional
-from contextlib import asynccontextmanager
 
 from .types import (
     MCPServerConfig, MCPServerInfo, MCPServerStatus,
     MCPTool, MCPResource, TransportType
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -37,11 +38,15 @@ class MCPClient:
         self._read = None
         self._write = None
         self._process: Optional[subprocess.Popen] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-    
+        self._connection_lock = asyncio.Lock()
+        self._stopping = False
+        self._connection_ready = asyncio.Event()
+
     async def connect(self) -> bool:
         self.info.status = MCPServerStatus.CONNECTING
         self.info.error_message = None
+        self._stopping = False
+        self._connection_ready.clear()
         
         try:
             if self.config.transport == TransportType.STDIO:
@@ -54,7 +59,7 @@ class MCPClient:
             self.info.status = MCPServerStatus.ERROR
             self.info.error_message = str(e)
             return False
-    
+
     async def _connect_stdio(self) -> bool:
         if not self.config.command:
             raise MCPClientError("stdio 模式需要指定 command")
@@ -62,37 +67,117 @@ class MCPClient:
         env = os.environ.copy()
         env.update(self.config.env)
         
+        if hasattr(self.config, "http_proxy") and self.config.http_proxy:
+            env["HTTP_PROXY"] = self.config.http_proxy
+            logger.info(f"设置 HTTP_PROXY: {self.config.http_proxy}")
+        if hasattr(self.config, "https_proxy") and self.config.https_proxy:
+            env["HTTPS_PROXY"] = self.config.https_proxy
+            logger.info(f"设置 HTTPS_PROXY: {self.config.https_proxy}")
+        
+        logger.info(
+            f"启动 stdio MCP 服务器: command={self.config.command}, args={self.config.args}"
+        )
+        logger.info(f"环境变量配置: {[k for k in self.config.env.keys()]}")
+        
         server_params = StdioServerParameters(
-            command=self.config.command,
-            args=self.config.args,
-            env=env
+            command=self.config.command, args=self.config.args, env=env
         )
         
         try:
-            self._read, self._write = await stdio_client(server_params)
-            self._session = ClientSession(self._read, self._write)
-            await self._session.initialize()
-            
-            await self._load_capabilities()
-            self.info.status = MCPServerStatus.CONNECTED
-            return True
+            async with self._connection_lock:
+                async def maintain_connection():
+                    try:
+                        logger.info("正在建立 stdio 连接...")
+                        async with stdio_client(server_params) as (read, write):
+                            self._read = read
+                            self._write = write
+                            
+                            async with ClientSession(read, write) as session:
+                                self._session = session
+                                
+                                logger.info("正在初始化 MCP 会话...")
+                                await session.initialize()
+                                
+                                logger.info("正在加载工具和资源...")
+                                await self._load_capabilities()
+                                
+                                self.connection_ready()
+                                logger.info(f"MCP 服务器 {self.config.name} 连接成功，保持运行...")
+                                
+                                while not self._stopping:
+                                    await asyncio.sleep(1)
+                    except Exception as e:
+                        logger.error(f"连接维持异常: {e}", exc_info=True)
+                        self._connection_ready.clear()
+                
+                task = asyncio.create_task(maintain_connection())
+                
+                try:
+                    await asyncio.wait_for(self._connection_ready.wait(), timeout=180)
+                    if self._stopping:
+                        raise MCPClientError("连接被中断")
+                    return True
+                except asyncio.TimeoutError:
+                    logger.error("连接超时")
+                    self._stopping = True
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=5)
+                    except:
+                        pass
+                    raise MCPClientError("连接超时")
+                    
         except Exception as e:
+            logger.error(f"MCP 服务器 {self.config.name} 连接失败: {e}", exc_info=True)
             raise MCPClientError(f"连接失败: {e}")
-    
+
+    def connection_ready(self):
+        if not self._stopping and self.info.status != MCPServerStatus.CONNECTED:
+            self.info.status = MCPServerStatus.CONNECTED
+            self._connection_ready.set()
+
     async def _connect_sse(self) -> bool:
         if not self.config.url:
             raise MCPClientError("SSE 模式需要指定 url")
         
         try:
-            self._session = await sse_client(self.config.url)
-            await self._session.initialize()
-            
-            await self._load_capabilities()
-            self.info.status = MCPServerStatus.CONNECTED
-            return True
+            async with self._connection_lock:
+                async def maintain_sse():
+                    try:
+                        logger.info("正在建立 SSE 连接...")
+                        async with sse_client(self.config.url) as (read, write):
+                            self._read = read
+                            self._write = write
+                            
+                            async with ClientSession(read, write) as session:
+                                self._session = session
+                                await session.initialize()
+                                await self._load_capabilities()
+                                
+                                self.connection_ready()
+                                
+                                while not self._stopping:
+                                    await asyncio.sleep(1)
+                    except Exception as e:
+                        logger.error(f"SSE 连接异常: {e}", exc_info=True)
+                        self._connection_ready.clear()
+                
+                task = asyncio.create_task(maintain_sse())
+                
+                try:
+                    await asyncio.wait_for(self._connection_ready.wait(), timeout=60)
+                    if self._stopping:
+                        raise MCPClientError("SSE 连接被中断")
+                    return True
+                except asyncio.TimeoutError:
+                    self._stopping = True
+                    task.cancel()
+                    raise MCPClientError("SSE 连接超时")
+                    
         except Exception as e:
+            logger.error(f"SSE 连接失败: {e}", exc_info=True)
             raise MCPClientError(f"SSE 连接失败: {e}")
-    
+
     async def _load_capabilities(self):
         if not self._session:
             return
@@ -127,13 +212,10 @@ class MCPClient:
             self.info.resources = []
     
     async def disconnect(self):
-        if self._session:
-            try:
-                await self._session.close()
-            except Exception:
-                pass
-            self._session = None
+        self._stopping = True
+        self._connection_ready.clear()
         
+        self._session = None
         self._read = None
         self._write = None
         

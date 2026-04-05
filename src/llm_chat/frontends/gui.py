@@ -1188,14 +1188,15 @@ class GUIFrontend(BaseFrontend):
         def stream_response():
             try:
                 from llm_chat.config import Config
-                from llm_chat.client import LLMClient
                 from llm_chat.cli import setup_logging
                 from llm_chat.memory import MemoryStorage, MemoryManager
 
                 setup_logging(logging.INFO)
 
-                config = Config.from_yaml()
-                client = LLMClient(config, skip_skills_setup=True)
+                if self._app_instance:
+                    config = self._app_instance.config
+                else:
+                    config = Config()
 
                 history = [
                     {"role": m["role"], "content": m["content"]}
@@ -1209,7 +1210,9 @@ class GUIFrontend(BaseFrontend):
                         memory_manager = MemoryManager(
                             storage=memory_storage,
                             db_storage=None,
-                            llm_client=client,
+                            llm_client=self._app_instance.client
+                            if self._app_instance
+                            else None,
                             config={},
                         )
                         system_context = memory_manager.build_system_prompt()
@@ -1218,11 +1221,18 @@ class GUIFrontend(BaseFrontend):
                     except Exception as e:
                         logger.warning(f"加载记忆上下文失败: {e}")
 
-                if config.enable_tools and client.has_builtin_tools():
-                    tools = client.get_builtin_tools()
+                if config.enable_tools and (
+                    self._app_instance.client.has_builtin_tools()
+                    or (self._app_instance and self._app_instance.has_tools_available())
+                ):
+                    tools = (
+                        self._app_instance.get_available_tools()
+                        if self._app_instance
+                        else self._app_instance.client.get_builtin_tools()
+                    )
 
                     full_text = ""
-                    for chunk in client.chat_stream_with_tools(
+                    for chunk in self._app_instance.client.chat_stream_with_tools(
                         content,
                         tools,
                         history,
@@ -1253,7 +1263,7 @@ class GUIFrontend(BaseFrontend):
                     )
                 else:
                     full_text = ""
-                    for chunk in client.chat_stream(
+                    for chunk in self._app_instance.client.chat_stream(
                         content, history, system_context=system_context, **model_params
                     ):
                         full_text += chunk

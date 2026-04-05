@@ -99,6 +99,17 @@ class App:
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:
             self._mcp_manager = MCPManager()
+            new_servers = []
+            for server in self.config.mcp.servers:
+                server_dict = server.model_dump()
+                if server_dict.get("http_proxy") is None:
+                    server_dict["http_proxy"] = self.config.llm.http_proxy
+                if server_dict.get("https_proxy") is None:
+                    server_dict["https_proxy"] = self.config.llm.https_proxy
+                new_server = type(server)(**server_dict)
+                new_servers.append(new_server)
+
+            self.config.mcp.servers = new_servers
             self._mcp_manager.load_config(self.config.mcp)
         return self._mcp_manager
 
@@ -117,11 +128,24 @@ class App:
 
         manager = self._get_mcp_manager()
 
-        future = manager.connect_all()
+        enabled_servers = self.config.mcp.get_enabled_servers()
+        logger.info(
+            f"准备连接 {len(enabled_servers)} 个 MCP 服务器: {[s.name for s in enabled_servers]}"
+        )
+
         try:
-            future.result(timeout=30)
-        except Exception:
-            pass
+            future = manager.connect_all()
+            results = future.result(timeout=180)
+            logger.info(f"MCP 连接结果: {results}")
+
+            connected_tools = manager.get_tools_for_openai()
+            logger.info(f"MCP 工具加载完成，共 {len(connected_tools)} 个工具")
+            if connected_tools:
+                logger.info(
+                    f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
+                )
+        except Exception as e:
+            logger.error(f"MCP 连接失败: {e}", exc_info=True)
 
         self.client.set_tool_executor(self._execute_tool)
         self._tools_enabled = True
