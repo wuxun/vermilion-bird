@@ -199,14 +199,28 @@ class MCPManager:
 
         return self._run_async(_connect_all())
 
+    async def _disconnect_server_async(self, name: str) -> bool:
+        try:
+            if name in self._clients:
+                client = self._clients[name]
+                await client.disconnect()
+                del self._clients[name]
+                logger.info(f"服务器 {name} 已断开连接")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"服务器 {name} 断开连接异常: {e}", exc_info=True)
+            if name in self._clients:
+                del self._clients[name]
+            return False
+
     def disconnect_all(self) -> Future:
         async def _disconnect_all():
-            for name in list(self._clients.keys()):
-                try:
-                    future = self.disconnect_server(name)
-                    future.result(timeout=10)
-                except Exception:
-                    pass
+            names = list(self._clients.keys())
+            logger.info(f"开始断开 {len(names)} 个 MCP 服务器连接: {names}")
+            for name in names:
+                await self._disconnect_server_async(name)
+            logger.info(f"MCP 断开连接完成，剩余客户端: {list(self._clients.keys())}")
             return True
 
         return self._run_async(_disconnect_all())

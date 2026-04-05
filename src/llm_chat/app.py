@@ -158,8 +158,9 @@ class App:
             future = self._mcp_manager.disconnect_all()
             try:
                 future.result(timeout=10)
-            except Exception:
-                pass
+                logger.info("工具已禁用，MCP 连接已断开")
+            except Exception as e:
+                logger.warning(f"断开 MCP 连接时出错: {e}")
 
         self.client.set_tool_executor(None)
         self._tools_enabled = False
