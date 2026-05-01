@@ -291,6 +291,9 @@ class MemoryConfig(BaseSettings):
         default=3600, description="多少秒后提取中期记忆（默认1小时）"
     )
     short_term_max_entries: int = Field(default=50, description="短期记忆最大条目数")
+    max_memory_tokens: int = Field(
+        default=2000, description="注入 LLM 系统提示的记忆 token 预算上限"
+    )
 
     class Config:
         env_prefix = "MEMORY_"
@@ -568,6 +571,7 @@ class Config(BaseSettings):
             extraction_interval=data.get("extraction_interval", 10),
             extraction_time_interval=data.get("extraction_time_interval", 3600),
             short_term_max_entries=data.get("short_term_max_entries", 50),
+            max_memory_tokens=data.get("max_memory_tokens", 2000),
         )
 
     @classmethod

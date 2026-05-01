@@ -91,6 +91,7 @@ class App:
             "extraction_interval": self.config.memory.extraction_interval,
             "extraction_time_interval": self.config.memory.extraction_time_interval,
             "short_term_max_entries": self.config.memory.short_term_max_entries,
+            "max_memory_tokens": self.config.memory.max_memory_tokens,
         }
 
     def get_skill_manager(self) -> SkillManager:

@@ -30,9 +30,20 @@ class MemoryManager:
         
         self._conversation_count = 0
         self._last_extraction_time = datetime.now()
+        self._last_compress_time = datetime.now()
+        self._last_evolve_time = datetime.now()
         self._extraction_interval = self.config.get("extraction_interval", 10)
         self._extraction_time_interval = self.config.get("extraction_time_interval", 3600)
         self._short_term_max_entries = self.config.get("short_term_max_entries", 50)
+        # 中期压缩 & 长期进化配置
+        mid_cfg = self.config.get("mid_term", {})
+        self._mid_term_max_days = mid_cfg.get("max_days", 30)
+        self._mid_term_compress_days = mid_cfg.get("compress_after_days", 7)
+        long_cfg = self.config.get("long_term", {})
+        self._long_term_auto_evolve = long_cfg.get("auto_evolve", True)
+        self._long_term_evolve_interval_days = long_cfg.get("evolve_interval_days", 7)
+        # Token 预算
+        self._max_memory_tokens = self.config.get("max_memory_tokens", 2000)
     
     def load_recent_conversations(self, days: int = 7) -> List[Dict]:
         """从SQLite读取最近的对话"""
@@ -166,37 +177,105 @@ class MemoryManager:
         self.storage.update_timestamp("long_term")
         logger.info("记忆进化完成")
     
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """粗略估算文本 token 数（中文约 1 字 = 1 token，英文约 4 字符 = 1 token）"""
+        if not text:
+            return 0
+        import re
+        # 中文字符、日韩字符
+        cjk_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', text))
+        # 其余字符按 4 字符 ≈ 1 token 估算
+        other_chars = len(text) - cjk_chars
+        return cjk_chars + (other_chars // 4)
+
     def build_system_prompt(self) -> str:
-        """构建注入到LLM的系统提示"""
-        parts = []
-        
+        """构建注入到LLM的系统提示，按 soul > long_term > mid_term > short_term 优先级控制在 token 预算内"""
+        budget = self._max_memory_tokens
+        if budget <= 0:
+            return ""
+
+        sections = []  # List of (priority, header, content)
+        budget_remaining = budget
+
+        # 优先级 0: 人格设定（最高，不可截断）
         soul = self.storage.load_soul()
-        if soul and len(soul) > 50:
-            parts.append("## 你的人格设定\n")
-            parts.append(self._extract_soul_content(soul))
-        
+        if soul:
+            soul_content = self._extract_soul_content(soul)
+            soul_tokens = self._estimate_tokens(soul_content)
+            if soul_tokens > 0 and soul_tokens <= budget_remaining:
+                sections.append("## 你的人格设定\n" + soul_content)
+                budget_remaining -= soul_tokens
+
+        # 优先级 1: 长期记忆（用户画像 + 重要事实）
         long_term = self.storage.load_long_term()
-        if long_term and len(long_term) > 100:
-            parts.append("\n## 关于用户\n")
-            parts.append(self._extract_relevant_sections(long_term))
-        
+        if long_term and budget_remaining > 0:
+            lt_content = self._extract_relevant_sections(long_term)
+            lt_tokens = self._estimate_tokens(lt_content)
+            if lt_tokens > 0:
+                if lt_tokens <= budget_remaining:
+                    sections.append("## 关于用户\n" + lt_content)
+                    budget_remaining -= lt_tokens
+                else:
+                    # 截断到剩余预算
+                    truncated = self._truncate_by_tokens(lt_content, budget_remaining)
+                    if truncated:
+                        sections.append("## 关于用户\n" + truncated)
+                        budget_remaining = 0
+
+        # 优先级 2: 中期记忆（近期上下文摘要）
         mid_term = self.storage.load_mid_term()
-        if mid_term and len(mid_term) > 100:
+        if mid_term and budget_remaining > 0:
             recent_summary = self._extract_recent_summary(mid_term)
             if recent_summary:
-                parts.append("\n## 近期上下文\n")
-                parts.append(recent_summary)
-        
+                ms_tokens = self._estimate_tokens(recent_summary)
+                if ms_tokens <= budget_remaining:
+                    sections.append("## 近期上下文\n" + recent_summary)
+                    budget_remaining -= ms_tokens
+                else:
+                    truncated = self._truncate_by_tokens(recent_summary, budget_remaining)
+                    if truncated:
+                        sections.append("## 近期上下文\n" + truncated)
+                        budget_remaining = 0
+
+        # 优先级 3: 短期记忆（当前任务）
         short_term = self.storage.load_short_term()
-        if short_term and len(short_term) > 100:
+        if short_term and budget_remaining > 0:
             current_task = self._extract_current_task(short_term)
             if current_task:
-                parts.append("\n## 当前任务\n")
-                parts.append(current_task)
-        
-        if parts:
-            return "\n".join(parts)
+                ct_tokens = self._estimate_tokens(current_task)
+                if ct_tokens <= budget_remaining:
+                    sections.append("## 当前任务\n" + current_task)
+                    budget_remaining -= ct_tokens
+                else:
+                    truncated = self._truncate_by_tokens(current_task, budget_remaining)
+                    if truncated:
+                        sections.append("## 当前任务\n" + truncated)
+
+        if sections:
+            result = "\n\n".join(sections)
+            logger.debug(f"构建系统提示: {self._estimate_tokens(result)} tokens (预算 {budget})")
+            return result
         return ""
+
+    @staticmethod
+    def _truncate_by_tokens(text: str, max_tokens: int) -> str:
+        """按 token 预算截断文本，保留完整行"""
+        if not text or max_tokens <= 0:
+            return ""
+
+        lines = text.split('\n')
+        result_lines = []
+        current_tokens = 0
+
+        for line in lines:
+            line_tokens = MemoryManager._estimate_tokens(line)
+            if current_tokens + line_tokens > max_tokens:
+                break
+            result_lines.append(line)
+            current_tokens += line_tokens
+
+        return '\n'.join(result_lines) if result_lines else ""
     
     def _extract_soul_content(self, content: str) -> str:
         """提取人格设定内容"""
@@ -287,20 +366,56 @@ class MemoryManager:
             self._pending_extractions.extend(messages)
     
     def process_pending_extractions(self):
-        """处理待提取的记忆 - 短期记忆直接写入"""
+        """处理待提取的记忆 - 短期记忆直接写入 + 周期性维护"""
         with self._extraction_lock:
             if not self._pending_extractions:
                 return
-            
+
             messages = self._pending_extractions.copy()
             self._pending_extractions.clear()
-        
+
         self._write_short_term_directly(messages)
-        
         self._increment_conversation_count()
-        
+
+        mid_term_extracted = False
         if self._should_extract_mid_term():
             self._extract_to_mid_term()
+            mid_term_extracted = True
+
+        # 周期性维护：压缩过期中期记忆
+        self._maybe_compress_mid_term()
+
+        # 周期性维护：进化长期记忆（中期记忆有更新时更频繁检查）
+        self._maybe_evolve_understanding(mid_term_extracted)
+
+    def _maybe_compress_mid_term(self):
+        """按周期压缩过期中期记忆"""
+        elapsed = (datetime.now() - self._last_compress_time).total_seconds()
+        compress_seconds = self._mid_term_compress_days * 86400
+
+        if elapsed >= compress_seconds:
+            try:
+                self.compress_mid_term(max_days=self._mid_term_max_days)
+                self._last_compress_time = datetime.now()
+                logger.info(f"中期记忆压缩完成 (保留 {self._mid_term_max_days} 天)")
+            except Exception as e:
+                logger.error(f"中期记忆压缩失败: {e}")
+
+    def _maybe_evolve_understanding(self, force: bool = False):
+        """按周期进化长期记忆"""
+        if not self._long_term_auto_evolve:
+            return
+
+        elapsed = (datetime.now() - self._last_evolve_time).total_seconds()
+        evolve_seconds = self._long_term_evolve_interval_days * 86400
+
+        if force or elapsed >= evolve_seconds:
+            try:
+                self.evolve_understanding()
+                self._last_evolve_time = datetime.now()
+                logger.info(f"长期记忆进化完成")
+            except Exception as e:
+                logger.error(f"长期记忆进化失败: {e}")
     
     def _increment_conversation_count(self):
         """增加对话计数"""

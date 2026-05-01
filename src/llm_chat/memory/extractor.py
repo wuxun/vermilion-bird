@@ -160,14 +160,26 @@ class MemoryExtractor:
             )
         return redacted
     
+    @staticmethod
+    def _parse_llm_json(response: str) -> Dict[str, Any]:
+        """从 LLM 响应中解析 JSON，处理 Markdown 代码块包裹等常见格式"""
+        import json
+
+        text = response.strip()
+
+        # 尝试从 ```json ... ``` 或 ``` ... ``` 代码块中提取
+        code_block_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+        if code_block_match:
+            text = code_block_match.group(1).strip()
+
+        return json.loads(text)
+
     def _extract_with_llm(self, conversation: str) -> Dict[str, Any]:
         """使用LLM提取记忆"""
         try:
             prompt = self.EXTRACTION_PROMPT.format(conversation=conversation)
             response = self.llm_client.chat(prompt, history=[])
-            
-            import json
-            result = json.loads(response)
+            result = self._parse_llm_json(response)
             logger.info("使用LLM成功提取记忆")
             return result
         except Exception as e:
@@ -343,10 +355,8 @@ class MemoryExtractor:
         try:
             prompt = self.EXTRACT_LONG_TERM_PROMPT.format(mid_term_content=content)
             response = self.llm_client.chat(prompt, history=[])
-            
-            import json
-            result = json.loads(response)
-            
+            result = self._parse_llm_json(response)
+
             facts = []
             facts.extend(result.get("user_preferences", []))
             facts.extend(result.get("important_facts", []))
