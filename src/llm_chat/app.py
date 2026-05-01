@@ -88,6 +88,9 @@ class App:
                 "evolve_interval_days": self.config.memory.long_term.evolve_interval_days,
             },
             "exclude_patterns": self.config.memory.exclude_patterns,
+            "extraction_interval": self.config.memory.extraction_interval,
+            "extraction_time_interval": self.config.memory.extraction_time_interval,
+            "short_term_max_entries": self.config.memory.short_term_max_entries,
         }
 
     def get_skill_manager(self) -> SkillManager:

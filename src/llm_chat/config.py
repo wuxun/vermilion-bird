@@ -94,6 +94,9 @@ class LLMConfig(BaseSettings):
         default=None, description="温度参数 (0-2)，控制输出随机性"
     )
     max_tokens: Optional[int] = Field(default=None, description="最大输出token数")
+    max_context_tokens: int = Field(
+        default=4096, description="模型最大上下文窗口大小(token)"
+    )
     top_p: Optional[float] = Field(default=None, description="Top-p 采样参数")
     reasoning_effort: Optional[str] = Field(
         default=None,
@@ -168,6 +171,41 @@ class LLMConfig(BaseSettings):
         if self.reasoning_effort is not None:
             params["reasoning_effort"] = self.reasoning_effort
         return params
+
+
+class ContextConfig(BaseSettings):
+    """上下文管理配置"""
+
+    enabled: bool = Field(default=True, description="是否启用上下文管理")
+    reserve_tokens: int = Field(
+        default=1024, description="为系统提示和回复预留的token数量"
+    )
+    enable_cache: bool = Field(default=True, description="是否启用上下文缓存")
+    auto_prune_cache: bool = Field(default=True, description="是否自动清理过期缓存")
+    transcript_dir: str = Field(
+        default="~/.vermilion-bird/transcripts", description="完整转录本保存目录"
+    )
+    keep_recent_tool_results: int = Field(
+        default=2, description="微压缩时保留最近的工具结果数量"
+    )
+    keep_recent_dialog_rounds: int = Field(
+        default=3, description="自动压缩时保留最近的对话轮次"
+    )
+    auto_compact_threshold: float = Field(
+        default=0.8,
+        description="自动压缩触发阈值，0-1之间，超过max_context_tokens*阈值时触发自动压缩",
+    )
+
+    class Config:
+        env_prefix = "CONTEXT_"
+        case_sensitive = False
+
+    @field_validator("auto_compact_threshold")
+    @classmethod
+    def validate_threshold(cls, v: float) -> float:
+        if v < 0 or v > 1:
+            raise ValueError(f"自动压缩阈值必须在0-1之间，得到: {v}")
+        return v
 
 
 class ToolsConfig(BaseSettings):
@@ -344,6 +382,7 @@ class Config(BaseSettings):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    context: ContextConfig = Field(default_factory=ContextConfig)
     feishu: FeishuConfig = Field(default_factory=lambda: FeishuConfig())
     notification: NotificationConfig = Field(
         default_factory=lambda: NotificationConfig()
@@ -445,6 +484,14 @@ class Config(BaseSettings):
             memory_data = config_data.get("memory", {})
             memory_config = cls._parse_memory(memory_data)
 
+            # Context 配置
+            context_data = config_data.get("context", {})
+            context_config = (
+                ContextConfig(**context_data)
+                if context_data is not None
+                else ContextConfig()
+            )
+
             # Scheduler 配置
             scheduler_data = config_data.get("scheduler", {})
             scheduler_config = (
@@ -461,6 +508,7 @@ class Config(BaseSettings):
                 feishu=feishu_config,
                 external_skill_dirs=external_skill_dirs,
                 memory=memory_config,
+                context=context_config,
                 scheduler=scheduler_config,
             )
             config_instance.validate_feishu_config()
@@ -517,6 +565,9 @@ class Config(BaseSettings):
             exclude_patterns=data.get(
                 "exclude_patterns", ["密码", "password", "token", "api_key", "secret"]
             ),
+            extraction_interval=data.get("extraction_interval", 10),
+            extraction_time_interval=data.get("extraction_time_interval", 3600),
+            short_term_max_entries=data.get("short_term_max_entries", 50),
         )
 
     @classmethod
@@ -565,6 +616,7 @@ class Config(BaseSettings):
             "skills": skills_dict,
             "external_skill_dirs": self.external_skill_dirs,
             "memory": self.memory.model_dump(),
+            "context": self.context.model_dump(),
             "scheduler": self.scheduler.model_dump(),
         }
 

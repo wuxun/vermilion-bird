@@ -415,6 +415,16 @@ class LLMClient:
 
         logger.info(f"消息数量: {len(messages)}")
 
+        # 计算并打印总token数量
+        total_tokens = count_messages_tokens(messages)
+        model_name = data.get("model", "unknown")
+        context_limit = get_context_limit(model_name)
+        logger.info(
+            f"请求总token数: {total_tokens}, 模型上下文窗口上限: {context_limit}, 使用率: {int(total_tokens / context_limit * 100)}%"
+            if context_limit
+            else f"请求总token数: {total_tokens}"
+        )
+
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")

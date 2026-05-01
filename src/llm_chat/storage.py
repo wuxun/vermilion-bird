@@ -139,6 +139,29 @@ class Storage:
                 )
                 """)
 
+            # 创建上下文缓存表
+            with self._get_connection() as conn:
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS context_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    compression_level INTEGER NOT NULL,
+                    messages_json TEXT NOT NULL,
+                    token_count INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    last_accessed REAL NOT NULL,
+                    access_count INTEGER NOT NULL DEFAULT 0
+                )
+                """)
+
+                # 创建索引
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_context_conversation_id ON context_cache(conversation_id)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_context_last_accessed ON context_cache(last_accessed)"
+                )
+
     @contextmanager
     def _get_connection(self):
         conn = sqlite3.connect(self._db_path)
