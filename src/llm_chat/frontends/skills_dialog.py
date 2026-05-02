@@ -1,5 +1,8 @@
 import logging
+from pathlib import Path
 from typing import Dict, Any, List
+
+import yaml
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -158,11 +161,11 @@ class SkillsConfigDialog(QDialog):
         logger.info(f"技能 {skill_name} 状态切换为: {'启用' if self._skill_states[skill_name] else '禁用'}")
     
     def _save_skill_state(self, skill_name: str, enabled: bool):
-        """保存技能状态到配置文件"""
-        import yaml
-        from pathlib import Path
+        """保存技能状态到配置文件 (与 Config 使用同一路径)"""
+        from llm_chat.config import Config
         
-        config_path = Path("config.yaml")
+        config_path_str = Config.get_default_config_path()
+        config_path = Path(config_path_str)
         
         try:
             config_data = {}
@@ -181,7 +184,7 @@ class SkillsConfigDialog(QDialog):
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
             
-            logger.info(f"已保存技能 {skill_name} 状态到配置文件: enabled={enabled}")
+            logger.info(f"已保存技能 {skill_name} 状态到 {config_path_str}: enabled={enabled}")
         except Exception as e:
             logger.error(f"保存技能状态失败: {e}")
     
