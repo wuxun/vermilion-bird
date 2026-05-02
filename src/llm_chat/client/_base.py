@@ -23,7 +23,8 @@ class LLMClientBase:
     - 不包含任何聊天/生成方法（由 mixin 提供）
     """
 
-    def __init__(self, config: Config, skip_skills_setup: bool = False, tool_call_hook=None):
+    def __init__(self, config: Config, skip_skills_setup: bool = False,
+                 tool_call_hook=None, tool_registry=None):
         self.config = config
         self._tool_call_hook = tool_call_hook  # Callable[[str, dict, str], None]
         self.session = requests.Session()
@@ -51,7 +52,7 @@ class LLMClientBase:
             max_retries=config.llm.max_retries,
         )
         self._tool_executor: Optional[Callable[[str, Dict[str, Any]], str]] = None
-        self._tool_registry = get_tool_registry()
+        self._tool_registry = tool_registry if tool_registry is not None else get_tool_registry()
         self._skill_manager = SkillManager(self._tool_registry)
         self._tool_executor_instance = ToolExecutor(
             tool_registry=self._tool_registry,

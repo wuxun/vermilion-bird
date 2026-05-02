@@ -67,6 +67,7 @@ class TaskDelegatorSkill(BaseSkill):
             registry=self._registry,
             parent_context=self._parent_context,
             config=self._config,
+            tool_registry=self.tool_registry,  # 注入共享 ToolRegistry
         )
         self._spawn_tool = spawn  # keep ref for workflow executor
 

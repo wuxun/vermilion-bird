@@ -3,6 +3,13 @@ from .base import BaseTool
 
 
 class ToolRegistry:
+    """工具注册表。
+
+    默认使用全局单例（get_tool_registry()）。
+    App 通过 set_instance() 注入统一实例；
+    测试可通过 set_instance(mock) 隔离。
+    """
+
     _instance: Optional["ToolRegistry"] = None
 
     def __new__(cls) -> "ToolRegistry":
@@ -10,6 +17,16 @@ class ToolRegistry:
             cls._instance = super().__new__(cls)
             cls._instance._tools: Dict[str, BaseTool] = {}
         return cls._instance
+
+    @classmethod
+    def set_instance(cls, instance: Optional["ToolRegistry"]) -> None:
+        """注入自定义实例（App 初始化 / 测试 mock）。"""
+        cls._instance = instance
+
+    @classmethod
+    def get_instance(cls) -> "ToolRegistry":
+        """获取当前实例（优先返回注入的，否则创建默认单例）。"""
+        return cls()
 
     def register(self, tool: BaseTool):
         self._tools[tool.name] = tool

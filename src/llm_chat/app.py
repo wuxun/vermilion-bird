@@ -40,8 +40,15 @@ class App:
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or Config()
-        self.client = LLMClient(self.config)
+
+        # 创建共享 ToolRegistry 并注入为全局实例
+        from llm_chat.tools.registry import ToolRegistry
+        self.tool_registry = ToolRegistry()
+        ToolRegistry.set_instance(self.tool_registry)
+
+        self.client = LLMClient(self.config, tool_registry=self.tool_registry)
         self.storage = Storage()
+        Storage.set_instance(self.storage)
 
         memory_config = self._build_memory_config()
         default_model_params = self.config.llm.get_model_params()
@@ -212,9 +219,8 @@ class App:
                 logger.info(
                     f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
                 )
-                # 注册 MCP 工具到 ToolRegistry 单例 → 子 agent 自动可见
+                # 注册 MCP 工具到 ToolRegistry → 子 agent 自动可见
                 from llm_chat.mcp.manager import MCPToolAdapter
-                tool_registry = self.client._tool_registry
                 for mcp_tool in manager.get_all_tools():
                     adapter = MCPToolAdapter(
                         tool_name=mcp_tool.name,
@@ -222,7 +228,7 @@ class App:
                         input_schema=mcp_tool.input_schema or {},
                         executor=lambda name, args, mgr=manager: mgr.call_tool(name, args),
                     )
-                    tool_registry.register(adapter)
+                    self.tool_registry.register(adapter)
                 logger.info(
                     f"MCP 工具已注册到 ToolRegistry: "
                     f"{[t.name for t in manager.get_all_tools()]}"
@@ -239,9 +245,8 @@ class App:
 
         # 先从 ToolRegistry 移除 MCP 工具
         if self._mcp_manager:
-            tool_registry = self.client._tool_registry
             for mcp_tool in self._mcp_manager.get_all_tools():
-                tool_registry.unregister(mcp_tool.name)
+                self.tool_registry.unregister(mcp_tool.name)
 
             future = self._mcp_manager.disconnect_all()
             try:

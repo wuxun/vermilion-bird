@@ -30,6 +30,15 @@ class StorageCore:
                 cls._db_path = db_path
         return cls._instance
 
+    @classmethod
+    def set_instance(cls, instance: Optional["StorageCore"]) -> None:
+        """注入自定义实例（App 初始化 / 测试 mock）。"""
+        cls._instance = instance
+
+    @classmethod
+    def get_instance(cls) -> "StorageCore":
+        return cls()
+
     def __init__(self, db_path: Optional[str] = None):
         if db_path:
             self._db_path = db_path

@@ -330,7 +330,7 @@ from llm_chat.tools.base import BaseTool as _BaseTool
 class MCPToolAdapter(_BaseTool):
     """将 MCPTool 包装为 BaseTool，使其可被 ToolRegistry 发现。
 
-    子 agent 的 LLMClient (skip_skills_setup) 只从 ToolRegistry 单例
+    子 agent 的 LLMClient (skip_skills_setup) 只从 ToolRegistry
     获取工具列表。通过此类将 MCP 工具注册到 ToolRegistry，
     子 agent 即可自动发现和使用 MCP 工具。
     """

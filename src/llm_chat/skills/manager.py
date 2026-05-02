@@ -96,6 +96,7 @@ class SkillManager:
         
         try:
             skill_instance = skill_class()
+            skill_instance.set_tool_registry(self._tool_registry)
             
             for dep in skill_instance.dependencies:
                 if dep not in self._skills:

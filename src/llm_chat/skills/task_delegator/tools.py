@@ -109,10 +109,12 @@ class SpawnSubagentTool(BaseTool):
         registry: Optional[SubAgentRegistry] = None,
         parent_context: Optional[AgentContext] = None,
         config: Optional["Config"] = None,
+        tool_registry=None,
     ):
         self.registry = registry or SubAgentRegistry()
         self.parent_context = parent_context
         self.config = config
+        self._tool_registry = tool_registry  # 注入共享 ToolRegistry
 
     def _get_work_dir(self, work_dir_arg: Optional[str] = None) -> str:
         if work_dir_arg:
@@ -243,7 +245,8 @@ class SpawnSubagentTool(BaseTool):
                 self.registry._notify_status_change(agent_id)
 
             client = LLMClient(
-                subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call
+                subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call,
+                tool_registry=self._tool_registry,
             )
 
             if allowed_tools:
