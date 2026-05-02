@@ -16,6 +16,7 @@ from llm_chat.frontends.widgets import (
     StreamSignals,
     ConversationListSignals,
 )
+from llm_chat.frontends.model_config import ModelConfigMixin
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ MARKDOWN_CSS = """
 """
 
 
-class GUIFrontend(BaseFrontend):
+class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def __init__(self, conversation_id: str = "default", title: str = "Vermilion Bird"):
         BaseFrontend.__init__(self, "gui")
         self._conversation_id: str = conversation_id
@@ -197,94 +198,6 @@ class GUIFrontend(BaseFrontend):
                 logger.warning("SubAgentPanel: task_delegator skill not loaded")
         except Exception as e:
             logger.warning("SubAgentPanel: failed to connect: %s", e)
-
-    def _init_model_combo(self):
-        if self._model_combo is None:
-            return
-        self._model_combo.clear()
-        if self._config is None:
-            self._model_combo.addItem(self._current_model)
-            self._model_combo.setCurrentText(self._current_model)
-            return
-        available_models = getattr(self._config.llm, "available_models", [])
-        if available_models:
-            for model_info in available_models:
-                if hasattr(model_info, "name"):
-                    model_name = model_info.name
-                elif hasattr(model_info, "get"):
-                    model_name = model_info.get("id")
-                else:
-                    model_name = str(model_info)
-                self._model_combo.addItem(model_name)
-            current_model = self._config.llm.model
-            index = self._model_combo.findText(current_model)
-            if index >= 0:
-                self._model_combo.setCurrentIndex(index)
-            else:
-                self._model_combo.setCurrentText(current_model)
-        else:
-            self._model_combo.addItem(self._current_model)
-            self._model_combo.setCurrentText(self._current_model)
-
-    def _on_model_changed(self, index: int):
-        if self._config is None or self._model_combo is None:
-            return
-        model_name = self._model_combo.currentText()
-        old_model = self._config.llm.model
-        if model_name == old_model:
-            return
-        available_models = getattr(self._config.llm, "available_models", [])
-        model_id = model_name
-        selected_model_info = None
-        if available_models:
-            for model_info in available_models:
-                info_name = (
-                    model_info.name
-                    if hasattr(model_info, "name")
-                    else (
-                        model_info.get("name")
-                        if hasattr(model_info, "get")
-                        else str(model_info)
-                    )
-                )
-                if info_name == model_name:
-                    model_id = (
-                        model_info.id
-                        if hasattr(model_info, "id")
-                        else (
-                            model_info.get("id")
-                            if hasattr(model_info, "get")
-                            else model_name
-                        )
-                    )
-                    selected_model_info = model_info
-                    break
-        self._config.llm.model = model_id
-        self._current_model = model_id
-        if selected_model_info:
-            if (
-                hasattr(selected_model_info, "base_url")
-                and selected_model_info.base_url
-            ):
-                self._config.llm.base_url = selected_model_info.base_url
-            if hasattr(selected_model_info, "api_key") and selected_model_info.api_key:
-                self._config.llm.api_key = selected_model_info.api_key
-            if (
-                hasattr(selected_model_info, "protocol")
-                and selected_model_info.protocol
-            ):
-                self._config.llm.protocol = selected_model_info.protocol
-        logger.info(f"模型切换: {old_model} -> {model_id}")
-        self._save_config()
-
-    def _save_config(self):
-        if self._config is None:
-            return
-        try:
-            self._config.to_yaml()
-            logger.info("配置已保存到 config.yaml")
-        except Exception as e:
-            logger.error(f"保存配置失败: {e}")
 
     def set_conversation_callbacks(
         self,
@@ -997,17 +910,6 @@ class GUIFrontend(BaseFrontend):
         )
         return get_context_limit(model)
 
-    def _on_temperature_changed(self, value):
-        """温度滑块变化处理"""
-        temp = value / 10.0
-        self._temperature_value.setText(f"{temp:.1f}")
-        logger.info(f"温度设置为: {temp}")
-
-    def _on_reasoning_changed(self, index):
-        """推理深度变化处理"""
-        levels = ["关闭", "低", "中", "高"]
-        logger.info(f"推理深度设置为: {levels[index]}")
-
     def _get_model_params(self) -> Dict[str, Any]:
         """获取当前模型参数"""
         params = {}
@@ -1383,107 +1285,6 @@ class GUIFrontend(BaseFrontend):
             self._clear_chat_widgets()
 
         self.display_info("Conversation cleared")
-
-    def _on_mcp_config(self):
-        try:
-            from llm_chat.frontends.mcp_dialog import MCPConfigDialog
-
-            if self._mcp_dialog is None:
-                self._mcp_dialog = MCPConfigDialog(self._main_window)
-            self._mcp_dialog.exec()
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"MCP module not available: {e}"
-            )
-
-    def _on_skills_config(self):
-        """打开技能管理对话框"""
-        try:
-            from llm_chat.frontends.skills_dialog import SkillsConfigDialog
-
-            dialog = SkillsConfigDialog(self._main_window)
-            dialog.exec()
-
-            # Reload skills from config after dialog closes
-            if self._app_instance:
-                self._app_instance.reload_skills_from_config()
-                logger.info("Reloaded skills after dialog close")
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Skills module not available: {e}"
-            )
-
-    def _on_models_config(self):
-        """打开模型配置对话框"""
-        try:
-            from llm_chat.frontends.models_dialog import ModelsConfigDialog
-
-            dialog = ModelsConfigDialog(self._main_window, self._config)
-            dialog.exec()
-            self._init_model_combo()
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Models module not available: {e}"
-            )
-
-    def _on_scheduler_config(self):
-        """打开定时任务管理对话框"""
-        try:
-            from llm_chat.frontends.scheduler_dialog import SchedulerDialog
-
-            if not hasattr(self, "_app_instance") or self._app_instance is None:
-                QMessageBox.warning(
-                    self._main_window, "Error", "App instance not available"
-                )
-                return
-
-            if (
-                not hasattr(self._app_instance, "scheduler")
-                or self._app_instance.scheduler is None
-            ):
-                QMessageBox.warning(
-                    self._main_window,
-                    "Error",
-                    "Scheduler is disabled or not initialized",
-                )
-                return
-
-            if self._scheduler_dialog is None:
-                self._scheduler_dialog = SchedulerDialog(
-                    self._main_window,
-                    scheduler=self._app_instance.scheduler,
-                    storage=self._storage,
-                )
-            self._scheduler_dialog.exec()
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Scheduler module not available: {e}"
-            )
-        except Exception as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Failed to open scheduler: {str(e)}"
-            )
-            self._scheduler_dialog.exec()
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Scheduler module not available: {e}"
-            )
-        except AttributeError:
-            QMessageBox.warning(
-                self._main_window, "Error", "Scheduler is not initialized"
-            )
-
-    def _on_dashboard(self):
-        """打开 Token & 成本仪表盘"""
-        try:
-            from llm_chat.frontends.observability_dialog import ObservabilityDialog
-
-            dialog = ObservabilityDialog(self._main_window)
-            dialog.show()  # 非模态，可以保持打开
-        except ImportError as e:
-            QMessageBox.warning(
-                self._main_window, "Error", f"Observability module not available: {e}"
-            )
 
     def _on_close(self):
         self._handle_exit()
