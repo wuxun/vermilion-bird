@@ -1,60 +1,55 @@
-llm:
-  base_url: "https://api.openai.com/v1"
-  model: "gpt-3.5-turbo"
-  api_key: null
-  timeout: 30
-  max_retries: 3
-  protocol: "openai"
-
 enable_tools: true
-
+llm:
+  api_key: null
+  base_url: https://api.openai.com/v1
+  max_retries: 3
+  model: gpt-3.5-turbo
+  protocol: openai
+  timeout: 30
 mcp:
   servers: []
-
-# Scheduler 配置：不包含 db_path，复用现有数据库
-scheduler:
-  enabled: true
-  max_workers: 4
-  default_timezone: "Asia/Shanghai"
-
-# Shell 执行技能配置
-skills:
-  shell_exec:
-    enabled: true
-    whitelist:
-      - "ls"
-      - "pwd"
-      - "cat"
-      - "grep"
-      - "head"
-      - "tail"
-      - "wc"
-      - "du"
-      - "df"
-      - "git"
-      - "find"
-      - "echo"
-      - "date"
-      - "whoami"
-      - "uname"
-      - "env"
-      - "printenv"
-    default_timeout: 5
-    max_output_length: 10000
-    allowed_workdir: "./"
-
 memory:
   enabled: true
-  storage_dir: "~/.vermilion-bird/memory"
-  short_term:
-    max_items: 10
-  mid_term:
-    max_days: 30
+  exclude_patterns:
+  - 密码
+  - password
+  - token
+  - api_key
   long_term:
     auto_evolve: true
     evolve_interval_days: 7
-  exclude_patterns:
-    - "密码"
-    - "password"
-    - "token"
-    - "api_key"
+  mid_term:
+    max_days: 30
+  short_term:
+    max_items: 10
+  storage_dir: ~/.vermilion-bird/memory
+scheduler:
+  default_timezone: Asia/Shanghai
+  enabled: true
+  max_workers: 4
+skills:
+  shell_exec:
+    allowed_workdir: ./
+    default_timeout: 5
+    enabled: true
+    max_output_length: 10000
+    whitelist:
+    - ls
+    - pwd
+    - cat
+    - grep
+    - head
+    - tail
+    - wc
+    - du
+    - df
+    - git
+    - find
+    - echo
+    - date
+    - whoami
+    - uname
+    - env
+    - printenv
+  web_search:
+    enabled: false

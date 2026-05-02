@@ -137,6 +137,18 @@ class App:
     def get_skill_manager(self) -> SkillManager:
         return self.client.get_skill_manager()
 
+    def reload_skills_from_config(self):
+        """Reload config from file and re-initialize all skills.
+
+        Called after the skills dialog saves config.yaml changes.
+        Unloads all skills, re-reads config, and loads skills per new config.
+        """
+        new_config = Config.from_yaml()
+        self.config = new_config
+        self.client.config = new_config
+        self.client._setup_skills()
+        logger.info("Skills reloaded from config.yaml")
+
     def get_scheduler(self) -> Optional["SchedulerService"]:
         return self.scheduler
 

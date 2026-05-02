@@ -1547,6 +1547,11 @@ class GUIFrontend(BaseFrontend):
 
             dialog = SkillsConfigDialog(self._main_window)
             dialog.exec()
+
+            # Reload skills from config after dialog closes
+            if self._app_instance:
+                self._app_instance.reload_skills_from_config()
+                logger.info("Reloaded skills after dialog close")
         except ImportError as e:
             QMessageBox.warning(
                 self._main_window, "Error", f"Skills module not available: {e}"

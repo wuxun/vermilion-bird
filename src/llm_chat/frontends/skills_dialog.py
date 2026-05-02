@@ -108,36 +108,20 @@ class SkillsConfigDialog(QDialog):
         layout.addLayout(button_layout)
     
     def _load_skills(self):
-        from llm_chat.skills.web_search.skill import WebSearchSkill
-        from llm_chat.skills.calculator.skill import CalculatorSkill
-        from llm_chat.skills.web_fetch.skill import WebFetchSkill
-        from llm_chat.skills.file_reader.skill import FileReaderSkill
-        from llm_chat.skills.file_writer.skill import FileWriterSkill
-        from llm_chat.skills.file_editor.skill import FileEditorSkill
-        from llm_chat.skills.todo_manager.skill import TodoManagerSkill
-        from llm_chat.skills.manager import SkillManager
+        from llm_chat.skills.registry import get_builtin_skills
         from llm_chat.config import Config
-        
+
         config = Config.from_yaml()
-        manager = SkillManager()
-        manager.register_skill_class(WebSearchSkill)
-        manager.register_skill_class(CalculatorSkill)
-        manager.register_skill_class(WebFetchSkill)
-        manager.register_skill_class(FileReaderSkill)
-        manager.register_skill_class(FileWriterSkill)
-        manager.register_skill_class(FileEditorSkill)
-        manager.register_skill_class(TodoManagerSkill)
-        
-        for name, skill_class in manager.get_all_skill_classes().items():
+        all_skills = get_builtin_skills()
+
+        for name, skill_class in all_skills.items():
             skill = skill_class()
             tools = skill.get_tools()
             tool_names = ", ".join([t.name for t in tools])
             
-            enabled = True
-            if hasattr(config.skills, name):
-                skill_config = getattr(config.skills, name, None)
-                if skill_config and hasattr(skill_config, 'enabled'):
-                    enabled = skill_config.enabled
+            # Pydantic extra="allow" 字段需通过 getattr 访问
+            skill_config = getattr(config.skills, name, None)
+            enabled = skill_config.enabled if skill_config and hasattr(skill_config, 'enabled') else True
             
             self._skill_states[name] = enabled
             
