@@ -1,7 +1,7 @@
 import time
 import json
 import logging
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 logger = logging.getLogger(__name__)
@@ -11,14 +11,12 @@ class ToolExecutor:
     def __init__(
         self,
         tool_registry,
-        tool_executor: Optional[Callable] = None,
         max_workers: int = 5,
         max_retries: int = 3,
         retry_delay: float = 1.0,
         timeout: int = 30,
     ):
         self.tool_registry = tool_registry
-        self.tool_executor = tool_executor
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -40,15 +38,10 @@ class ToolExecutor:
                     logger.info(
                         f"工具注册表执行完成: result_type={type(result)}, result_is_none={result is None}"
                     )
-                elif self.tool_executor:
-                    result = self.tool_executor(tool_name, tool_args)
-                    logger.info(
-                        f"外部执行器执行完成: result_type={type(result)}, result_is_none={result is None}"
-                    )
                 else:
                     return {
                         "tool_call_id": tool_call_id,
-                        "content": f"Error: No tool executor for {tool_name}",
+                        "content": f"Error: Unknown tool '{tool_name}' - not in ToolRegistry",
                         "is_error": True,
                     }
 
@@ -58,15 +51,11 @@ class ToolExecutor:
                 else:
                     logger.info(f"工具 {tool_name} 执行成功, 结果长度: {len(result)}")
 
-                return_dict = {
+                return {
                     "tool_call_id": tool_call_id,
                     "content": result,
                     "is_error": False,
                 }
-                logger.info(
-                    f"返回结果字典: tool_call_id={tool_call_id}, content_type={type(result)}, content_len={len(result) if result else 0}"
-                )
-                return return_dict
 
             except Exception as e:
                 last_error = e
