@@ -108,6 +108,14 @@ class ChatCore:
         # 8. 异步记忆提取
         self._extract_memory_async(conv, message, response)
 
+        # 9. 记录 token 消耗
+        self._record_tokens(
+            message=processed_message,
+            history=processed_history,
+            system_context=system_context,
+            response=response,
+        )
+
         return response
 
     @observe("chat_core.send_message_stream")
@@ -211,6 +219,14 @@ class ChatCore:
 
         # 8. 异步记忆提取
         self._extract_memory_async(conv, message, full_text)
+
+        # 9. 记录 token 消耗
+        self._record_tokens(
+            message=processed_message,
+            history=processed_history,
+            system_context=system_context,
+            response=full_text,
+        )
 
         return full_text
 
@@ -363,3 +379,40 @@ class ChatCore:
             memory_manager.process_pending_extractions()
         except Exception as e:
             logger.warning(f"记忆提取失败: {e}")
+
+    def _record_tokens(
+        self,
+        message: str,
+        history: List[Dict[str, Any]],
+        system_context: Optional[str],
+        response: str,
+    ):
+        """记录本轮对话的 token 消耗 (prompt + completion)，供仪表盘使用。"""
+        from llm_chat.utils.observability import get_observability
+        from llm_chat.utils.token_counter import count_tokens
+
+        obs = get_observability()
+
+        # 估算 prompt tokens
+        prompt_text = ""
+        if system_context:
+            prompt_text += system_context + "\n"
+        for h in history:
+            prompt_text += h.get("content", "") + "\n"
+        prompt_text += message
+        prompt_tokens = count_tokens(prompt_text)
+
+        # 估算 completion tokens
+        completion_tokens = count_tokens(response)
+
+        model = self.config.llm.model if hasattr(self.config, 'llm') else "unknown"
+
+        obs.increment("tokens.prompt", prompt_tokens)
+        obs.increment("tokens.completion", completion_tokens)
+        obs.increment(f"tokens.total", prompt_tokens + completion_tokens)
+        obs.increment(f"tokens.{model}", prompt_tokens + completion_tokens)
+
+        logger.debug(
+            "Token recorded: prompt=%d, completion=%d, model=%s",
+            prompt_tokens, completion_tokens, model,
+        )

@@ -639,8 +639,8 @@ class GUIFrontend(BaseFrontend):
         self._scheduler_button.clicked.connect(self._on_scheduler_config)
         header_layout.addWidget(self._scheduler_button)
 
-        self._dashboard_button = QPushButton("📊")
-        self._dashboard_button.setFixedWidth(40)
+        self._dashboard_button = QPushButton("Dashboard")
+        self._dashboard_button.setFixedWidth(100)
         self._dashboard_button.setToolTip("Token & 成本仪表盘")
         self._dashboard_button.clicked.connect(self._on_dashboard)
         header_layout.addWidget(self._dashboard_button)
