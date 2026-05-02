@@ -5,8 +5,8 @@ from typing import Dict, List, Optional, Callable
 
 from llm_chat.skills.task_delegator.context import AgentContext
 
-#: 状态变更回调: (agent_id, status, task, result)
-StatusCallback = Callable[[str, str, str, Optional[str]], None]
+#: 状态变更回调: (agent_id, status, task, result, extra)
+StatusCallback = Callable[[str, str, str, Optional[str], Dict[str, Any]], None]
 
 
 class SubAgentRegistry:
@@ -224,7 +224,15 @@ class SubAgentRegistry:
             ctx = self._agents.get(agent_id)
             if ctx is None:
                 return
-            snapshot = (ctx.agent_id, ctx.status, ctx.task, ctx.result)
+            extra = {
+                "model": ctx.model,
+                "protocol": ctx.protocol,
+                "allowed_tools": list(ctx.allowed_tools),
+                "tool_calls_log": list(ctx.tool_calls_log),
+                "depth": ctx.depth,
+                "parent_id": ctx.parent_id,
+            }
+            snapshot = (ctx.agent_id, ctx.status, ctx.task, ctx.result, extra)
             cbs = list(self._callbacks)
 
         for cb in cbs:

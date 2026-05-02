@@ -23,8 +23,9 @@ class LLMClientBase:
     - 不包含任何聊天/生成方法（由 mixin 提供）
     """
 
-    def __init__(self, config: Config, skip_skills_setup: bool = False):
+    def __init__(self, config: Config, skip_skills_setup: bool = False, tool_call_hook=None):
         self.config = config
+        self._tool_call_hook = tool_call_hook  # Callable[[str, dict, str], None]
         self.session = requests.Session()
         self.session.timeout = config.llm.timeout
 

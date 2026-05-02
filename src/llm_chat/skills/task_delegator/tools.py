@@ -1,6 +1,7 @@
 """Task Delegator Tools - 子Agent任务分配工具 + 工作流编排工具"""
 
 import os
+import time
 import uuid
 import json
 import logging
@@ -15,6 +16,16 @@ if TYPE_CHECKING:
     from llm_chat.client import LLMClient
 
 logger = logging.getLogger(__name__)
+
+
+def _truncate_args(args: dict, max_len: int = 200) -> str:
+    """截断工具参数用于 GUI 展示。"""
+    if not args:
+        return "{}"
+    s = json.dumps(args, ensure_ascii=False)
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + "..."
 
 
 class SpawnSubagentTool(BaseTool):
@@ -225,7 +236,20 @@ class SpawnSubagentTool(BaseTool):
                 subagent_config = self.config
                 logger.info(f"Subagent {agent_id} using default config")
 
-            client = LLMClient(subagent_config, skip_skills_setup=True)
+            # 记录模型/协议到 context
+            context.model = subagent_config.llm.model
+            context.protocol = subagent_config.llm.protocol
+
+            # 工具调用 hook：实时记录到 context.tool_calls_log
+            def _on_tool_call(tool_name: str, args: dict, result: str):
+                context.tool_calls_log.append({
+                    "tool": tool_name,
+                    "args": _truncate_args(args),
+                    "result": result[:300] + "..." if len(result) > 300 else result,
+                    "ts": time.time(),
+                })
+
+            client = LLMClient(subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call)
 
             if allowed_tools:
                 all_tools = client.get_builtin_tools()

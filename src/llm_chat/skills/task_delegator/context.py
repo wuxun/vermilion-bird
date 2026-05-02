@@ -24,6 +24,10 @@ class AgentContext:
     task: str = ""                        # 任务描述，供 GUI 面板展示
     result: Optional[str] = None
     work_dir: Optional[str] = None
+    # 执行元数据 — 供 GUI 面板展示
+    model: str = ""
+    protocol: str = ""
+    tool_calls_log: list = field(default_factory=list)
     _cancelled: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False
     )

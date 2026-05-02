@@ -166,6 +166,14 @@ class LLMClientToolsMixin:
                     is_error = True
                     logger.error(f"没有找到工具 {tool_call.name} 的执行器")
 
+                # Fire tool_call_hook for observability (sub-agent panel etc.)
+                if self._tool_call_hook:
+                    try:
+                        args_safe = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                        self._tool_call_hook(tool_call.name, args_safe, tool_result or "")
+                    except Exception:
+                        pass
+
                 tool_message = self.protocol.build_tool_result_message(
                     tool_call, tool_result, is_error
                 )
