@@ -1059,6 +1059,8 @@ class GUIFrontend(BaseFrontend):
 
     def _update_context_status(self):
         """更新上下文状态栏 (token 使用量 / 上下文上限)。"""
+        if self._context_label is None:
+            return  # UI 尚未初始化
         from llm_chat.utils.token_counter import count_tokens, get_context_limit
 
         # 对话历史 token 计数
@@ -1333,6 +1335,8 @@ class GUIFrontend(BaseFrontend):
 
     def _on_context_updated(self, used_tokens: int, limit: int):
         """ChatCore 回调 — 流式过程中实时更新上下文状态。"""
+        if self._context_label is None:
+            return
         if self._context_label:
             usage_percent = (used_tokens / limit) * 100 if limit > 0 else 0
             self._context_label.setText(
