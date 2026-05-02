@@ -103,6 +103,9 @@ class TaskDelegatorSkill(BaseSkill):
 
     def on_unload(self) -> None:
         """卸载时清理线程池和结果，防止资源泄露。"""
+        # 取消所有运行中的子 agent
+        if self._registry is not None:
+            self._registry.cancel_all_running()
         # 清理工作流结果
         if self._workflow_executor is not None:
             self._workflow_executor.cleanup()

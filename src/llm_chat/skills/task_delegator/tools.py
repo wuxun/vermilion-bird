@@ -143,6 +143,25 @@ class SpawnSubagentTool(BaseTool):
                 indent=2,
             )
 
+        # 并发上限检查
+        max_concurrent = (
+            self.config.tools.subagent_max_concurrent
+            if self.config and hasattr(self.config, "tools") else 10
+        )
+        if max_concurrent > 0:
+            running = self.registry.count_running()
+            if running >= max_concurrent:
+                error_msg = (
+                    f"Subagent concurrency limit reached: {running}/{max_concurrent}. "
+                    f"Wait for some agents to complete or cancel before spawning more."
+                )
+                logger.warning(error_msg)
+                return json.dumps(
+                    {"error": error_msg, "status": "rejected"},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+
         filtered_tools = [t for t in allowed_tools if t != "spawn_subagent"]
         work_dir = self._get_work_dir(work_dir_arg)
         os.makedirs(work_dir, exist_ok=True)

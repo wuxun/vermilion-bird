@@ -199,6 +199,24 @@ class SubAgentRegistry:
                 for ctx in self._agents.values()
             ]
 
+    def count_running(self) -> int:
+        """返回正在运行的子 agent 数量（并发控制用）。"""
+        with self._lock:
+            return sum(1 for ctx in self._agents.values() if ctx.status == "running")
+
+    def cancel_all_running(self) -> int:
+        """Cancel all running sub-agents. Returns count of cancelled."""
+        with self._lock:
+            running = [
+                agent_id for agent_id, ctx in self._agents.items()
+                if ctx.status == "running"
+            ]
+        count = 0
+        for agent_id in running:
+            if self.cancel(agent_id):
+                count += 1
+        return count
+
     # ------------------------------------------------------------------
     # Status change callbacks (push notifications to GUI / logs / metrics)
     # ------------------------------------------------------------------

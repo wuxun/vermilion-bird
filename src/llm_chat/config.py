@@ -230,6 +230,10 @@ class ToolsConfig(BaseSettings):
         default=2.0,
         description="子 agent 重试初始延迟（秒），指数退避",
     )
+    subagent_max_concurrent: int = Field(
+        default=10,
+        description="子 agent 最大并发数（0=不限制），超过此数量 spawn_subagent 会拒绝",
+    )
 
     class Config:
         env_prefix = "TOOLS_"

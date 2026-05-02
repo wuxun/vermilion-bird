@@ -555,6 +555,7 @@ class SubAgentPanel(QFrame):
 
     def disconnect_registry(self):
         if self._registry is not None:
+            self._registry.cancel_all_running()
             self._registry.remove_callback(self._on_registry_change)
             self._registry = None
         self._collapsed = True

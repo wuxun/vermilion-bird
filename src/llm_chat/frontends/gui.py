@@ -1645,6 +1645,7 @@ class GUIFrontend(BaseFrontend):
             self._input_field.setEnabled(enabled)
 
     def stop(self):
+        # Cancel all running sub-agents before quitting
         if self._subagent_panel:
             self._subagent_panel.disconnect_registry()
         if self._app:
