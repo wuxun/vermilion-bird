@@ -266,8 +266,12 @@ class App:
         frontend.set_on_exit(handle_exit)
 
     def _on_new_conversation(self):
+        # 如果当前有未保存内容的对话，不创建新对话
         if self.current_frontend.is_current_conversation_empty():
-            return
+            convs = self.conversation_manager.list_conversations()
+            if convs:
+                # 已有对话且当前为空，不需要新建
+                return
 
         result = self._conv_service.create()
         self._current_conversation_id = result["id"]
@@ -322,6 +326,9 @@ class App:
             self._current_conversation_id = conversations[0].get("id")
             messages = self.storage.get_messages(self._current_conversation_id)
             frontend.set_current_conversation(self._current_conversation_id, messages)
+        else:
+            # 无对话时创建默认对话
+            self._on_new_conversation()
 
         if self.config.enable_tools:
             if self.config.mcp.servers:
