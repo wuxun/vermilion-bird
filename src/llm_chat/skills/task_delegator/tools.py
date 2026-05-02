@@ -235,6 +235,9 @@ class SpawnSubagentTool(BaseTool):
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
         client = None
+        # 僵死检测：记录开始时间和截止时间
+        context.started_at = time.time()
+        context.deadline = context.started_at + max(timeout, 60) + 120  # 额外 120s 容错
         try:
             from llm_chat.client import LLMClient
 
@@ -252,6 +255,14 @@ class SpawnSubagentTool(BaseTool):
 
             context.model = subagent_config.llm.model
             context.protocol = subagent_config.llm.protocol
+
+            # 记录初始任务到 tool_calls_log（对话回放用）
+            context.tool_calls_log.append({
+                "tool": "📤 Task",
+                "args": task[:200] + "..." if len(task) > 200 else task,
+                "result": "",
+                "ts": time.time(),
+            })
             self.registry._notify_status_change(agent_id)
 
             def _on_tool_call(tool_name: str, args: dict, result: str):
@@ -437,6 +448,22 @@ class GetSubagentStatusTool(BaseTool):
             error_msg = f"Subagent not found: {agent_id}"
             logger.warning(error_msg)
             return error_msg
+
+        # 僵死检测：超过 deadline 仍在 running → 自动标记 timeout
+        if (
+            context.status == "running"
+            and context.deadline > 0
+            and time.time() > context.deadline
+        ):
+            logger.warning(
+                f"Subagent {agent_id} appears dead (running {time.time() - context.started_at:.0f}s, "
+                f"deadline exceeded by {time.time() - context.deadline:.0f}s)"
+            )
+            self.registry.cancel(agent_id)
+            context.status = "timeout"
+            context.result = (
+                f"Agent timed out after {time.time() - context.started_at:.0f}s"
+            )
 
         wait = kwargs.get("wait", False)
         if wait and context.status == "running":

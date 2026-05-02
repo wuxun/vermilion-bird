@@ -9,6 +9,7 @@ ChatCore - 核心对话引擎
 """
 
 import logging
+import threading
 from typing import List, Dict, Any, Optional, Callable, Generator
 
 from llm_chat.config import Config
@@ -48,6 +49,7 @@ class ChatCore:
         self.client = client
         self.conversation_manager = conversation_manager
         self.config = config
+        self._cancel_event: Optional[threading.Event] = None  # Set during streaming
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,6 +115,11 @@ class ChatCore:
 
         return response
 
+    def cancel_generation(self) -> None:
+        """取消当前正在进行的流式生成。"""
+        if self._cancel_event:
+            self._cancel_event.set()
+
     @observe("chat_core.send_message_stream")
     def send_message_stream(
         self,
@@ -164,6 +171,7 @@ class ChatCore:
         has_tools = self.client.has_builtin_tools()
 
         full_text = ""
+        self._cancel_event = threading.Event()  # 创建本次生成的取消事件
 
         if has_tools and self.config.enable_tools:
             # 获取可用工具
@@ -180,6 +188,9 @@ class ChatCore:
                 system_context=system_context,
                 **params,
             ):
+                if self._cancel_event.is_set():
+                    logger.info("[ChatCore] Stream cancelled by user")
+                    break
                 if isinstance(chunk, tuple):
                     kind = chunk[0]
                     if kind == "tool_call_start" and on_tool_start:
@@ -201,6 +212,9 @@ class ChatCore:
                 system_context=system_context,
                 **params,
             ):
+                if self._cancel_event.is_set():
+                    logger.info("[ChatCore] Stream cancelled by user")
+                    break
                 full_text += chunk
                 if on_chunk:
                     on_chunk(chunk)

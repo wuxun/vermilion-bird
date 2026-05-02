@@ -824,6 +824,19 @@ class GUIFrontend(BaseFrontend):
         self._send_button.setDefault(True)
         button_column.addWidget(self._send_button)
 
+        self._stop_button = QPushButton("⏹ Stop")
+        self._stop_button.setFixedSize(80, 35)
+        self._stop_button.clicked.connect(self._on_stop_generation)
+        self._stop_button.setVisible(False)
+        self._stop_button.setStyleSheet("""
+            QPushButton {
+                background-color: #C0392B; color: white;
+                border: none; border-radius: 5px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #E74C3C; }
+        """)
+        button_column.addWidget(self._stop_button)
+
         exit_button = QPushButton("Exit")
         exit_button.setFixedSize(80, 35)
         exit_button.clicked.connect(self._on_close)
@@ -1641,8 +1654,20 @@ class GUIFrontend(BaseFrontend):
     def _set_input_state(self, enabled: bool):
         if self._send_button:
             self._send_button.setEnabled(enabled)
+            self._send_button.setVisible(enabled)
+        if self._stop_button:
+            self._stop_button.setVisible(not enabled)
         if self._input_field:
             self._input_field.setEnabled(enabled)
+
+    def _on_stop_generation(self):
+        """用户点击 Stop 按钮：取消流式生成 + 取消运行中的子 agent。"""
+        if self._chat_core:
+            self._chat_core.cancel_generation()
+        # 级联取消子 agent
+        if self._subagent_panel and self._subagent_panel._registry:
+            self._subagent_panel._registry.cancel_all_running()
+        logger.info("User requested generation stop")
 
     def stop(self):
         # Cancel all running sub-agents before quitting

@@ -270,7 +270,10 @@ class SubAgentRegistry:
                 )
 
     def wait_for(self, agent_id: str, timeout: Optional[float] = None) -> Optional[str]:
-        """Block until a sub-agent completes, return its result or None on timeout/error."""
+        """Block until a sub-agent completes, return its result or None on timeout/error.
+
+        If the agent exceeds its deadline while waiting, auto-cancels it.
+        """
         with self._lock:
             future = self._futures.get(agent_id)
         if future is None:
@@ -278,6 +281,15 @@ class SubAgentRegistry:
         try:
             return future.result(timeout=timeout)
         except Exception:
+            # Timeout — check if agent is dead and mark accordingly
+            with self._lock:
+                ctx = self._agents.get(agent_id)
+                if ctx and ctx.status == "running":
+                    import time as _time
+                    if ctx.deadline > 0 and _time.time() > ctx.deadline:
+                        self._cancel_locked(agent_id)
+                        ctx.status = "timeout"
+                        ctx.result = "Agent timed out"
             return None
 
     def shutdown(self, wait: bool = True):

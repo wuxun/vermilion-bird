@@ -182,8 +182,8 @@ class AgentDetailDialog(QDialog):
         self._tools_layout.setSpacing(4)
         layout.addLayout(self._tools_layout)
 
-        # ---- Tool calls section ----
-        self._tool_calls_label = _fmt_label("📋 Tool Calls", font_size=10, bold=True, color=C_MEDIUM)
+        # ---- Conversation replay section ----
+        self._tool_calls_label = _fmt_label("📋 Conversation Replay", font_size=10, bold=True, color=C_MEDIUM)
         layout.addWidget(self._tool_calls_label)
 
         self._tool_calls_scroll = QScrollArea()
@@ -193,7 +193,7 @@ class AgentDetailDialog(QDialog):
             QScrollArea {{ border: none; background: transparent; }}
             QScrollArea QWidget#toolCallsContainer {{ background-color: {C_BG}; }}
         """)
-        self._tool_calls_scroll.setMaximumHeight(200)
+        self._tool_calls_scroll.setMaximumHeight(350)
         self._tool_calls_container = QWidget()
         self._tool_calls_container.setObjectName("toolCallsContainer")
         self._tool_calls_container_layout = QVBoxLayout(self._tool_calls_container)

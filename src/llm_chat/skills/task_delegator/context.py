@@ -31,6 +31,9 @@ class AgentContext:
     _cancelled: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False
     )
+    # Dead agent detection
+    started_at: float = 0.0  # time.time() when execution began
+    deadline: float = 0.0    # time.time() after which agent is considered dead
 
 
 def make_agent_context(

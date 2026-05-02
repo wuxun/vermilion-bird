@@ -57,6 +57,11 @@ class WorkflowNode:
     # PARALLEL / SEQUENCE 类型参数
     children: List[WorkflowNode] = field(default_factory=list)
 
+    # CONDITION 类型参数
+    condition: Optional[Dict[str, Any]] = None  # {field, operator, value}
+    true_branch: Optional[List[WorkflowNode]] = None
+    false_branch: Optional[List[WorkflowNode]] = None
+
     # 通用
     on_error: str = "fail"  # fail | skip
 
@@ -335,6 +340,9 @@ class WorkflowExecutor:
             elif node.node_type == WorkflowNodeType.SEQUENCE:
                 self._run_sequence(node, workflow, result, parent_result)
 
+            elif node.node_type == WorkflowNodeType.CONDITION:
+                self._run_condition(node, workflow, result, parent_result)
+
         except Exception as e:
             logger.error(
                 "Workflow '%s' node '%s' error: %s",
@@ -502,6 +510,70 @@ class WorkflowExecutor:
         result.node_results[node.node_id] = {
             "type": "sequence",
             "stages": len(node.children),
+        }
+
+    def _run_condition(
+        self,
+        node: WorkflowNode,
+        workflow: AgentWorkflow,
+        result: WorkflowResult,
+        parent_result: Optional[str] = None,
+    ):
+        """条件分支节点：根据 parent_result 的 status 选择分支。
+
+        node.condition 字段格式:
+          {"field": "status", "operator": "equals", "value": "completed"}
+        或省略 condition (默认: 上一个节点成功 → true_branch，失败 → false_branch)
+
+        node.true_branch / node.false_branch: 子节点列表（可选）
+        """
+        # 评估条件：默认根据 parent 节点的状态判断
+        condition = getattr(node, 'condition', None) or {}
+        field = condition.get("field", "status")
+        operator = condition.get("operator", "equals")
+        expected = condition.get("value", "completed")
+
+        # 从 parent_result (上一个节点的 node_id) 获取实际结果
+        prev_node_result = {}
+        if parent_result and parent_result in result.node_results:
+            prev_node_result = result.node_results[parent_result]
+            if isinstance(prev_node_result, str):
+                prev_node_result = {"result": prev_node_result}
+
+        actual_value = prev_node_result.get(field, "")
+
+        # 评估条件
+        is_true = False
+        if operator == "equals":
+            is_true = str(actual_value) == str(expected)
+        elif operator == "not_empty":
+            is_true = bool(actual_value)
+        elif operator == "contains":
+            is_true = str(expected) in str(actual_value)
+        elif operator == "is_error":
+            is_true = ("error" in str(actual_value).lower() or
+                       "failed" in str(actual_value).lower())
+
+        logger.info(
+            "Workflow '%s' condition '%s': %s %s %s → %s",
+            workflow.name, node.node_id,
+            actual_value, operator, expected,
+            "true_branch" if is_true else "false_branch",
+        )
+
+        # 执行对应分支
+        branch = node.true_branch if is_true else node.false_branch
+        if branch:
+            if isinstance(branch, list):
+                for child in branch:
+                    self._execute_node(child, workflow, result, parent_result)
+            else:
+                self._execute_node(branch, workflow, result, parent_result)
+
+        result.node_results[node.node_id] = {
+            "type": "condition",
+            "condition_met": is_true,
+            "branch": "true" if is_true else "false",
         }
 
     # --------------------------------------------------------------
