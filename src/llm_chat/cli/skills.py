@@ -158,3 +158,28 @@ def tools():
             click.echo(f"  描述: {tool.description[:60]}...")
 
     click.echo("\n" + "=" * 60)
+
+
+@skills.command(name="install")
+@click.argument("source")
+def install_skill(source: str):
+    """从 URL 或 GitHub 仓库安装 prompt skill
+
+    SOURCE: GitHub 仓库 (owner/repo) 或完整 URL
+
+    示例:
+      vermilion-bird skills install myorg/my-skill
+      vermilion-bird skills install https://raw.githubusercontent.com/.../SKILL.md
+      vermilion-bird skills install ./local-skill/
+    """
+    from llm_chat.skills.prompt_skill import install_skill as do_install
+
+    click.echo(f"正在安装 skill: {source} ...")
+    result = do_install(source)
+    if result:
+        click.echo(f"✓ 安装成功: {result.name}")
+        click.echo(f"  描述: {result.description}")
+        click.echo(f"  路径: {result.path}")
+        click.echo(f"\n重启对话后生效。")
+    else:
+        click.echo(f"✗ 安装失败: {source}")

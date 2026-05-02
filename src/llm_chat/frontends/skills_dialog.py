@@ -112,52 +112,110 @@ class SkillsConfigDialog(QDialog):
     
     def _load_skills(self):
         from llm_chat.skills.registry import get_builtin_skills
+        from llm_chat.skills.prompt_skill import PromptSkill
         from llm_chat.config import Config
+        from pathlib import Path
 
         config = Config.from_yaml()
         all_skills = get_builtin_skills()
 
+        # -- Code skills ------------------------------------------------------
         for name, skill_class in all_skills.items():
             skill = skill_class()
             tools = skill.get_tools()
             tool_names = ", ".join([t.name for t in tools])
-            
+
             # Pydantic extra="allow" 字段需通过 getattr 访问
             skill_config = getattr(config.skills, name, None)
             enabled = skill_config.enabled if skill_config and hasattr(skill_config, 'enabled') else True
-            
+
             self._skill_states[name] = enabled
-            
+
             status = "✓ 已启用" if enabled else "○ 已禁用"
             item = QListWidgetItem()
-            item.setText(f"{status}  {name}\n      版本: {skill.version} | 工具: {tool_names}")
+            item.setText(f"[代码] {status}  {name}\n      版本: {skill.version} | 工具: {tool_names}")
             item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setData(Qt.ItemDataRole.UserRole + 1, "code")
             item.setForeground(Qt.GlobalColor.darkGray)
             self._skills_list.addItem(item)
-            
+
             self._skills_data[name] = {
+                'type': 'code',
                 'version': skill.version,
                 'description': skill.description,
                 'dependencies': skill.dependencies,
                 'tools': tools
             }
+
+        # -- Prompt skills ----------------------------------------------------
+        default_skill_dir = Path.home() / ".vermilion-bird" / "skills"
+        project_skill_dir = Path.cwd() / ".agents" / "skills"
+        prompt_skill_dirs = [
+            d for d in [default_skill_dir, project_skill_dir]
+            if d.exists()
+        ]
+        # Config extra dirs
+        extra_dirs = config.prompt_skill_dirs if hasattr(config, 'prompt_skill_dirs') else []
+        for ed in extra_dirs:
+            p = Path(ed).expanduser()
+            if p.exists() and str(p) not in [str(d) for d in prompt_skill_dirs]:
+                prompt_skill_dirs.append(p)
+
+        for ps_dir in prompt_skill_dirs:
+            discovered = PromptSkill.discover(ps_dir)
+            for ps in discovered:
+                ps.load()
+                name = ps.name
+                self._skill_states[f"prompt:{name}"] = True
+
+                skill_type = ps.manifest.type if ps.manifest else "requested"
+                tags_str = ", ".join(ps.manifest.tags) if ps.manifest and ps.manifest.tags else ""
+
+                item = QListWidgetItem()
+                item.setText(
+                    f"[提示] ✓ 已加载  {name}\n"
+                    f"      {ps.description} | 类型: {skill_type}"
+                    + (f" | 标签: {tags_str}" if tags_str else "")
+                )
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                item.setData(Qt.ItemDataRole.UserRole + 1, "prompt")
+                item.setForeground(Qt.GlobalColor.darkGray)
+                self._skills_list.addItem(item)
+
+                self._skills_data[name] = {
+                    'type': 'prompt',
+                    'version': ps.manifest.version if ps.manifest else '?',
+                    'description': ps.description,
+                    'path': str(ps.path),
+                    'skill_type': skill_type,
+                    'tags': ps.manifest.tags if ps.manifest else [],
+                    'dependencies': [],
+                    'tools': [],
+                }
     
     def _toggle_skill(self):
         current_item = self._skills_list.currentItem()
         if not current_item:
             QMessageBox.information(self, "提示", "请先选择一个技能")
             return
-        
+
         skill_name = current_item.data(Qt.ItemDataRole.UserRole)
+        skill_type = current_item.data(Qt.ItemDataRole.UserRole + 1)
+
+        # Prompt skills 不可通过 GUI 禁用（只读）
+        if skill_type == "prompt":
+            QMessageBox.information(self, "提示", "Prompt Skill 通过文件系统管理，\n使用 CLI 'skills install' 或直接编辑目录")
+            return
+
         self._skill_states[skill_name] = not self._skill_states[skill_name]
-        
+
         data = self._skills_data[skill_name]
-        tool_names = ", ".join([t.name for t in data['tools']])
+        tool_names = ", ".join([t.name for t in data.get('tools', [])])
         status = "✓ 已启用" if self._skill_states[skill_name] else "○ 已禁用"
-        current_item.setText(f"{status}  {skill_name}\n      版本: {data['version']} | 工具: {tool_names}")
-        
+        current_item.setText(f"[代码] {status}  {skill_name}\n      版本: {data['version']} | 工具: {tool_names}")
+
         self._save_skill_state(skill_name, self._skill_states[skill_name])
-        
+
         logger.info(f"技能 {skill_name} 状态切换为: {'启用' if self._skill_states[skill_name] else '禁用'}")
     
     def _save_skill_state(self, skill_name: str, enabled: bool):
@@ -193,27 +251,44 @@ class SkillsConfigDialog(QDialog):
         if not current_item:
             QMessageBox.information(self, "提示", "请先选择一个技能")
             return
-        
+
         skill_name = current_item.data(Qt.ItemDataRole.UserRole)
+        skill_type = current_item.data(Qt.ItemDataRole.UserRole + 1) or "code"
         data = self._skills_data.get(skill_name, {})
-        
-        info_text = f"""技能名称: {skill_name}
+
+        if skill_type == "prompt":
+            info_text = f"""技能名称: {skill_name}
+类型: Prompt Skill (提示词注入)
+版本: {data.get('version', '?')}
+描述: {data.get('description', 'N/A')}
+加载模式: {data.get('skill_type', 'requested')}
+标签: {', '.join(data.get('tags', [])) or '无'}
+路径: {data.get('path', '?')}
+
+这类技能不包含可执行工具，而是通过 system prompt 注入领域知识、
+指令或工作流到 LLM 上下文中。
+
+使用 CLI 安装更多技能:
+  vermilion-bird skills install owner/repo"""
+        else:
+            info_text = f"""技能名称: {skill_name}
+类型: Code Skill (工具插件)
 版本: {data.get('version', 'N/A')}
 描述: {data.get('description', 'N/A')}
 依赖: {', '.join(data.get('dependencies', [])) or '无'}
 
 工具列表:"""
-        
-        for tool in data.get('tools', []):
-            info_text += f"\n\n  【{tool.name}】\n  描述: {tool.description}"
-            params = tool.get_parameters_schema()
-            if params.get('properties'):
-                info_text += "\n  参数:"
-                for prop, schema in params['properties'].items():
-                    required = prop in params.get('required', [])
-                    req_mark = "*" if required else ""
-                    desc = schema.get('description', '')
-                    default = schema.get('default', '无')
-                    info_text += f"\n    - {prop}{req_mark}: {desc} (默认: {default})"
-        
+
+            for tool in data.get('tools', []):
+                info_text += f"\n\n  【{tool.name}】\n  描述: {tool.description}"
+                params = tool.get_parameters_schema()
+                if params.get('properties'):
+                    info_text += "\n  参数:"
+                    for prop, schema in params['properties'].items():
+                        required = prop in params.get('required', [])
+                        req_mark = "*" if required else ""
+                        desc = schema.get('description', '')
+                        default = schema.get('default', '无')
+                        info_text += f"\n    - {prop}{req_mark}: {desc} (默认: {default})"
+
         QMessageBox.information(self, f"技能详情 - {skill_name}", info_text)

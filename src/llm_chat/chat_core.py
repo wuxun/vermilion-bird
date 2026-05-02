@@ -49,7 +49,8 @@ class ChatCore:
         self.client = client
         self.conversation_manager = conversation_manager
         self.config = config
-        self._cancel_event: Optional[threading.Event] = None  # Set during streaming
+        self._cancel_event: Optional[threading.Event] = None
+        self._prompt_skills_context: str = ""  # 由 App.set_prompt_skills_context() 注入  # Set during streaming
 
     # ------------------------------------------------------------------
     # Public API
@@ -261,15 +262,33 @@ class ChatCore:
     # ------------------------------------------------------------------
 
     def _build_system_context(self, conv) -> Optional[str]:
-        """从 Conversation 的记忆管理器构建系统上下文。"""
+        """从 Conversation 的记忆管理器构建系统上下文。
+
+        注入顺序：记忆 → prompt skills (渐进式加载)
+        """
         memory_manager = getattr(conv, "_memory_manager", None)
-        if memory_manager is None:
+        parts = []
+
+        # 1. 记忆系统
+        if memory_manager is not None:
+            try:
+                mem_prompt = memory_manager.build_system_prompt()
+                if mem_prompt:
+                    parts.append(mem_prompt)
+            except Exception as e:
+                logger.warning(f"构建系统上下文失败: {e}")
+
+        # 2. Prompt skills (Agent Skills 标准 — 由 App 注入)
+        if self._prompt_skills_context:
+            parts.append(self._prompt_skills_context)
+
+        if not parts:
             return None
-        try:
-            return memory_manager.build_system_prompt()
-        except Exception as e:
-            logger.warning(f"构建系统上下文失败: {e}")
-            return None
+        return "\n\n---\n\n".join(parts)
+
+    def set_prompt_skills_context(self, context: str) -> None:
+        """由 App 注入 prompt skills 上下文（SkillManager 构建后调用）。"""
+        self._prompt_skills_context = context
 
     def _compress_context(
         self,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Type
 
 from .base import BaseSkill
+from .prompt_skill import PromptSkill
 from llm_chat.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,10 @@ class SkillManager:
         self._skill_configs: Dict[str, Dict[str, Any]] = {}
         self._skill_classes: Dict[str, Type[BaseSkill]] = {}
         self._loaded_order: List[str] = []
+
+        # Prompt skills (Agent Skills 标准)
+        self._prompt_skills: Dict[str, PromptSkill] = {}
+        self._prompt_skill_dirs: List[str] = []
     
     def register_skill_class(self, skill_class: Type[BaseSkill]) -> None:
         skill_name = skill_class().name
@@ -195,3 +200,77 @@ class SkillManager:
     
     def get_tool_registry(self) -> ToolRegistry:
         return self._tool_registry
+
+    # --------------------------------------------------------------
+    # Prompt Skill operations (Agent Skills 标准)
+    # --------------------------------------------------------------
+
+    def add_prompt_skill_dir(self, skill_dir: str) -> None:
+        """添加 prompt skill 发现目录。"""
+        if skill_dir not in self._prompt_skill_dirs:
+            self._prompt_skill_dirs.append(skill_dir)
+
+    def discover_prompt_skills(self, extra_dirs: Optional[List[str]] = None) -> List[PromptSkill]:
+        """从所有已注册目录发现 prompt skills。"""
+        all_dirs = list(self._prompt_skill_dirs)
+        if extra_dirs:
+            all_dirs.extend(extra_dirs)
+        discovered = []
+        for d in all_dirs:
+            skills = PromptSkill.discover(Path(d).expanduser().resolve())
+            for skill in skills:
+                if skill.load():
+                    self._prompt_skills[skill.name] = skill
+                    discovered.append(skill)
+        logger.info(
+            f"Discovered {len(discovered)} prompt skills from {len(all_dirs)} dirs"
+        )
+        return discovered
+
+    def get_prompt_skills(self) -> Dict[str, PromptSkill]:
+        """获取所有已发现的 prompt skills。"""
+        return self._prompt_skills.copy()
+
+    def get_prompt_skills_summary(self) -> str:
+        """返回所有 prompt skills 的一行摘要列表（用于始终注入 system prompt）。"""
+        lines = []
+        for skill in self._prompt_skills.values():
+            summary = skill.get_summary()
+            if summary:
+                lines.append(summary)
+        return "\n".join(lines)
+
+    def get_prompt_skill(self, name: str) -> Optional[PromptSkill]:
+        """按名称获取单个 prompt skill。"""
+        return self._prompt_skills.get(name)
+
+    def get_prompt_skills_for_context(self) -> str:
+        """构建 prompt skills 的 system prompt 注入块。
+
+        遵循 Agent Skills 标准的渐进式加载：
+        - always 类型: 注入全文
+        - requested/manual: 注入 name + description 摘要
+        """
+        always_blocks = []
+        summary_lines = ["## Available Prompt Skills (use /skill:name to load)"]
+        for skill in self._prompt_skills.values():
+            if skill.manifest and skill.manifest.type == "always":
+                content = skill.get_content()
+                if content:
+                    always_blocks.append(content)
+            else:
+                summary_lines.append(skill.get_summary())
+
+        parts = []
+        if always_blocks:
+            parts.append("\n\n".join(always_blocks))
+        if len(summary_lines) > 1:
+            parts.append("\n".join(summary_lines))
+        return "\n\n".join(parts) if parts else ""
+
+    def load_prompt_skill_by_name(self, name: str) -> Optional[str]:
+        """按名称加载 prompt skill 全文（/skill:name 触发）。"""
+        skill = self._prompt_skills.get(name)
+        if skill:
+            return skill.get_content()
+        return None

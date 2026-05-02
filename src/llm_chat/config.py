@@ -422,7 +422,14 @@ class Config(BaseSettings):
         default_factory=SkillsConfig, description="Skills 配置"
     )
     external_skill_dirs: List[str] = Field(
-        default_factory=list, description="外部 Skill 目录列表"
+        default_factory=list, description="外部 Skill (Code Skill) 目录列表"
+    )
+    prompt_skill_dirs: List[str] = Field(
+        default_factory=list,
+        description=(
+            "外部 Prompt Skill 目录列表（Agent Skills 标准 SKILL.md）。"
+            "默认已包含 ~/.vermilion-bird/skills/ 和 .agents/skills/"
+        ),
     )
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
 
@@ -510,6 +517,7 @@ class Config(BaseSettings):
             skills_config = cls._parse_skills(skills_data)
 
             external_skill_dirs = config_data.get("external_skill_dirs", [])
+            prompt_skill_dirs = config_data.get("prompt_skill_dirs", [])
 
             memory_data = config_data.get("memory", {})
             memory_config = cls._parse_memory(memory_data)
@@ -646,6 +654,7 @@ class Config(BaseSettings):
             "notification": self.notification.model_dump(),
             "skills": skills_dict,
             "external_skill_dirs": self.external_skill_dirs,
+            "prompt_skill_dirs": self.prompt_skill_dirs,
             "memory": self.memory.model_dump(),
             "context": self.context.model_dump(),
             "scheduler": self.scheduler.model_dump(),

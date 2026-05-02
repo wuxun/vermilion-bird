@@ -68,6 +68,9 @@ class App:
         )
         logger.info("ChatCore initialized")
 
+        # 5. 初始化 Prompt Skills (Agent Skills 标准)
+        self._init_prompt_skills()
+
         self._conv_service = ConversationService(
             self.conversation_manager,
             self.storage,
@@ -141,6 +144,43 @@ class App:
             "max_memory_tokens": self.config.memory.max_memory_tokens,
         }
 
+    def _init_prompt_skills(self):
+        """发现并初始化 Prompt Skills (Agent Skills 标准)。
+
+        搜索目录:
+        1. ~/.vermilion-bird/skills/
+        2. .agents/skills/ (当前目录)
+        3. config.yaml 中 prompt_skill_dirs 配置
+        """
+        from llm_chat.skills.prompt_skill import PromptSkill
+        import os
+
+        skill_manager = self.get_skill_manager()
+
+        # 默认目录
+        home = Path.home()
+        default_dirs = [
+            str(home / ".vermilion-bird" / "skills"),
+            str(Path.cwd() / ".agents" / "skills"),
+        ]
+
+        # 配置文件额外目录
+        extra = self.config.prompt_skill_dirs if hasattr(self.config, 'prompt_skill_dirs') else []
+
+        for d in default_dirs + extra:
+            skill_manager.add_prompt_skill_dir(d)
+
+        discovered = skill_manager.discover_prompt_skills()
+        if discovered:
+            context = skill_manager.get_prompt_skills_for_context()
+            self.chat_core.set_prompt_skills_context(context)
+            logger.info(
+                f"Prompt skills loaded: {len(discovered)} found, "
+                f"context={len(context)} chars"
+            )
+        else:
+            logger.debug("No prompt skills found")
+
     def get_skill_manager(self) -> SkillManager:
         return self.client.get_skill_manager()
 
@@ -159,6 +199,8 @@ class App:
         if self._tools_enabled:
             self._tools_enabled = False
             self.enable_tools()
+        # Re-discover prompt skills (may have changed in config)
+        self._init_prompt_skills()
         logger.info("Skills reloaded from config.yaml")
 
     def get_scheduler(self) -> Optional["SchedulerService"]:
