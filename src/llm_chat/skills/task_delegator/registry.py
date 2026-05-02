@@ -35,6 +35,8 @@ class SubAgentRegistry:
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         # Status change callbacks (e.g. GUI panels). Thread-safe append/iterate.
         self._callbacks: List[StatusCallback] = []
+        # Cancel callbacks: called when any agent is cancelled (e.g. WorkflowExecutor).
+        self._cancel_callbacks: List[Callable[[str], None]] = []
         # Logger for observability
         self.logger = logger or logging.getLogger(__name__)
 
@@ -73,6 +75,12 @@ class SubAgentRegistry:
             ctx.result = "Cancelled"
         self.logger.info("Cancelled sub-agent '%s'", agent_id)
         self._notify_status_change(agent_id)
+        # Fire cancel callbacks (e.g. WorkflowExecutor)
+        for cb in self._cancel_callbacks:
+            try:
+                cb(agent_id)
+            except Exception:
+                self.logger.exception("Cancel callback error for %s", agent_id)
         return True
 
     def list_active(self) -> List[AgentContext]:
@@ -257,6 +265,26 @@ class SubAgentRegistry:
     def shutdown(self, wait: bool = True):
         """Shut down the thread pool, optionally waiting for running tasks."""
         self._executor.shutdown(wait=wait)
+
+    def add_cancel_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback invoked whenever any agent is cancelled."""
+        if callback not in self._cancel_callbacks:
+            self._cancel_callbacks.append(callback)
+
+    def remove_cancel_callback(self, callback: Callable[[str], None]) -> None:
+        """Unregister a previously-added cancel callback."""
+        try:
+            self._cancel_callbacks.remove(callback)
+        except ValueError:
+            pass
+
+    def cleanup(self) -> int:
+        """Remove all non-running sub-agents and reset state.
+
+        Returns the number of removed agents."""
+        removed = self.clear_completed()
+        self._cancel_callbacks.clear()
+        return removed
 
     @property
     def active_count(self) -> int:

@@ -256,12 +256,27 @@ class SpawnSubagentTool(BaseTool):
 
             client = LLMClient(subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call)
 
+            # 自动合并 MCP 等外部工具到 allowed_tools
+            # 主 LLM 可能不知道 MCP 工具名，子 agent 应自动获得全部可用工具
             if allowed_tools:
                 all_tools = client.get_builtin_tools()
+                all_names = {t.get("function", {}).get("name") for t in all_tools}
+                _internal_tools = {
+                    "spawn_subagent", "get_subagent_status", "cancel_subagent",
+                    "list_subagents", "execute_workflow", "get_workflow_status",
+                }
+                # 合并：LLM 指定的白名单 + 所有非内部工具 (MCP 等)
+                merged_allowed = set(allowed_tools) | (all_names - _internal_tools)
+                if merged_allowed != set(allowed_tools):
+                    extra = merged_allowed - set(allowed_tools)
+                    logger.info(
+                        f"Subagent {agent_id} auto-included external tools: {extra}"
+                    )
+
                 filtered_tool_defs = [
                     t
                     for t in all_tools
-                    if t.get("function", {}).get("name") in allowed_tools
+                    if t.get("function", {}).get("name") in merged_allowed
                 ]
 
                 if filtered_tool_defs:

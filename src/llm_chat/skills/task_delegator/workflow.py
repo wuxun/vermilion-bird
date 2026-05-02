@@ -246,6 +246,23 @@ class WorkflowExecutor:
         self._registry = subagent_registry
         self._spawn_tool = spawn_tool
         self._running: Dict[str, WorkflowResult] = {}
+        # Track agent_id → workflow_id mapping for cancel chain
+        self._agent_to_wf: Dict[str, str] = {}
+        # Register cancel callback so panel cancel cascades to workflow
+        self._registry.add_cancel_callback(self._on_agent_cancelled)
+
+    def _on_agent_cancelled(self, agent_id: str) -> None:
+        """Called by registry when an agent is cancelled.
+
+        Cascades cancellation to the enclosing workflow.
+        """
+        wf_id = self._agent_to_wf.get(agent_id)
+        if wf_id:
+            self.cancel(wf_id)
+            logger.info(
+                "Cascaded cancel from agent '%s' to workflow '%s'",
+                agent_id, wf_id,
+            )
 
     def execute(self, workflow: AgentWorkflow) -> str:
         """同步执行工作流，阻塞直到完成，返回 workflow_id。
@@ -273,7 +290,7 @@ class WorkflowExecutor:
             None,  # no parent_result for root
         )
 
-        # 所有节点执行完毕且无错误 → completed
+        # 所有节点执行完毕且无错误 → completed (除非已被 cancel 设成 cancelled)
         if result.status == "running":
             result.status = "completed"
         result.end_time = time.time()
@@ -293,6 +310,14 @@ class WorkflowExecutor:
         parent_result: Optional[str] = None,
     ):
         """递归执行工作流节点。"""
+        # 检查工作流是否已被取消
+        if result.status == "cancelled":
+            logger.debug(
+                "Workflow '%s' node '%s' aborted: workflow cancelled",
+                workflow.name, node.node_id,
+            )
+            return
+
         try:
             if node.node_type == WorkflowNodeType.AGENT:
                 self._run_agent_node(node, workflow, result, parent_result)
@@ -346,6 +371,9 @@ class WorkflowExecutor:
         )
         self._registry.spawn(agent_id, context)
 
+        # Track agent → workflow mapping for cancel cascade
+        self._agent_to_wf[agent_id] = workflow.workflow_id
+
         future = self._registry.submit(
             agent_id,
             self._spawn_tool._execute_async,
@@ -359,6 +387,15 @@ class WorkflowExecutor:
 
         try:
             agent_result = future.result(timeout=node.timeout + 30)
+            # Check if workflow was cancelled while waiting
+            if result.status == "cancelled":
+                self._registry.cancel(agent_id)
+                result.node_results[node.node_id] = {
+                    "agent_id": agent_id,
+                    "status": "cancelled",
+                    "error": "Workflow cancelled",
+                }
+                return
             result.node_results[node.node_id] = {
                 "agent_id": agent_id,
                 "status": "completed",
@@ -485,6 +522,23 @@ class WorkflowExecutor:
             for r in self._running.values()
             if r.status == "running"
         ]
+
+    def cleanup(self) -> int:
+        """Remove completed/failed/cancelled workflows, release resources."""
+        to_remove = [
+            wf_id for wf_id, r in self._running.items()
+            if r.status != "running"
+        ]
+        for wf_id in to_remove:
+            del self._running[wf_id]
+        # Clean up agent→wf mappings for removed workflows
+        self._agent_to_wf = {
+            aid: wf_id for aid, wf_id in self._agent_to_wf.items()
+            if wf_id in self._running
+        }
+        if to_remove:
+            logger.info("Cleaned up %d finished workflows", len(to_remove))
+        return len(to_remove)
 
 
 # ------------------------------------------------------------------

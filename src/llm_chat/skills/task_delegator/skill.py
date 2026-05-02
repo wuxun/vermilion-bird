@@ -101,7 +101,12 @@ class TaskDelegatorSkill(BaseSkill):
         self.logger.info(f"TaskDelegatorSkill loaded with config: {config}")
 
     def on_unload(self) -> None:
-        """卸载时清理线程池，防止资源泄露。"""
+        """卸载时清理线程池和结果，防止资源泄露。"""
+        # 清理工作流结果
+        if self._workflow_executor is not None:
+            self._workflow_executor.cleanup()
+        # 清理 agent registry (已完成/已取消的 agent + 回调)
         if self._registry is not None:
+            self._registry.cleanup()
             self._registry.shutdown(wait=False)
         self.logger.info("TaskDelegatorSkill unloaded")
