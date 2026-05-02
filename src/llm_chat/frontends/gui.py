@@ -336,7 +336,7 @@ class GUIFrontend(BaseFrontend):
         self._delete_conv_button: Optional[QPushButton] = None
         self._rename_conv_button: Optional[QPushButton] = None
         self._context_label: Optional[QLabel] = None
-        self._current_model: str = self._config.llm.model if (self._config and hasattr(self._config, 'llm')) else "unknown"
+        self._current_model: str = "deepseek-chat"  # 稍后由 set_config 覆盖
 
         self._on_new_conversation: Optional[Callable] = None
         self._on_delete_conversation: Optional[Callable] = None
