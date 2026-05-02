@@ -187,6 +187,7 @@ class ChatCore:
                 tools,
                 history=processed_history,
                 system_context=system_context,
+                cancel_event=self._cancel_event,
                 **params,
             ):
                 if self._cancel_event.is_set():

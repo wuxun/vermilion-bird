@@ -33,6 +33,7 @@ class LLMClientStreamToolsMixin:
         history: Optional[List[Dict[str, Any]]] = None,
         system_context: Optional[str] = None,
         max_iterations: int = 100,
+        cancel_event=None,
         **kwargs,
     ) -> Generator[Any, None, None]:
         if not self.protocol.supports_tools():
@@ -62,6 +63,10 @@ class LLMClientStreamToolsMixin:
         total_output_chars = 0  # 累计输出字符数，用于 token 估算
 
         for iteration in range(max_iterations):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Stream cancelled during tool iteration")
+                return
+
             url = self.protocol.get_chat_url()
             headers = self.protocol.get_headers()
             data = self.protocol.build_chat_request_with_tools(
@@ -81,9 +86,11 @@ class LLMClientStreamToolsMixin:
                 )
                 response.raise_for_status()
 
-                logger.debug(f"响应状态码: {response.status_code}")
-
                 for line in response.iter_lines():
+                    if cancel_event and cancel_event.is_set():
+                        logger.info("Stream cancelled mid-response")
+                        return
+
                     if not line:
                         continue
 

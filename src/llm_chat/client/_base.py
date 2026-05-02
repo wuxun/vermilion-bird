@@ -134,3 +134,35 @@ class LLMClientBase:
 
     def execute_builtin_tool(self, name: str, arguments: Dict[str, Any]) -> str:
         return self._tool_registry.execute_tool(name, arguments=arguments)
+
+    def _http_post_json_with_retry(
+        self, url: str, data: Dict[str, Any], headers: Dict[str, str],
+        label: str = "API",
+    ) -> Dict[str, Any]:
+        """POST JSON 请求 + 重试。所有 client mixin 共用此方法。
+
+        Returns: 解析后的 JSON 响应
+        Raises: LLMError on exhaustion
+        """
+        import time
+        last_error = None
+        for attempt in range(self.config.llm.max_retries):
+            try:
+                response = self.session.post(url, json=data, headers=headers)
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as e:
+                last_error = e
+                if attempt == self.config.llm.max_retries - 1:
+                    error_msg = str(e)
+                    if hasattr(e, "response") and e.response is not None:
+                        try:
+                            error_msg = f"{error_msg}\n详情: {e.response.json()}"
+                        except Exception:
+                            error_msg = f"{error_msg}\n响应: {e.response.text}"
+                    logger.error(f"[{label}] 重试耗尽: {error_msg}")
+                    raise LLMError(f"API 请求失败: {error_msg}")
+                logger.warning(f"[{label}] 请求失败, {attempt+1}后重试: {e}")
+                time.sleep(1)
+        # unreachable
+        raise LLMError(f"API 请求失败: {last_error}")

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import time
 from typing import List, Dict, Any, Optional, Generator
 
 import requests
@@ -60,45 +59,21 @@ class LLMClientChatMixin:
 
         log_request_details(url, data, messages, kwargs)
 
-        for i in range(self.config.llm.max_retries):
-            try:
-                response = self.session.post(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+        result = self._http_post_json_with_retry(url, data, headers, label="chat")
 
-                # Track token usage via observability
-                usage = result.get("usage", {})
-                if usage:
-                    from llm_chat.utils.observability import get_observability
-                    obs = get_observability()
-                    obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
-                    obs.increment("tokens.completion", usage.get("completion_tokens", 0))
-                    obs.increment("tokens.total", usage.get("total_tokens", 0))
-                    model = self.config.llm.model
-                    obs.increment(f"tokens.{model}", usage.get("total_tokens", 0))
+        # Track token usage
+        usage = result.get("usage", {})
+        if usage:
+            from llm_chat.utils.observability import get_observability
+            obs = get_observability()
+            obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
+            obs.increment("tokens.completion", usage.get("completion_tokens", 0))
+            obs.increment("tokens.total", usage.get("total_tokens", 0))
+            obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
 
-                response_text = self.protocol.parse_chat_response(result)
-                logger.info(f"聊天响应: length={len(response_text)}")
-
-                return response_text
-            except requests.RequestException as e:
-                if i == self.config.llm.max_retries - 1:
-                    error_msg = str(e)
-                    if hasattr(e, "response") and e.response is not None:
-                        try:
-                            error_detail = e.response.json()
-                            error_msg = f"{error_msg}\n详情: {error_detail}"
-                        except Exception:
-                            error_msg = f"{error_msg}\n响应内容: {e.response.text}"
-                    logger.error(
-                        f"API 请求失败(重试 {i + 1}/{self.config.llm.max_retries}): "
-                        f"{error_msg}"
-                    )
-                    raise LLMError(f"API 请求失败: {error_msg}")
-                logger.warning(f"请求失败，{i + 1}秒后重试: {e}")
-                time.sleep(1)
-
-        return ""
+        response_text = self.protocol.parse_chat_response(result)
+        logger.info(f"聊天响应: length={len(response_text)}")
+        return response_text
 
     # ------------------------------------------------------------------
     # 流式聊天

@@ -19,7 +19,6 @@ from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
 from llm_chat.health import get_checker, create_database_checker, create_service_manager_checker
-from llm_chat.services import ConversationService
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -54,7 +53,6 @@ class App:
         self.conversation_manager = self._init_conversation_manager()
         self.chat_core = self._init_chat_core()
         self._init_prompt_skills()
-        self._conv_service = self._init_conversation_service()
         self.service_manager = self._init_service_manager()
         self._health_checker = self._init_health_checker()
         self._init_scheduler()
@@ -82,12 +80,37 @@ class App:
     def _init_conversation_manager(self):
         memory_config = self._build_memory_config()
         default_model_params = self.config.llm.get_model_params()
+        memory_manager = self._init_memory_manager()
         return ConversationManager(
             self.client,
             self.storage,
             memory_config=memory_config,
             default_model_params=default_model_params,
+            memory_manager=memory_manager,
         )
+
+    def _init_memory_manager(self):
+        """创建共享 MemoryManager (可选，取决于 config.memory.enabled)。"""
+        memory_config = self._build_memory_config()
+        if not memory_config.get("enabled"):
+            return None
+        try:
+            from llm_chat.memory import MemoryManager, MemoryStorage
+            from llm_chat.memory.summarizer import LLMSummarizer
+            memory_storage = MemoryStorage(
+                memory_config.get("storage_dir", "~/.vermilion-bird/memory")
+            )
+            summarizer = LLMSummarizer(self.client)
+            return MemoryManager(
+                storage=memory_storage,
+                db_storage=self.storage,
+                llm_client=self.client,
+                summarizer=summarizer,
+                config=memory_config,
+            )
+        except Exception as e:
+            logger.warning(f"共享记忆系统初始化失败: {e}")
+            return None
 
     def _init_chat_core(self):
         chat_core = ChatCore(
@@ -97,9 +120,6 @@ class App:
         )
         logger.info("ChatCore initialized")
         return chat_core
-
-    def _init_conversation_service(self):
-        return ConversationService(self.conversation_manager, self.storage)
 
     def _init_service_manager(self):
         return ServiceManager()
@@ -378,20 +398,18 @@ class App:
         frontend.set_on_exit(handle_exit)
 
     def _on_new_conversation(self):
-        # 如果当前有未保存内容的对话，不创建新对话
         if self.current_frontend.is_current_conversation_empty():
             convs = self.conversation_manager.list_conversations()
             if convs:
-                # 已有对话且当前为空，不需要新建
                 return
 
-        result = self._conv_service.create()
-        self._current_conversation_id = result["id"]
-        self.current_frontend.set_current_conversation(result["id"], [])
+        conv = self.conversation_manager.create_conversation()
+        self._current_conversation_id = conv.conversation_id
+        self.current_frontend.set_current_conversation(conv.conversation_id, [])
         self.current_frontend.request_conversation_list_refresh()
 
     def _on_delete_conversation(self, conversation_id: str):
-        if conversation_id == self._conv_service.current_conversation_id:
+        if conversation_id == self._current_conversation_id:
             conversations = self.conversation_manager.list_conversations()
             if conversations:
                 next_conv = conversations[0]
@@ -404,7 +422,7 @@ class App:
                 self._on_new_conversation()
                 return
 
-        self._conv_service.delete(conversation_id)
+        self.conversation_manager.delete_conversation(conversation_id)
         self.current_frontend.request_conversation_list_refresh()
 
     def _on_rename_conversation(self, conversation_id: str):
@@ -416,16 +434,16 @@ class App:
         )
 
         if new_title:
-            self._conv_service.rename(conversation_id, new_title)
+            self.storage.update_conversation(conversation_id, title=new_title)
             self.current_frontend.request_conversation_list_refresh()
 
     def _on_switch_conversation(self, conversation_id: str):
-        messages = self._conv_service.switch(conversation_id)
         self._current_conversation_id = conversation_id
+        messages = self.storage.get_messages(conversation_id)
         self.current_frontend.set_current_conversation(conversation_id, messages)
 
     def _on_list_conversations(self):
-        conversations = self._conv_service.list()
+        conversations = self.conversation_manager.list_conversations()
         self.current_frontend.update_conversation_list(conversations)
 
     def run(self, frontend: BaseFrontend):

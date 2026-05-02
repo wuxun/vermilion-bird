@@ -2,12 +2,8 @@
 
 import json
 import logging
-import time
 from typing import List, Dict, Any, Optional, Generator
 
-import requests
-
-from llm_chat.exceptions import LLMError
 from llm_chat.utils.observability import observe, get_observability, llm_call_completed
 
 logger = logging.getLogger(__name__)
@@ -72,28 +68,18 @@ class LLMClientToolsMixin:
 
             logger.debug(f"迭代 {iteration + 1}: 发送请求")
 
-            for i in range(self.config.llm.max_retries):
-                try:
-                    response = self.session.post(url, json=data, headers=headers)
-                    response.raise_for_status()
-                    result = response.json()
-                    # 记录 token 消耗
-                    usage = result.get("usage", {})
-                    if usage:
-                        obs = get_observability()
-                        obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
-                        obs.increment("tokens.completion", usage.get("completion_tokens", 0))
-                        obs.increment("tokens.total", usage.get("total_tokens", 0))
-                        obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
-                    break
-                except requests.RequestException as e:
-                    if i == self.config.llm.max_retries - 1:
-                        logger.error(f"请求失败(重试耗尽): {e}")
-                        raise LLMError(f"API 请求失败: {e}")
-                    logger.warning(f"请求失败，{i + 1}秒后重试: {e}")
-                    time.sleep(1)
-            else:
-                continue
+            result = self._http_post_json_with_retry(
+                url, data, headers, label=f"tools iter {iteration+1}"
+            )
+            # Track token usage
+            usage = result.get("usage", {})
+            if usage:
+                from llm_chat.utils.observability import get_observability
+                obs = get_observability()
+                obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
+                obs.increment("tokens.completion", usage.get("completion_tokens", 0))
+                obs.increment("tokens.total", usage.get("total_tokens", 0))
+                obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
 
             if not self.protocol.has_tool_calls(result):
                 response_text = self.protocol.parse_chat_response(result)
