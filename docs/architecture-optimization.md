@@ -6,6 +6,7 @@
 
 > ✅ 已完成: 2.1 App God Class 重构 → 引入 ChatCore
 > ✅ 已完成: 2.2 Conversation.send_message() 方法链拆解 → Pipeline 阶段化
+> ✅ 已完成: 2.5 可观测性层 → @observe + span/counter/gauge
 > ✅ 已完成: 2.6 记忆系统与 LLM 客户端解耦 → Summarizer 抽象
 > ✅ 已修复: DeepSeek R1 reasoning_content 丢失 (流式+同步两条路径)
 
@@ -612,16 +613,64 @@ class ExecuteWorkflowTool(BaseTool):
 
 ---
 
-### 2.5 缺少可观测性层
+### 2.5 缺少可观测性层 ✅ 已实施
 
 **当前问题**：仅有基础 `logging`，缺少：
 - 结构化日志（便于机器分析和可视化）
 - Token 消耗追踪（每次 LLM 调用的 token 数）
 - 工具调用延迟统计
-- 子 agent 执行的全链路追踪
 - 调用次数 / 成功率 / 错误率统计
 
-**建议方案**：引入轻量级可观测性装饰器
+**实施方案**：创建 `utils/observability.py`，提供：
+
+| 组件 | 说明 |
+|------|------|
+| `Span` dataclass | 单次操作追踪 (operation, start/end, status, duration_ms, error) |
+| `Observability` | 线程安全的指标收集器 (spans + counters + gauges) |
+| `@observe` 装饰器 | 自动追踪函数耗时/异常，计数成功/失败 |
+| `token_used()` | 记录 token 消耗 |
+| `tool_called()` | 记录工具调用 |
+| `llm_call_completed()` | 记录 LLM 调用完成 |
+
+**已变更文件**：
+- `src/llm_chat/utils/observability.py` — **新增** 可观测性模块 (220 行)
+- `src/llm_chat/client/_tools.py` — `chat_with_tools` / `_send_chat_request_with_tools` 加 @observe + token 追踪
+- `src/llm_chat/chat_core.py` — `send_message` / `send_message_stream` 加 @observe
+- `src/llm_chat/conversation.py` — `send_message` 加 @observe
+
+**装饰的方法**：
+```python
+@observe("llm.chat_with_tools")          # LLMClientToolsMixin
+@observe("llm.chat_with_tools_request")   # 同上 (内部迭代循环)
+@observe("chat_core.send_message")        # ChatCore
+@observe("chat_core.send_message_stream") # ChatCore
+@observe("conversation.send_message")     # Conversation
+```
+
+**使用示例**：
+```python
+from llm_chat.utils.observability import get_observability
+
+obs = get_observability()
+print(obs.get_summary())
+# {
+#   'total_spans': 15,
+#   'success_spans': 14,
+#   'error_spans': 1,
+#   'avg_duration_ms': 234.5,
+#   'by_operation': {
+#     'chat_core.send_message': {'count': 5, 'success': 5, 'avg_ms': 320},
+#     'llm.chat_with_tools': {'count': 4, 'success': 4, 'avg_ms': 450},
+#   },
+#   'counters': {'tokens.total': 12500, 'llm.calls': 9},
+#   'gauges': {'tokens.last_call': 234}
+# }
+
+# 最近 span 记录 (供 GUI 仪表盘)
+print(obs.get_recent_spans(10))
+```
+
+**未完成（可选）**：GUI 中集成实时仪表盘展示 span/指标数据。
 
 ```python
 import time

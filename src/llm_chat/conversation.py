@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from llm_chat.client import LLMClient
 from llm_chat.storage import Storage
 from llm_chat.context import ContextManager, ContextMessage
+from llm_chat.utils.observability import observe
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,7 @@ class Conversation:
         }
         self.storage.add_message(self.conversation_id, "tool", content, metadata)
 
+    @observe("conversation.send_message")
     def send_message(self, message: str) -> str:
         """发送消息并获取回复。
 

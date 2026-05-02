@@ -15,6 +15,7 @@ from llm_chat.config import Config
 from llm_chat.client import LLMClient
 from llm_chat.conversation import ConversationManager
 from llm_chat.utils.token_counter import count_tokens
+from llm_chat.utils.observability import observe
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class ChatCore:
     # Public API
     # ------------------------------------------------------------------
 
+    @observe("chat_core.send_message")
     def send_message(
         self,
         conversation_id: str,
@@ -108,6 +110,7 @@ class ChatCore:
 
         return response
 
+    @observe("chat_core.send_message_stream")
     def send_message_stream(
         self,
         conversation_id: str,

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Generator
 import requests
 
 from llm_chat.exceptions import LLMError
+from llm_chat.utils.observability import observe, get_observability, llm_call_completed
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class LLMClientToolsMixin:
     # 同步工具调用
     # ------------------------------------------------------------------
 
+    @observe("llm.chat_with_tools")
     def chat_with_tools(
         self,
         message: str,
@@ -44,6 +46,7 @@ class LLMClientToolsMixin:
 
         return self._send_chat_request_with_tools(messages, tools, **kwargs)
 
+    @observe("llm.chat_with_tools_request")
     def _send_chat_request_with_tools(
         self,
         messages: List[Dict[str, Any]],
@@ -74,6 +77,13 @@ class LLMClientToolsMixin:
                     response = self.session.post(url, json=data, headers=headers)
                     response.raise_for_status()
                     result = response.json()
+                    # 记录 token 消耗
+                    usage = result.get("usage", {})
+                    if usage:
+                        obs = get_observability()
+                        obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
+                        obs.increment("tokens.completion", usage.get("completion_tokens", 0))
+                        obs.increment("tokens.total", usage.get("total_tokens", 0))
                     break
                 except requests.RequestException as e:
                     if i == self.config.llm.max_retries - 1:
