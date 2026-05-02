@@ -135,77 +135,112 @@ class Conversation:
         self.storage.add_message(self.conversation_id, "tool", content, metadata)
 
     def send_message(self, message: str) -> str:
+        """发送消息并获取回复。
+
+        管道: 持久化用户消息 → 构建压缩上下文 → LLM 调用 → 存储回复 → 记忆提取
+        """
+        # 阶段 1: 持久化用户消息
         self.add_user_message(message)
 
-        memory_context = self._get_memory_context()
-        # 获取完整历史消息，包括工具结果，保留metadata
-        all_messages = self.storage.get_messages(self.conversation_id)
-        history = all_messages[:-1]  # 去掉刚添加的当前用户消息
+        # 阶段 2-3: 记忆注入 + 上下文压缩 + LLM 调用
+        response = self._call_llm_with_compression(message)
 
-        # 使用上下文管理器处理上下文
-        if self._context_manager:
-            from llm_chat.context import ContextMessage
-
-            # 转换为ContextMessage格式
-            context_messages = []
-            if memory_context:
-                context_messages.append(
-                    ContextMessage(role="system", content=memory_context)
-                )
-
-            for msg in history:
-                context_messages.append(
-                    ContextMessage(
-                        role=msg["role"],
-                        content=msg["content"],
-                        metadata=msg.get("metadata"),
-                        timestamp=msg.get("timestamp"),
-                    )
-                )
-
-            context_messages.append(ContextMessage(role="user", content=message))
-
-            # 处理上下文压缩
-            result = self._context_manager.process_context(
-                conversation_id=self.conversation_id, messages=context_messages
-            )
-
-            # 计算最终发给大模型的总token数
-            total_sent_tokens = sum(
-                count_tokens(msg.content) for msg in result.messages
-            )
-            logger.info(
-                f"[CONVERSATION] 最终发送给大模型的总token数={total_sent_tokens}, 压缩级别={result.level.name}"
-            )
-
-            # 分离系统提示和对话历史
-            system_prompt = None
-            processed_history = []
-
-            for msg in result.messages:
-                if msg.role == "system" and system_prompt is None:
-                    system_prompt = msg.content
-                else:
-                    processed_history.append({"role": msg.role, "content": msg.content})
-
-            # 调用LLM
-            response = self.client.chat(
-                message if not processed_history else processed_history[-1]["content"],
-                processed_history[:-1] if processed_history else [],
-                system_context=system_prompt,
-                **self._model_params,
-            )
-        else:
-            # 降级到原有逻辑
-            response = self.client.chat(
-                message, history, system_context=memory_context, **self._model_params
-            )
-
+        # 阶段 4: 持久化助手回复
         self.add_assistant_message(response)
 
+        # 阶段 5: 异步记忆提取
         self._extract_memory_async(message, response)
 
         return response
+
+    # ------------------------------------------------------------------
+    # Pipeline 阶段 (可独立测试和替换)
+    # ------------------------------------------------------------------
+
+    def _call_llm_with_compression(self, message: str) -> str:
+        """阶段 2-3: 记忆注入 → 上下文压缩 → LLM 调用。
+
+        有 ContextManager 时走压缩路径，否则直接调用。
+        """
+        memory_context = self._get_memory_context()
+        all_messages = self.storage.get_messages(self.conversation_id)
+        history = all_messages[:-1]  # 排除刚添加的当前用户消息
+
+        if self._context_manager:
+            system_prompt, processed_history, processed_message = (
+                self._compress_context(memory_context, history, message)
+            )
+            return self.client.chat(
+                processed_message,
+                processed_history,
+                system_context=system_prompt,
+                **self._model_params,
+            )
+
+        # 降级：无 ContextManager 时直接调用
+        return self.client.chat(
+            message, history, system_context=memory_context, **self._model_params
+        )
+
+    def _compress_context(
+        self,
+        memory_context: Optional[str],
+        history: List[Dict[str, Any]],
+        message: str,
+    ):
+        """阶段 2b: 将记忆上下文和历史消息送入 ContextManager 压缩。
+
+        Returns:
+            (system_prompt, processed_history, processed_message)
+        """
+        from llm_chat.context import ContextMessage
+
+        context_messages = []
+        if memory_context:
+            context_messages.append(
+                ContextMessage(role="system", content=memory_context)
+            )
+
+        for msg in history:
+            context_messages.append(
+                ContextMessage(
+                    role=msg["role"],
+                    content=msg["content"],
+                    metadata=msg.get("metadata"),
+                    timestamp=msg.get("timestamp"),
+                )
+            )
+
+        context_messages.append(ContextMessage(role="user", content=message))
+
+        result = self._context_manager.process_context(
+            conversation_id=self.conversation_id, messages=context_messages
+        )
+
+        total_sent_tokens = sum(count_tokens(m.content) for m in result.messages)
+        logger.info(
+            f"[CONVERSATION] 最终发送token={total_sent_tokens}, "
+            f"压缩级别={result.level.name}"
+        )
+
+        # 分离系统提示和对话历史
+        system_prompt = None
+        processed_history = []
+
+        for msg in result.messages:
+            if msg.role == "system" and system_prompt is None:
+                system_prompt = msg.content
+            else:
+                processed_history.append({"role": msg.role, "content": msg.content})
+
+        # 提取当前用户消息（最后一条 user 消息）
+        if processed_history and processed_history[-1]["role"] == "user":
+            processed_message = processed_history[-1]["content"]
+            processed_history = processed_history[:-1]
+        else:
+            processed_message = message
+
+        return system_prompt, processed_history, processed_message
 
     def _get_memory_context(self) -> Optional[str]:
         """获取记忆上下文"""

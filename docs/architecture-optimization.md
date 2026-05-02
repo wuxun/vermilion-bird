@@ -1,8 +1,12 @@
 # Vermilion Bird 架构优化分析
 
 **分析时间**: 2026-05-02
-**Commit**: 164afc6
+**Commit**: 9e781f5 (已实施)
 **Branch**: main
+
+> ✅ 已完成: 2.1 App God Class 重构 → 引入 ChatCore
+> ✅ 已完成: 2.2 Conversation.send_message() 方法链拆解 → Pipeline 阶段化
+> ✅ 已修复: DeepSeek R1 reasoning_content 丢失 (流式+同步两条路径)
 
 ---
 
@@ -65,11 +69,19 @@ Conversation.add_user_message() / add_assistant_message()
 
 ## 2. 架构问题与优化
 
-### 2.1 App 类承担过多职责（God Class 倾向）
+### 2.1 App 类承担过多职责（God Class 倾向） ✅ 已实施
 
 **当前问题**：`app.py` 的 `App.__init__` 同时处理：配置初始化、LLM 客户端创建、会话管理、前端接线、MCP 管理器、调度器初始化、健康检查、工具执行委托。随功能增加，App 将持续膨胀，难以测试和维护。
 
-**建议方案**：引入 Builder 模式或依赖注入容器，让 App 纯粹做编排：
+**实施方案**：引入 `ChatCore` 作为统一对话引擎，GUI/CLI/飞书 均通过 ChatCore 处理 LLM 对话，不再各自实现调用逻辑。App 退为薄协调层。
+
+**已变更文件**：
+- `src/llm_chat/chat_core.py` — **新增** 核心对话引擎 (301 行)
+- `src/llm_chat/app.py` — 简化，创建 ChatCore 并注入到前端
+- `src/llm_chat/frontends/gui.py` — 净减少 180 行，`_on_send()` 委托给 ChatCore
+- `src/llm_chat/frontends/feishu/adapter.py` — 净减少 60 行，`_process_with_llm()` 委托给 ChatCore
+
+**未完成（可选）**：AppBuilder 模式可作为后续优化做更彻底的 DI 拆分。
 
 ```python
 class AppBuilder:
@@ -110,11 +122,29 @@ class AppBuilder:
 
 ---
 
-### 2.2 Conversation.send_message() 方法链过长
+### 2.2 Conversation.send_message() 方法链过长 ✅ 已实施
 
 **当前问题**：单个方法承担：记忆注入 → 上下文压缩 → LLM 调用 → 响应存储 → 记忆提取。各阶段耦合在一起，难以单独测试、替换或扩展。
 
-**建议方案**：分离为 Pipeline 模式，每个阶段独立可插拔：
+**实施方案**：拆解为独立阶段方法，流水线清晰可读：
+
+```python
+# 拆解后 — 5 阶段流水线
+def send_message(self, message: str) -> str:
+    self.add_user_message(message)                          # 阶段 1: 持久化
+    response = self._call_llm_with_compression(message)      # 阶段 2-3: 压缩+LLM
+    self.add_assistant_message(response)                     # 阶段 4: 存储回复
+    self._extract_memory_async(message, response)            # 阶段 5: 记忆提取
+    return response
+
+# 子阶段拆解
+def _call_llm_with_compression(self, message):  # 协调压缩/LLM
+def _compress_context(self, memory_context, history, message):  # 上下文压缩
+```
+
+**优势**：每个阶段可独立单元测试；可选阶段（如无 ContextManager 降级）；易插入新中间阶段。
+
+**未完成（可选）**：正式的 PipelineStage ABC + PipelineContext 管道模式可在未来版实施。
 
 ```python
 from abc import ABC, abstractmethod
@@ -829,11 +859,13 @@ class RuleSummarizer:
 ```
 目标：降低耦合，增加诊断能力
 
-1. App 拆分为 AppBuilder（§2.1）
-2. Conversation 引入 MessagePipeline（§2.2）
-3. 引入 Observability 模块（§2.5）
-4. 关键节点添加 @observe 装饰器
-5. 添加 /health 端点输出详细诊断数据
+1. App 引入 ChatCore 统一引擎 ✅ 已完成（§2.1）
+2. Conversation.send_message() 拆解为 Pipeline 阶段 ✅ 已完成（§2.2）
+3. AppBuilder 更彻底 DI 拆分 ⏳ 可选后续
+4. 正式的 PipelineStage ABC ⏳ 可选后续
+5. 引入 Observability 模块（§2.5）
+6. 关键节点添加 @observe 装饰器
+7. 添加 /health 端点输出详细诊断数据
 ```
 
 ### 阶段 3：RAG + 本地知识库（1-2 周）
