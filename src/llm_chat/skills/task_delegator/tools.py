@@ -120,7 +120,6 @@ class SpawnSubagentTool(BaseTool):
         # 获取工作目录并创建
         work_dir = self._get_work_dir(work_dir_arg)
         os.makedirs(work_dir, exist_ok=True)
-        logger.info(f"Using work directory: {work_dir}")
 
         agent_id = str(uuid.uuid4())
 
@@ -143,17 +142,32 @@ class SpawnSubagentTool(BaseTool):
         if model_config:
             model_info = f" (model: {model_config.get('model', 'default')})"
         logger.info(
-            f"Spawned subagent {agent_id}{model_info} with task: {task[:50]}..."
+            "Spawned subagent %s%s with task: %s",
+            agent_id, model_info, task[:50]
         )
 
-        # 执行任务
-        result = self._execute_task(
-            agent_id, task, filtered_tools, timeout, context, model_config
+        # ✅ 异步提交到线程池，立即返回 agent_id
+        self.registry.submit(
+            agent_id,
+            self._execute_async,
+            agent_id, task, filtered_tools, timeout, context, model_config,
         )
 
-        return result
+        return json.dumps(
+            {
+                "agent_id": agent_id,
+                "status": "spawned",
+                "message": (
+                    f"子agent已创建并在后台执行中。"
+                    f"使用 get_subagent_status(\"{agent_id}\") 查询进度和结果。"
+                    f"也可以使用 cancel_subagent(\"{agent_id}\") 取消任务。"
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
-    def _execute_task(
+    def _execute_async(
         self,
         agent_id: str,
         task: str,
@@ -162,7 +176,10 @@ class SpawnSubagentTool(BaseTool):
         context: AgentContext,
         model_config: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """执行子agent任务"""
+        """在后台线程中执行子agent任务。
+
+        返回完整结果文本。异常会被 Future 的 done_callback 捕获。
+        """
         try:
             from llm_chat.client import LLMClient
 
@@ -206,11 +223,7 @@ class SpawnSubagentTool(BaseTool):
             context.result = result
             logger.info(f"Subagent {agent_id} completed successfully")
 
-            return json.dumps(
-                {"agent_id": agent_id, "status": "completed", "result": result},
-                ensure_ascii=False,
-                indent=2,
-            )
+            return result
 
         except Exception as e:
             error_msg = f"Subagent {agent_id} failed: {str(e)}"
@@ -219,11 +232,7 @@ class SpawnSubagentTool(BaseTool):
             context.status = "failed"
             context.result = error_msg
 
-            return json.dumps(
-                {"agent_id": agent_id, "status": "failed", "error": str(e)},
-                ensure_ascii=False,
-                indent=2,
-            )
+            return error_msg
 
     def _create_subagent_config(self, model_config: Dict[str, Any]) -> "Config":
         """根据模型配置创建子agent配置"""
@@ -342,3 +351,54 @@ class CancelSubagentTool(BaseTool):
             logger.warning(f"Failed to cancel subagent {agent_id}: not found")
 
         return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+class ListSubagentsTool(BaseTool):
+    """列出所有子agent的工具"""
+
+    @property
+    def name(self) -> str:
+        return "list_subagents"
+
+    @property
+    def description(self) -> str:
+        return (
+            "列出所有子agent及其状态。用于在异步模式下查看多个并行子agent的进度。"
+            "每个子agent提供 agent_id, status, result 等信息。"
+        )
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+        }
+
+    def __init__(self, registry: Optional[SubAgentRegistry] = None):
+        self.registry = registry or SubAgentRegistry()
+
+    def execute(self, **kwargs) -> str:
+        agents = self.registry.list_all()
+        if not agents:
+            return json.dumps(
+                {"agents": [], "message": "No sub-agents found"},
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        active_count = sum(1 for a in agents if a["status"] == "running")
+        complete_count = sum(1 for a in agents if a["status"] == "completed")
+        failed_count = sum(1 for a in agents if a["status"] == "failed")
+
+        return json.dumps(
+            {
+                "agents": agents,
+                "summary": {
+                    "total": len(agents),
+                    "active": active_count,
+                    "completed": complete_count,
+                    "failed": failed_count,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )

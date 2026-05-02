@@ -261,7 +261,7 @@ class MessagePipeline:
 
 ---
 
-### 2.3 子 Agent 执行是同步阻塞的 ⚠️ 最关键问题
+### 2.3 子 Agent 执行是同步阻塞的 ⚠️ 最关键问题 ✅ 已实施
 
 **当前问题**：`SpawnSubagentTool._execute_task()` 中父 agent **同步等待**子 agent 完成，导致：
 
@@ -270,7 +270,7 @@ class MessagePipeline:
 3. 超时控制形同虚设（仅在 `App._execute_tool` 的 `future.result(timeout=60)` 生效）
 4. 用户体验差——需要等待子任务全部完成才能看到响应
 
-**建议方案**：改为真正的异步/线程池模式
+**实施方案**：改为 ThreadPoolExecutor + Future 追踪异步模式（与下方建议方案一致）
 
 ```python
 class SpawnSubagentTool(BaseTool):

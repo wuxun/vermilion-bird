@@ -9,6 +9,7 @@ from llm_chat.skills.task_delegator.tools import (
     SpawnSubagentTool,
     GetSubagentStatusTool,
     CancelSubagentTool,
+    ListSubagentsTool,
 )
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
@@ -31,7 +32,9 @@ class TaskDelegatorSkill(BaseSkill):
         return "1.0.0"
 
     def __init__(self):
-        self._registry = SubAgentRegistry()
+        self._registry = SubAgentRegistry(
+            max_workers=8,  # default, overridable via config
+        )
         self._parent_context = None
         self._config = None
 
@@ -46,6 +49,7 @@ class TaskDelegatorSkill(BaseSkill):
             ),
             GetSubagentStatusTool(registry=self._registry),
             CancelSubagentTool(registry=self._registry),
+            ListSubagentsTool(registry=self._registry),
         ]
 
     def on_load(self, config: Dict[str, Any]) -> None:
