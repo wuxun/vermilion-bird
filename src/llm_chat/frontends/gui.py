@@ -336,7 +336,7 @@ class GUIFrontend(BaseFrontend):
         self._delete_conv_button: Optional[QPushButton] = None
         self._rename_conv_button: Optional[QPushButton] = None
         self._context_label: Optional[QLabel] = None
-        self._current_model: str = "gpt-3.5-turbo"
+        self._current_model: str = self._config.llm.model if (self._config and hasattr(self._config, 'llm')) else "unknown"
 
         self._on_new_conversation: Optional[Callable] = None
         self._on_delete_conversation: Optional[Callable] = None
@@ -1106,7 +1106,11 @@ class GUIFrontend(BaseFrontend):
     def _get_current_context_limit(self) -> int:
         """获取当前模型上下文上限。"""
         from llm_chat.utils.token_counter import get_context_limit
-        return get_context_limit(self._current_model)
+
+        model = self._current_model or (
+            self._config.llm.model if (self._config and hasattr(self._config, 'llm')) else "unknown"
+        )
+        return get_context_limit(model)
 
     def _on_temperature_changed(self, value):
         """温度滑块变化处理"""
