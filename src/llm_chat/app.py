@@ -142,11 +142,16 @@ class App:
 
         Called after the skills dialog saves config.yaml changes.
         Unloads all skills, re-reads config, and loads skills per new config.
+        Preserves MCP tools by re-enabling tools after skill reload.
         """
         new_config = Config.from_yaml()
         self.config = new_config
         self.client.config = new_config
         self.client._setup_skills()
+        # Re-enable MCP tools (wiped by _setup_skills → tool_registry.clear())
+        if self._tools_enabled:
+            self._tools_enabled = False
+            self.enable_tools()
         logger.info("Skills reloaded from config.yaml")
 
     def get_scheduler(self) -> Optional["SchedulerService"]:

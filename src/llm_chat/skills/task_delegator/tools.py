@@ -240,7 +240,10 @@ class SpawnSubagentTool(BaseTool):
             context.model = subagent_config.llm.model
             context.protocol = subagent_config.llm.protocol
 
-            # 工具调用 hook：实时记录到 context.tool_calls_log
+            # 通知 registry 模型/协议已确定 → GUI 面板刷新
+            self.registry._notify_status_change(agent_id)
+
+            # 工具调用 hook：实时记录到 context.tool_calls_log 并通知 GUI
             def _on_tool_call(tool_name: str, args: dict, result: str):
                 context.tool_calls_log.append({
                     "tool": tool_name,
@@ -248,6 +251,8 @@ class SpawnSubagentTool(BaseTool):
                     "result": result[:300] + "..." if len(result) > 300 else result,
                     "ts": time.time(),
                 })
+                # 通知 GUI 刷新工具调用时间线
+                self.registry._notify_status_change(agent_id)
 
             client = LLMClient(subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call)
 
