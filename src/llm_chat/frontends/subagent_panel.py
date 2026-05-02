@@ -189,9 +189,13 @@ class AgentDetailDialog(QDialog):
         self._tool_calls_scroll = QScrollArea()
         self._tool_calls_scroll.setWidgetResizable(True)
         self._tool_calls_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._tool_calls_scroll.setStyleSheet(f"QScrollArea {{ border: none; background: transparent; }}")
+        self._tool_calls_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollArea QWidget#toolCallsContainer {{ background-color: {C_BG}; }}
+        """)
         self._tool_calls_scroll.setMaximumHeight(200)
         self._tool_calls_container = QWidget()
+        self._tool_calls_container.setObjectName("toolCallsContainer")
         self._tool_calls_container_layout = QVBoxLayout(self._tool_calls_container)
         self._tool_calls_container_layout.setContentsMargins(0, 0, 0, 0)
         self._tool_calls_container_layout.setSpacing(3)
@@ -667,10 +671,10 @@ def _add_tool_call_row(layout, index: int, call: Dict[str, Any]):
     row_layout.setContentsMargins(0, 1, 0, 1)
     row_layout.setSpacing(1)
 
-    call_text = f"#{index + 1} <b>{tool_name}</b>(<span style='color:{C_LIGHT};'>{args_str[:120]}</span>)"
+    call_text = f"#{index + 1} <b>{tool_name}</b>(<span style='color:{C_MEDIUM};'>{args_str[:120]}</span>)"
     call_lbl = QLabel(call_text)
     call_lbl.setFont(QFont("Arial", 9))
-    call_lbl.setStyleSheet(f"color: {C_DARK}; border: none; background: transparent; padding: 0 0 0 4px;")
+    call_lbl.setStyleSheet(f"color: {C_DARK}; border: none; background: transparent; padding: 2px 0 0 4px;")
     call_lbl.setWordWrap(True)
     call_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     row_layout.addWidget(call_lbl)
@@ -682,8 +686,8 @@ def _add_tool_call_row(layout, index: int, call: Dict[str, Any]):
         res_lbl = QLabel(preview)
         res_lbl.setFont(QFont("Arial", 8))
         res_lbl.setStyleSheet(
-            f"color: {C_MEDIUM}; border: none; background: {C_TOOL_BG}; "
-            f"border-radius: 3px; padding: 2px 6px; margin-left: 12px;"
+            f"color: #4A2C2A; border: none; background-color: #FFF8F0; "
+            f"border-radius: 3px; padding: 3px 6px; margin-left: 12px;"
         )
         res_lbl.setWordWrap(True)
         res_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

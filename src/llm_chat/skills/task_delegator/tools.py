@@ -518,10 +518,13 @@ class ExecuteWorkflowTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "执行一个 agent 工作流（同步阻塞，完成后返回结果）。支持三种模式：\n"
+            "执行一个 agent 工作流。提交后立即返回 workflow_id，工作流在后台执行。\n"
+            "支持三种模式：\n"
             "1. 'simple': 单个子 agent 执行单一任务\n"
             "2. 'parallel': 并行执行多个子 agent 处理独立子任务\n"
-            "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个"
+            "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个\n\n"
+            "如果返回 status='running'，说明工作流尚未完成，\n"
+            "请等待片刻后调用 get_workflow_status(workflow_id) 查询结果。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -594,10 +597,55 @@ class ExecuteWorkflowTool(BaseTool):
             executor = WorkflowExecutor(self.registry, self._spawn_tool)
             self._executor_ref["executor"] = executor
 
-        # 同步执行工作流（阻塞直到完成）
-        workflow_id = executor.execute(workflow)
-        wf_result = executor.get_result(workflow_id)
+        # 异步提交工作流到后台线程，避免长时间阻塞导致工具超时
+        # 然后内部轮询等待完成，超时前返回 workflow_id 让 LLM 自行轮询
+        import concurrent.futures
+        _bg_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="wf-submit")
+        try:
+            bg_future = _bg_pool.submit(executor.execute, workflow)
+            workflow_id = workflow.workflow_id  # 预先生成的 ID
 
+            # 轮询等待工作流完成（最多等 240s，留 60s 给外层超时）
+            poll_timeout = 240
+            poll_interval = 3
+            waited = 0
+            while waited < poll_timeout:
+                wf_result = executor.get_result(workflow_id)
+                if wf_result and wf_result.status in ("completed", "partial", "failed", "cancelled"):
+                    break
+                try:
+                    bg_future.result(timeout=poll_interval)
+                    break
+                except concurrent.futures.TimeoutError:
+                    waited += poll_interval
+
+            wf_result = executor.get_result(workflow_id)
+        finally:
+            _bg_pool.shutdown(wait=False)
+
+        if wf_result and wf_result.status == "running":
+            # 工作流仍在后台执行，返回 running 状态让 LLM 轮询
+            node_summary = {}
+            for nid, nr in (wf_result.node_results or {}).items():
+                if isinstance(nr, dict):
+                    node_summary[nid] = nr.get("status", "unknown")
+            return json.dumps(
+                {
+                    "workflow_id": workflow_id,
+                    "name": name,
+                    "mode": mode,
+                    "tasks_count": len(tasks),
+                    "status": "running",
+                    "message": (
+                        f"工作流仍在后台执行中，当前已完成节点: {node_summary}。"
+                        f"请等待片刻后调用 get_workflow_status(\"{workflow_id}\") 查询最终结果。"
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        # 工作流已完成
         return json.dumps(
             {
                 "workflow_id": workflow_id,
@@ -631,7 +679,8 @@ class GetWorkflowStatusTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "查询工作流的执行状态和结果。返回 status, nodes_completed, node_results 等。"
+            "查询工作流的执行状态和结果。支持 wait=true 阻塞等待完成。"
+            "execute_workflow 返回 running 状态时，用此工具轮询或等待最终结果。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -641,6 +690,11 @@ class GetWorkflowStatusTool(BaseTool):
                 "workflow_id": {
                     "type": "string",
                     "description": "要查询的工作流 ID",
+                },
+                "wait": {
+                    "type": "boolean",
+                    "description": "是否阻塞等待工作流完成后返回。默认 false（立即返回当前状态）",
+                    "default": False,
                 },
             },
             "required": ["workflow_id"],
@@ -655,6 +709,20 @@ class GetWorkflowStatusTool(BaseTool):
                 {"error": "No workflow executor available", "status": "failed"},
                 ensure_ascii=False,
             )
+
+        # 如果请求等待，轮询直到完成
+        wait = kwargs.get("wait", False)
+        if wait:
+            poll_timeout = 300
+            poll_interval = 2
+            waited = 0
+            while waited < poll_timeout:
+                result = executor.get_result(workflow_id)
+                if result and result.status in ("completed", "partial", "failed", "cancelled"):
+                    break
+                import time as _time
+                _time.sleep(poll_interval)
+                waited += poll_interval
 
         result = executor.get_result(workflow_id)
         if result is None:
