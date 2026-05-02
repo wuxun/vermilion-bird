@@ -639,6 +639,12 @@ class GUIFrontend(BaseFrontend):
         self._scheduler_button.clicked.connect(self._on_scheduler_config)
         header_layout.addWidget(self._scheduler_button)
 
+        self._dashboard_button = QPushButton("📊")
+        self._dashboard_button.setFixedWidth(40)
+        self._dashboard_button.setToolTip("Token & 成本仪表盘")
+        self._dashboard_button.clicked.connect(self._on_dashboard)
+        header_layout.addWidget(self._dashboard_button)
+
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
         self._clear_button.clicked.connect(self._on_clear)
@@ -1608,6 +1614,18 @@ class GUIFrontend(BaseFrontend):
         except AttributeError:
             QMessageBox.warning(
                 self._main_window, "Error", "Scheduler is not initialized"
+            )
+
+    def _on_dashboard(self):
+        """打开 Token & 成本仪表盘"""
+        try:
+            from llm_chat.frontends.observability_dialog import ObservabilityDialog
+
+            dialog = ObservabilityDialog(self._main_window)
+            dialog.show()  # 非模态，可以保持打开
+        except ImportError as e:
+            QMessageBox.warning(
+                self._main_window, "Error", f"Observability module not available: {e}"
             )
 
     def _on_close(self):

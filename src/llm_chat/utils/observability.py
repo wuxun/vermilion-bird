@@ -273,3 +273,102 @@ def llm_call_completed(duration_ms: float, model: str = "unknown"):
     obs.increment("llm.calls")
     obs.set_gauge("llm.last_duration_ms", duration_ms)
     obs.increment(f"llm.{model}.calls")
+
+
+# ------------------------------------------------------------------
+# 模型定价 & 成本追踪
+# ------------------------------------------------------------------
+
+# 每百万 token 价格 (USD)，2026年5月参考价
+_MODEL_PRICING: Dict[str, Dict[str, float]] = {
+    # DeepSeek
+    "deepseek-chat": {"input": 0.27, "output": 1.10},
+    "deepseek-reasoner": {"input": 0.55, "output": 2.19},
+    "deepseek-ai/DeepSeek-V3": {"input": 0.27, "output": 1.10},
+    # OpenAI
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+    "o1": {"input": 15.00, "output": 60.00},
+    "o3-mini": {"input": 1.10, "output": 4.40},
+    # Anthropic
+    "claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
+    "claude-3-opus": {"input": 15.00, "output": 75.00},
+    "claude-3-haiku": {"input": 0.25, "output": 1.25},
+    # Google
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    # Qwen (通义千问)
+    "qwen-turbo": {"input": 0.14, "output": 0.28},
+    "qwen-plus": {"input": 0.55, "output": 1.10},
+    "qwen-max": {"input": 2.80, "output": 11.20},
+}
+
+
+def get_model_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """计算指定模型的调用成本 (USD)，支持模糊匹配。"""
+    pricing = None
+    for key, p in _MODEL_PRICING.items():
+        if key.lower() in model.lower():
+            pricing = p
+            break
+    if pricing is None:
+        return 0.0
+    return (prompt_tokens / 1_000_000) * pricing["input"] + \
+           (completion_tokens / 1_000_000) * pricing["output"]
+
+
+def get_cost_summary() -> Dict[str, Any]:
+    """获取会话成本/用量完整摘要，供 GUI 仪表盘使用。"""
+    obs = get_observability()
+
+    total_prompt = obs.counter("tokens.prompt")
+    total_completion = obs.counter("tokens.completion")
+    total_tokens = obs.counter("tokens.total")
+    llm_calls = obs.counter("llm.calls")
+
+    # 按模型估算成本
+    model_stats = []
+    total_cost = 0.0
+
+    for key, count in sorted(obs._counters.items()):
+        if key.startswith("tokens.") and key not in (
+            "tokens.prompt", "tokens.completion", "tokens.total", "tokens.last_call"
+        ):
+            model = key[len("tokens."):]
+            # 无法精确分模型统计 prompt/completion，按 3:1 估算
+            est_prompt = int(count * 0.75)
+            est_completion = int(count * 0.25)
+            cost = get_model_cost(model, est_prompt, est_completion)
+            total_cost += cost
+            model_stats.append({
+                "model": model,
+                "tokens": count,
+                "cost_usd": round(cost, 6),
+            })
+
+    # 工具调用统计
+    tool_stats = {}
+    for key, count in obs._counters.items():
+        if key.startswith("tool.") and key.endswith(".count"):
+            tool_name = key[len("tool."):-len(".count")]
+            success = obs.counter(f"tool.{tool_name}.success")
+            error = obs.counter(f"tool.{tool_name}.error")
+            tool_stats[tool_name] = {"count": count, "success": success, "error": error}
+
+    return {
+        "tokens": {
+            "total": total_tokens,
+            "prompt": total_prompt,
+            "completion": total_completion,
+        },
+        "cost": {
+            "total_usd": round(total_cost, 6),
+            "by_model": model_stats,
+        },
+        "calls": {
+            "total": llm_calls,
+        },
+        "tools": tool_stats,
+        "avg_duration_ms": obs.get_summary().get("avg_duration_ms", 0),
+    }
