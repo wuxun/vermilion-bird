@@ -1,10 +1,13 @@
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from llm_chat.memory.storage import MemoryStorage
 from llm_chat.memory.extractor import MemoryExtractor
+
+if TYPE_CHECKING:
+    from llm_chat.memory.summarizer import Summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +20,20 @@ class MemoryManager:
         storage: Optional[MemoryStorage] = None,
         db_storage=None,
         llm_client=None,
+        summarizer: Optional["Summarizer"] = None,
         config: Optional[Dict] = None
     ):
         self.storage = storage or MemoryStorage()
         self.db_storage = db_storage
-        self.extractor = MemoryExtractor(llm_client)
-        self.llm_client = llm_client
+        self.llm_client = llm_client  # 向后兼容，已弃用
+        self._summarizer = summarizer
         self.config = config or {}
         
+        # 延迟创建 Extractor，确保 summarizer/llm_client 参数可用
+        self.extractor = MemoryExtractor(
+            llm_client=llm_client,
+            summarizer=summarizer,
+        )
         self._extraction_lock = threading.Lock()
         self._pending_extractions: List[Dict] = []
         
@@ -485,7 +494,7 @@ class MemoryManager:
         else:
             messages = self._pending_extractions.copy()
         
-        if messages and self.llm_client:
+        if messages and self._summarizer:
             try:
                 summary = self.extractor.summarize_day(messages)
                 if summary:
@@ -498,7 +507,7 @@ class MemoryManager:
         """从中期记忆整理到长期记忆"""
         mid_term = self.storage.load_mid_term()
         
-        if self.llm_client and mid_term:
+        if self._summarizer and mid_term:
             try:
                 facts = self.extractor.extract_long_term_facts(mid_term)
                 if facts:

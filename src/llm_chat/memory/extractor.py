@@ -1,7 +1,10 @@
 import re
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from llm_chat.memory.summarizer import Summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +86,19 @@ class MemoryExtractor:
     "other": ["其他偏好"]
 }}"""
 
-    def __init__(self, llm_client=None):
-        self.llm_client = llm_client
-    
+    def __init__(self, llm_client=None, summarizer: Optional["Summarizer"] = None):
+        self.llm_client = llm_client  # 向后兼容，已弃用
+        self._summarizer = summarizer
+
+    def _get_summarizer(self) -> Optional["Summarizer"]:
+        """获取摘要器：优先用注入的 Summarizer，否则尝试用 llm_client 构建。"""
+        if self._summarizer is not None:
+            return self._summarizer
+        if self.llm_client is not None:
+            from llm_chat.memory.summarizer import LLMSummarizer
+            return LLMSummarizer(self.llm_client)
+        return None
+
     def extract(self, messages: List[Dict]) -> Dict[str, Any]:
         """从消息列表中提取记忆信息"""
         if not messages:
@@ -96,9 +109,10 @@ class MemoryExtractor:
         if self._contains_sensitive_info(conversation_text):
             logger.warning("对话包含敏感信息，跳过记忆提取")
             return self._empty_result()
-        
-        if self.llm_client:
-            return self._extract_with_llm(conversation_text)
+
+        summarizer = self._get_summarizer()
+        if summarizer is not None:
+            return self._extract_with_llm(conversation_text, summarizer)
         else:
             return self._extract_with_rules(messages)
     
@@ -111,9 +125,10 @@ class MemoryExtractor:
         
         if self._contains_sensitive_info(conversation_text):
             conversation_text = self._redact_sensitive_info(conversation_text)
-        
-        if self.llm_client:
-            return self._summarize_with_llm(conversation_text)
+
+        summarizer = self._get_summarizer()
+        if summarizer is not None:
+            return self._summarize_with_llm(conversation_text, summarizer)
         else:
             return self._summarize_with_rules(messages)
     
@@ -174,11 +189,15 @@ class MemoryExtractor:
 
         return json.loads(text)
 
-    def _extract_with_llm(self, conversation: str) -> Dict[str, Any]:
-        """使用LLM提取记忆"""
+    def _extract_with_llm(
+        self, conversation: str, summarizer: "Summarizer"
+    ) -> Dict[str, Any]:
+        """使用 LLM (通过 Summarizer) 提取记忆"""
         try:
             prompt = self.EXTRACTION_PROMPT.format(conversation=conversation)
-            response = self.llm_client.chat(prompt, history=[])
+            response = summarizer.generate(prompt, max_tokens=300)
+            if response is None:
+                raise ValueError("Summarizer 返回 None")
             result = self._parse_llm_json(response)
             logger.info("使用LLM成功提取记忆")
             return result
@@ -213,11 +232,15 @@ class MemoryExtractor:
         
         return result
     
-    def _summarize_with_llm(self, conversation: str) -> str:
-        """使用LLM生成摘要"""
+    def _summarize_with_llm(
+        self, conversation: str, summarizer: "Summarizer"
+    ) -> str:
+        """使用 LLM (通过 Summarizer) 生成摘要"""
         try:
             prompt = self.SUMMARIZE_DAY_PROMPT.format(conversation=conversation)
-            response = self.llm_client.chat(prompt, history=[])
+            response = summarizer.generate(prompt, max_tokens=200)
+            if response is None:
+                raise ValueError("Summarizer 返回 None")
             logger.info("使用LLM成功生成摘要")
             return response.strip()
         except Exception as e:
@@ -344,17 +367,22 @@ class MemoryExtractor:
         
         if self._contains_sensitive_info(mid_term_content):
             mid_term_content = self._redact_sensitive_info(mid_term_content)
-        
-        if self.llm_client:
-            return self._extract_long_term_with_llm(mid_term_content)
+
+        summarizer = self._get_summarizer()
+        if summarizer is not None:
+            return self._extract_long_term_with_llm(mid_term_content, summarizer)
         else:
             return self._extract_long_term_with_rules(mid_term_content)
-    
-    def _extract_long_term_with_llm(self, content: str) -> List[str]:
+
+    def _extract_long_term_with_llm(
+        self, content: str, summarizer: "Summarizer"
+    ) -> List[str]:
         """使用LLM提取长期事实"""
         try:
             prompt = self.EXTRACT_LONG_TERM_PROMPT.format(mid_term_content=content)
-            response = self.llm_client.chat(prompt, history=[])
+            response = summarizer.generate(prompt, max_tokens=400)
+            if response is None:
+                raise ValueError("Summarizer 返回 None")
             result = self._parse_llm_json(response)
 
             facts = []

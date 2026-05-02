@@ -6,6 +6,7 @@
 
 > ✅ 已完成: 2.1 App God Class 重构 → 引入 ChatCore
 > ✅ 已完成: 2.2 Conversation.send_message() 方法链拆解 → Pipeline 阶段化
+> ✅ 已完成: 2.6 记忆系统与 LLM 客户端解耦 → Summarizer 抽象
 > ✅ 已修复: DeepSeek R1 reasoning_content 丢失 (流式+同步两条路径)
 
 ---
@@ -727,11 +728,29 @@ def execute(self, **kwargs):
 
 ---
 
-### 2.6 记忆系统与 LLM 客户端紧耦合
+### 2.6 记忆系统与 LLM 客户端紧耦合 ✅ 已实施
 
 **当前问题**：`MemoryManager` 直接依赖 `LLMClient` 做摘要提取，`ConversationManager` 依赖 `MemoryManager`，三个组件存在相互引用。测试困难，无法替换摘要策略。
 
-**建议方案**：引入摘要器抽象
+**建议方案**：引入 Summary 摘要器抽象
+
+**实施方案**：创建 `Summarizer` 协议 + `LLMSummarizer` / `RuleSummarizer` 实现
+
+**已变更文件**：
+- `src/llm_chat/memory/summarizer.py` — **新增** Summarizer 协议 + LLMSummarizer + RuleSummarizer
+- `src/llm_chat/memory/extractor.py` — `MemoryExtractor` 接受 `summarizer` 参数，`_get_summarizer()` 自动选择 LLM 或规则模式
+- `src/llm_chat/memory/manager.py` — `MemoryManager.__init__` 新增 `summarizer` 参数，`_extract_to_mid_term` / `consolidate_mid_to_long_term` 改用 `self._summarizer`
+- `src/llm_chat/conversation.py` — `ConversationManager._init_memory()` 和 `Conversation._init_memory()` 创建 `LLMSummarizer` 并注入
+
+**解耦效果**：
+```
+之前: MemoryManager → self.llm_client.chat()  直接依赖 LLMClient
+现在: MemoryManager → self._summarizer.generate()  通过 Summarizer 协议
+```
+
+**向后兼容**：`MemoryExtractor.__init__()` 仍接受 `llm_client` 参数（已标记弃用），未传 `summarizer` 时自动通过 `LLMSummarizer` 包装。
+
+**未完成（可选）**：正式的 PipelineStage ABC + PipelineContext 管道模式可在未来版实施。
 
 ```python
 from typing import Protocol, List, Dict

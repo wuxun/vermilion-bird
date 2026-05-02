@@ -66,14 +66,17 @@ class Conversation:
         if self.memory_config.get("enabled", False):
             try:
                 from llm_chat.memory import MemoryManager, MemoryStorage
+                from llm_chat.memory.summarizer import LLMSummarizer
 
                 memory_storage = MemoryStorage(
                     self.memory_config.get("storage_dir", "~/.vermilion-bird/memory")
                 )
+                summarizer = LLMSummarizer(self.client)
                 self._memory_manager = MemoryManager(
                     storage=memory_storage,
                     db_storage=self.storage,
                     llm_client=self.client,
+                    summarizer=summarizer,
                     config=self.memory_config,
                 )
                 logger.info("记忆系统已初始化（独立实例）")
@@ -352,14 +355,17 @@ class ConversationManager:
         if self.memory_config.get("enabled", False):
             try:
                 from llm_chat.memory import MemoryManager, MemoryStorage
+                from llm_chat.memory.summarizer import LLMSummarizer
 
                 memory_storage = MemoryStorage(
                     self.memory_config.get("storage_dir", "~/.vermilion-bird/memory")
                 )
+                summarizer = LLMSummarizer(self.client)
                 self._memory_manager = MemoryManager(
                     storage=memory_storage,
                     db_storage=self.storage,
                     llm_client=self.client,
+                    summarizer=summarizer,
                     config=self.memory_config,
                 )
                 logger.info("共享记忆系统已初始化")
