@@ -141,31 +141,13 @@ class LLMClientToolsMixin:
                         tool_result = str(e)
                         is_error = True
                         logger.error(f"工具 {tool_call.name} 执行失败: {e}")
-                elif self._tool_executor:
-                    try:
-                        tool_result = self._tool_executor(
-                            tool_call.name, tool_call.arguments
-                        )
-                        is_error = False
-                        if tool_result is None:
-                            tool_result = "工具执行返回空结果"
-                            logger.warning(f"工具 {tool_call.name} 返回 None")
-                        else:
-                            logger.info(
-                                f"工具 {tool_call.name} 执行成功(外部执行器)"
-                            )
-                    except Exception as e:
-                        tool_result = str(e)
-                        is_error = True
-                        logger.error(
-                            f"工具 {tool_call.name} 执行失败(外部执行器): {e}"
-                        )
                 else:
                     tool_result = (
-                        f"Error: No tool executor configured for {tool_call.name}"
+                        f"Error: Unknown tool '{tool_call.name}' - "
+                        f"not registered in ToolRegistry"
                     )
                     is_error = True
-                    logger.error(f"没有找到工具 {tool_call.name} 的执行器")
+                    logger.error(f"未知工具: {tool_call.name}")
 
                 # Fire tool_call_hook for observability (sub-agent panel etc.)
                 if self._tool_call_hook:

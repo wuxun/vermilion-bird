@@ -55,22 +55,25 @@ class SkillManager:
     
     def _load_skill_from_path(self, skill_path: Path) -> Optional[Type[BaseSkill]]:
         module_name = f"skill_{skill_path.name}"
-        
-        if str(skill_path.parent) not in sys.path:
-            sys.path.insert(0, str(skill_path.parent))
-        
+        parent_dir = str(skill_path.parent)
+        path_inserted = False
+
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+            path_inserted = True
+
         try:
             if module_name in sys.modules:
                 del sys.modules[module_name]
-            
+
             spec = importlib.util.spec_from_file_location(module_name, skill_path / "skill.py")
             if spec is None or spec.loader is None:
                 return None
-            
+
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-            
+
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
                 if (
@@ -79,11 +82,19 @@ class SkillManager:
                     and attr is not BaseSkill
                 ):
                     return attr
-            
+
             return None
         except Exception as e:
             logger.error(f"Error loading skill from {skill_path}: {e}")
             return None
+        finally:
+            # 清理：还原 sys.path + sys.modules
+            if path_inserted:
+                try:
+                    sys.path.remove(parent_dir)
+                except ValueError:
+                    pass
+            sys.modules.pop(module_name, None)
     
     def load_skill(
         self, 

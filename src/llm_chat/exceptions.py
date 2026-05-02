@@ -151,15 +151,6 @@ class ValidationError(VermilionBirdError):
     pass
 
 
-class TimeoutError(VermilionBirdError):
-    """超时错误
-
-    当操作超时时抛出。
-    """
-
-    pass
-
-
 class AuthenticationError(VermilionBirdError):
     """认证错误
 

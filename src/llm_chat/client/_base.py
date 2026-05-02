@@ -51,7 +51,6 @@ class LLMClientBase:
             timeout=config.llm.timeout,
             max_retries=config.llm.max_retries,
         )
-        self._tool_executor: Optional[Callable[[str, Dict[str, Any]], str]] = None
         self._tool_registry = tool_registry if tool_registry is not None else get_tool_registry()
         self._skill_manager = SkillManager(self._tool_registry)
         self._tool_executor_instance = ToolExecutor(
@@ -92,25 +91,21 @@ class LLMClientBase:
 
         skill_configs = self.config.skills.get_all_skill_configs()
 
-        if "web_search" in skill_configs:
-            web_search_config = skill_configs["web_search"]
-            if "http_proxy" not in web_search_config:
-                web_search_config["http_proxy"] = self.config.llm.http_proxy
-            if "https_proxy" not in web_search_config:
-                web_search_config["https_proxy"] = self.config.llm.https_proxy
-            if "timeout" not in web_search_config:
-                web_search_config["timeout"] = self.config.llm.timeout
-
-        if "web_fetch" in skill_configs:
-            web_fetch_config = skill_configs["web_fetch"]
-            if "http_proxy" not in web_fetch_config:
-                web_fetch_config["http_proxy"] = self.config.llm.http_proxy
-            if "https_proxy" not in web_fetch_config:
-                web_fetch_config["https_proxy"] = self.config.llm.https_proxy
-            if "timeout" not in web_fetch_config:
-                web_fetch_config["timeout"] = self.config.llm.timeout
-
+        # 注入代理配置（不修改原始 config 对象）
+        proxy_defaults = {
+            "http_proxy": self.config.llm.http_proxy,
+            "https_proxy": self.config.llm.https_proxy,
+            "timeout": self.config.llm.timeout,
+        }
         work_dir = self.config.tools.work_dir
+
+        for skill_name in ("web_search", "web_fetch"):
+            if skill_name in skill_configs:
+                cfg = skill_configs[skill_name]
+                for key, val in proxy_defaults.items():
+                    if val and key not in cfg:
+                        cfg[key] = val
+
         if "todo_manager" in skill_configs:
             if "base_dir" not in skill_configs["todo_manager"]:
                 skill_configs["todo_manager"]["base_dir"] = work_dir
@@ -127,9 +122,6 @@ class LLMClientBase:
     # ------------------------------------------------------------------
     # 工具管理 getter/setter
     # ------------------------------------------------------------------
-
-    def set_tool_executor(self, executor: Callable[[str, Dict[str, Any]], str]):
-        self._tool_executor = executor
 
     def get_skill_manager(self) -> SkillManager:
         return self._skill_manager

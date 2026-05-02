@@ -163,8 +163,7 @@ class LLMClientStreamToolsMixin:
                 tool_args = tc["function"].get("arguments", "{}")
                 yield ("tool_call_start", tool_name, tool_args)
 
-            self._tool_executor_instance.tool_executor = self._tool_executor
-            tool_results = self._tool_executor_instance.execute_tools_parallel(
+            self._tool_executor_instance.execute_tools_parallel(
                 tool_calls
             )
             logger.info(f"工具执行结果数量: {len(tool_results)}")

@@ -41,62 +41,77 @@ class App:
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or Config()
+        self.current_frontend: Optional[BaseFrontend] = None
+        self._mcp_manager: Optional[MCPManager] = None
+        self._tools_enabled = False
+        self._current_conversation_id: str = "default"
+        self.scheduler: Optional["SchedulerService"] = None
 
-        # 创建共享 ToolRegistry 并注入为全局实例
+        # 组件分层初始化（保持依赖顺序）
+        self.tool_registry = self._init_tool_registry()
+        self.storage = self._init_storage()
+        self.client = self._init_client()
+        self.conversation_manager = self._init_conversation_manager()
+        self.chat_core = self._init_chat_core()
+        self._init_prompt_skills()
+        self._conv_service = self._init_conversation_service()
+        self.service_manager = self._init_service_manager()
+        self._health_checker = self._init_health_checker()
+        self._init_scheduler()
+
+        logger.info("App initialization complete")
+
+    # ------------------------------------------------------------------
+    # Factory methods (按依赖顺序)
+    # ------------------------------------------------------------------
+
+    def _init_tool_registry(self):
         from llm_chat.tools.registry import ToolRegistry
-        self.tool_registry = ToolRegistry()
-        ToolRegistry.set_instance(self.tool_registry)
+        tr = ToolRegistry()
+        ToolRegistry.set_instance(tr)
+        return tr
 
-        self.client = LLMClient(self.config, tool_registry=self.tool_registry)
-        self.storage = Storage()
-        Storage.set_instance(self.storage)
+    def _init_storage(self):
+        s = Storage()
+        Storage.set_instance(s)
+        return s
 
+    def _init_client(self):
+        return LLMClient(self.config, tool_registry=self.tool_registry)
+
+    def _init_conversation_manager(self):
         memory_config = self._build_memory_config()
         default_model_params = self.config.llm.get_model_params()
-
-        self.conversation_manager = ConversationManager(
+        return ConversationManager(
             self.client,
             self.storage,
             memory_config=memory_config,
             default_model_params=default_model_params,
         )
 
-        # 核心对话引擎 — 所有前端通过它处理 LLM 对话
-        self.chat_core = ChatCore(
+    def _init_chat_core(self):
+        chat_core = ChatCore(
             client=self.client,
             conversation_manager=self.conversation_manager,
             config=self.config,
         )
         logger.info("ChatCore initialized")
+        return chat_core
 
-        # 5. 初始化 Prompt Skills (Agent Skills 标准)
-        self._init_prompt_skills()
+    def _init_conversation_service(self):
+        return ConversationService(self.conversation_manager, self.storage)
 
-        self._conv_service = ConversationService(
-            self.conversation_manager,
-            self.storage,
-        )
-        self.current_frontend: Optional[BaseFrontend] = None
-        self._mcp_manager: Optional[MCPManager] = None
-        self._tools_enabled = False
-        self._current_conversation_id: str = "default"
+    def _init_service_manager(self):
+        return ServiceManager()
 
-        # 初始化服务管理器
-        self.service_manager = ServiceManager()
-
-        # 初始化健康检查
-        self._health_checker = get_checker()
-        self._health_checker.register_checker(
-            "database", create_database_checker(self.storage)
-        )
-        self._health_checker.register_checker(
-            "services", create_service_manager_checker(self.service_manager)
-        )
+    def _init_health_checker(self):
+        hc = get_checker()
+        hc.register_checker("database", create_database_checker(self.storage))
+        hc.register_checker("services", create_service_manager_checker(self.service_manager))
         logger.info("HealthChecker initialized with database + services checks")
+        return hc
 
-        self.scheduler: Optional["SchedulerService"] = None
-
-        logger.info(f"Scheduler enabled config: {self.config.scheduler.enabled}")
+    def _init_scheduler(self):
         if self.config.scheduler.enabled:
             logger.info("Initializing SchedulerService...")
             from llm_chat.scheduler import SchedulerService

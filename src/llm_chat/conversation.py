@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from llm_chat.client import LLMClient
 from llm_chat.storage import Storage
+from llm_chat.utils.token_counter import count_tokens
 from llm_chat.context import ContextManager, ContextMessage
 from llm_chat.utils.observability import observe
 

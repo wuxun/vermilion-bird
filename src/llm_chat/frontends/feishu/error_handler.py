@@ -23,7 +23,7 @@ class FeishuError(Exception):
     pass
 
 
-class TimeoutError(FeishuError):
+class FeishuTimeoutError(FeishuError):
     """超时错误。"""
 
     pass
@@ -89,7 +89,7 @@ def error_handler(
         while current_attempt < max_retries:
             try:
                 return func(*args, **kwargs)
-            except TimeoutError as e:
+            except FeishuTimeoutError as e:
                 last_exception = e
                 if not silent:
                     logger_instance.warning(f"TimeoutError in {func.__name__}: {e}")
@@ -193,7 +193,7 @@ def retry_on_exception(max_retries: int = 3, initial_delay: float = 1.0):
                 try:
                     return func(*args, **kwargs)
                 except (
-                    TimeoutError,
+                    FeishuTimeoutError,
                     APIError,
                     AuthenticationError,
                     ConfigurationError,
@@ -236,7 +236,7 @@ def timeout_handler(timeout_seconds: int = 30):
         timeout_seconds: 超时时间（秒）
 
     Returns:
-        装饰器工厂函数，在超时时抛出 TimeoutError
+        装饰器工厂函数，在超时时抛出 FeishuTimeoutError
 
     注意: signal.SIGALRM 在 Windows 上不可用，此装饰器仅适用于 Unix-like 系统。
     """
@@ -245,7 +245,7 @@ def timeout_handler(timeout_seconds: int = 30):
         @wraps(func)
         def wrapper(*args, **kwargs):
             def _timeout_handler(signum, frame):
-                raise TimeoutError(
+                raise FeishuTimeoutError(
                     f"{func.__name__} timed out after {timeout_seconds}s"
                 )
 
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     try:
         result = wrapped_api("user_123")
         print(f"Result: {result}")
-    except TimeoutError as e:
+    except FeishuTimeoutError as e:
         print(f"Caught timeout: {e}")
     except Exception as e:
         print(f"Caught error: {e}")
