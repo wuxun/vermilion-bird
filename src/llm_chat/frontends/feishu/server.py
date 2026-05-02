@@ -181,24 +181,8 @@ class FeishuServer:
                         )
                 if event.event.message:
                     msg = event.event.message
-                    self._logger.info(f"DEBUG - message type: {type(msg)}")
-                    self._logger.info(
-                        f"DEBUG - message attrs: {[a for a in dir(msg) if not a.startswith('_')]}"
-                    )
                     chat_id = getattr(msg, "chat_id", None)
                     message_content = getattr(msg, "content", None)
-                    self._logger.info(
-                        f"DEBUG - chat_id={chat_id}, content={message_content}"
-                    )
-                    # 打印所有属性值
-                    for attr in dir(msg):
-                        if not attr.startswith("_"):
-                            try:
-                                val = getattr(msg, attr)
-                                if not callable(val):
-                                    self._logger.info(f"DEBUG - message.{attr} = {val}")
-                            except:
-                                pass
 
             masked_sender = _mask_identifier(sender_id)
             masked_chat = _mask_identifier(chat_id)

@@ -123,7 +123,7 @@ class MCPClient:
                     task.cancel()
                     try:
                         await asyncio.wait_for(task, timeout=5)
-                    except:
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
                     raise MCPClientError("连接超时")
                     

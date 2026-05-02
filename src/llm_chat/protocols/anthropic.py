@@ -136,3 +136,18 @@ class AnthropicProtocol(BaseProtocol):
             "role": "assistant",
             "content": content
         }
+
+    def parse_stream_chunk(self, chunk: Dict[str, Any]) -> Optional[str]:
+        """解析 Anthropic SSE 流式 chunk。
+
+        Claude 流式事件格式:
+          {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "..."}}
+          {"type": "content_block_start", ...}  # 无文本
+          {"type": "message_stop"}               # 结束
+        """
+        if chunk.get("type") != "content_block_delta":
+            return None
+        delta = chunk.get("delta", {})
+        if delta.get("type") == "text_delta":
+            return delta.get("text")
+        return None

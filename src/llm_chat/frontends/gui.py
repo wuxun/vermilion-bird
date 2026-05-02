@@ -1074,7 +1074,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         try:
             args_dict = json.loads(tool_args)
             args_formatted = json.dumps(args_dict, indent=2, ensure_ascii=False)
-        except:
+        except (json.JSONDecodeError, TypeError):
             args_formatted = tool_args
 
         tool_call_info = {

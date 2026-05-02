@@ -149,3 +149,17 @@ class GeminiProtocol(BaseProtocol):
             "role": "model",
             "parts": content_parts
         }
+
+    def parse_stream_chunk(self, chunk: Dict[str, Any]) -> Optional[str]:
+        """解析 Gemini SSE 流式 chunk。
+
+        Gemini 流式格式:
+          {"candidates": [{"content": {"parts": [{"text": "..."}]}}]}
+        """
+        candidates = chunk.get("candidates", [])
+        if not candidates:
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if parts and "text" in parts[0]:
+            return parts[0]["text"]
+        return None

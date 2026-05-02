@@ -492,7 +492,7 @@ class FeishuAdapter:
                 try:
                     error_detail = e.response.json()
                     logger.error(f"Feishu API error response: {error_detail}")
-                except:
+                except Exception:
                     pass
             raise FeishuAdapterError(f"Failed to send message: {e}")
 
