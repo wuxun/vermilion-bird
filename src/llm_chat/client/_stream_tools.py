@@ -131,6 +131,17 @@ class LLMClientStreamToolsMixin:
 
             tool_calls = self._merge_tool_calls(tool_calls_data)
 
+            # 验证流式拼接的工具调用参数是否为合法 JSON
+            for tc in tool_calls:
+                args_str = tc["function"].get("arguments", "{}")
+                try:
+                    json.loads(args_str)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"流式工具调用参数不完整，尝试修复: {args_str[:100]}..."
+                    )
+                    tc["function"]["arguments"] = "{}"
+
             logger.info(f"检测到 {len(tool_calls)} 个工具调用")
 
             assistant_message = {

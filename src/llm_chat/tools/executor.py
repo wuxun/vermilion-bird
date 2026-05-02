@@ -93,7 +93,15 @@ class ToolExecutor:
         if len(tool_calls) == 1:
             tool_call = tool_calls[0]
             tool_name = tool_call["function"]["name"]
-            tool_args = json.loads(tool_call["function"]["arguments"])
+            try:
+                tool_args = json.loads(tool_call["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.error(f"Failed to parse tool call arguments for {tool_name}: {e}")
+                return [{
+                    "tool_call_id": tool_call.get("id", "unknown"),
+                    "content": f"Error: invalid tool arguments - {e}",
+                    "is_error": True,
+                }]
             return [self.execute_single_tool(tool_name, tool_args, tool_call["id"])]
 
         logger.info(f"并行执行 {len(tool_calls)} 个工具调用")
@@ -105,7 +113,16 @@ class ToolExecutor:
 
             for tool_call in tool_calls:
                 tool_name = tool_call["function"]["name"]
-                tool_args = json.loads(tool_call["function"]["arguments"])
+                try:
+                    tool_args = json.loads(tool_call["function"]["arguments"])
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    logger.error(f"Failed to parse tool call arguments for {tool_name}: {e}")
+                    results.append({
+                        "tool_call_id": tool_call.get("id", "unknown"),
+                        "content": f"Error: invalid tool arguments - {e}",
+                        "is_error": True,
+                    })
+                    continue
                 tool_call_id = tool_call["id"]
 
                 future = executor.submit(

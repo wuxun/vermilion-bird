@@ -1,9 +1,12 @@
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 from llm_chat.skills.task_delegator.context import AgentContext
+
+#: 状态变更回调: (agent_id, status, task, result)
+StatusCallback = Callable[[str, str, str, Optional[str]], None]
 
 
 class SubAgentRegistry:
@@ -30,6 +33,8 @@ class SubAgentRegistry:
         self._lock = threading.Lock()
         # Thread pool for running sub-agent tasks asynchronously
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        # Status change callbacks (e.g. GUI panels). Thread-safe append/iterate.
+        self._callbacks: List[StatusCallback] = []
         # Logger for observability
         self.logger = logger or logging.getLogger(__name__)
 
@@ -43,6 +48,7 @@ class SubAgentRegistry:
             context.depth,
             context.status,
         )
+        self._notify_status_change(agent_id)
 
     def get(self, agent_id: str) -> Optional[AgentContext]:
         """Return the AgentContext for the given agent_id, or None if missing."""
@@ -52,16 +58,21 @@ class SubAgentRegistry:
     def cancel(self, agent_id: str) -> bool:
         """Cancel a sub-agent by setting its status to 'cancelled'.
 
+        Signals the agent's cancellation event, which the background executor
+        checks at key points.  Also marks status so immediate status queries
+        reflect the cancellation.
+
         Returns True if the agent existed and was cancelled, False otherwise.
         """
         with self._lock:
             ctx = self._agents.get(agent_id)
             if ctx is None:
                 return False
-            # Mark as cancelled; keep existing object reference
             ctx.status = "cancelled"
-            ctx.result = None
+            ctx._cancelled.set()
+            ctx.result = "Cancelled"
         self.logger.info("Cancelled sub-agent '%s'", agent_id)
+        self._notify_status_change(agent_id)
         return True
 
     def list_active(self) -> List[AgentContext]:
@@ -138,19 +149,28 @@ class SubAgentRegistry:
                 ctx.status = "failed"
                 ctx.result = str(future.exception())
             else:
-                # Already set by _execute_task, but ensure consistency
+                # _execute_async already set status; respect cancellation signal
                 try:
                     result = future.result()
-                    if ctx.status == "running":
+                    if ctx._cancelled.is_set():
+                        # cancelled during execution — keep cancelled status
+                        if ctx.status == "running":
+                            ctx.status = "cancelled"
+                        ctx.result = ctx.result or "Cancelled"
+                    elif ctx.status == "running":
                         ctx.status = "completed"
                         ctx.result = result
                 except Exception as e:
                     ctx.status = "failed"
                     ctx.result = str(e)
 
-            self.logger.info(
-                "Sub-agent '%s' finished: status=%s", agent_id, ctx.status
-            )
+            status_snapshot = ctx.status
+
+        self.logger.info(
+            "Sub-agent '%s' finished: status=%s", agent_id, status_snapshot
+        )
+        # Notify outside lock to avoid deadlock with callback → registry calls
+        self._notify_status_change(agent_id)
 
     def list_all(self) -> List[Dict]:
         """List all sub-agents with their status, suitable for LLM consumption."""
@@ -170,6 +190,50 @@ class SubAgentRegistry:
                 }
                 for ctx in self._agents.values()
             ]
+
+    # ------------------------------------------------------------------
+    # Status change callbacks (push notifications to GUI / logs / metrics)
+    # ------------------------------------------------------------------
+
+    def on_agent_status_change(self, cb: StatusCallback) -> None:
+        """注册子 agent 状态变更回调。
+
+        回调签名: (agent_id, status, task, result).
+        回调在任意后台线程触发，接收者需自行处理线程安全。
+        """
+        with self._lock:
+            if cb not in self._callbacks:
+                self._callbacks.append(cb)
+
+    def remove_callback(self, cb: StatusCallback) -> None:
+        """移除已注册的回调（Widget 销毁时调用，防止悬垂引用）。"""
+        with self._lock:
+            try:
+                self._callbacks.remove(cb)
+            except ValueError:
+                pass
+
+    def _notify_status_change(self, agent_id: str) -> None:
+        """通知所有已注册的回调：指定 agent 的状态已变更。
+
+        在 spawn / cancel / _on_complete 后调用。
+        提取 agent 的快照数据，逐个调用回调（回调在调用线程执行）。
+        """
+        # 快照：在锁内提取数据，锁外调用回调
+        with self._lock:
+            ctx = self._agents.get(agent_id)
+            if ctx is None:
+                return
+            snapshot = (ctx.agent_id, ctx.status, ctx.task, ctx.result)
+            cbs = list(self._callbacks)
+
+        for cb in cbs:
+            try:
+                cb(*snapshot)
+            except Exception:
+                self.logger.debug(
+                    "Status callback error for agent '%s'", agent_id, exc_info=True
+                )
 
     def wait_for(self, agent_id: str, timeout: Optional[float] = None) -> Optional[str]:
         """Block until a sub-agent completes, return its result or None on timeout/error."""

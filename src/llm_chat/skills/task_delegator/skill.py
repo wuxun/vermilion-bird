@@ -1,7 +1,7 @@
 """Task Delegator Skill - 子Agent任务分配能力"""
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from llm_chat.skills.base import BaseSkill
 from llm_chat.tools.base import BaseTool
@@ -45,17 +45,15 @@ class TaskDelegatorSkill(BaseSkill):
 
     def _init_root_context(self):
         """创建根上下文，让直接 spawn 的 agent 有可追溯的 parent_id。"""
-        from llm_chat.skills.task_delegator.context import AgentContext
-        from datetime import datetime
+        from llm_chat.skills.task_delegator.context import make_agent_context
 
-        self._parent_context = AgentContext(
+        self._parent_context = make_agent_context(
             agent_id="main",
             parent_id=None,
             depth=-1,  # 根节点，直接子 agent depth = 0
             allowed_tools=set(),
             conversation_id="main",
-            created_at=datetime.utcnow(),
-            status="running",
+            task="主对话",
         )
 
     def get_tools(self) -> List[BaseTool]:
@@ -101,3 +99,9 @@ class TaskDelegatorSkill(BaseSkill):
             self._config.tools.work_dir = config["work_dir"]
 
         self.logger.info(f"TaskDelegatorSkill loaded with config: {config}")
+
+    def on_unload(self) -> None:
+        """卸载时清理线程池，防止资源泄露。"""
+        if self._registry is not None:
+            self._registry.shutdown(wait=False)
+        self.logger.info("TaskDelegatorSkill unloaded")

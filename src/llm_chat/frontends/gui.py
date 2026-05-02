@@ -9,6 +9,7 @@ from llm_chat.frontends.base import (
     ConversationContext,
     MessageType,
 )
+from llm_chat.frontends.subagent_panel import SubAgentPanel
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,7 @@ class GUIFrontend(BaseFrontend):
         self._model_combo: Optional[QComboBox] = None
         self._scheduler_button: Optional[QPushButton] = None
         self._scheduler_dialog = None
+        self._subagent_panel: Optional[SubAgentPanel] = None
 
     def set_storage(self, storage: Any):
         self._storage = storage
@@ -361,6 +363,26 @@ class GUIFrontend(BaseFrontend):
         """注入 ChatCore — GUI 通过它进行流式对话，不再直接访问 client。"""
         self._chat_core = chat_core
         logger.info("GUIFrontend: ChatCore 已注入")
+
+    def _init_subagent_panel(self):
+        """尝试将 SubAgentPanel 连接到 task_delegator 的注册表。
+
+        如果 skill 尚未加载（例如首次启动），面板保持隐藏，
+        后续 skill 加载时可通过重新调用本方法完成连接。
+        """
+        if self._subagent_panel is None or self._app_instance is None:
+            return
+
+        try:
+            skill_manager = self._app_instance.get_skill_manager()
+            skill = skill_manager.get_skill("task_delegator")
+            if skill is not None and hasattr(skill, "_registry"):
+                self._subagent_panel.connect_registry(skill._registry)
+                logger.info("SubAgentPanel connected to task_delegator registry")
+            else:
+                logger.warning("SubAgentPanel: task_delegator skill not loaded")
+        except Exception as e:
+            logger.warning("SubAgentPanel: failed to connect: %s", e)
 
     def _init_model_combo(self):
         if self._model_combo is None:
@@ -494,6 +516,7 @@ class GUIFrontend(BaseFrontend):
         self._apply_styles()
 
         self._init_model_combo()
+        self._init_subagent_panel()
 
         self._main_window.closeEvent = self._on_close_event
 
@@ -684,6 +707,11 @@ class GUIFrontend(BaseFrontend):
         self._chat_scroll_area.setWidget(self._chat_container)
         layout.addWidget(self._chat_scroll_area, stretch=1)
 
+        # Sub Agent 实时面板（连接 registry 后显示折叠入口）
+        self._subagent_panel = SubAgentPanel()
+        self._subagent_panel.hide()  # 初始隐藏，connect_registry 后自动显示
+        layout.addWidget(self._subagent_panel)
+
         self._chat_display = QTextBrowser()
         self._chat_display.setReadOnly(True)
         self._chat_display.setFont(QFont("Arial", 11))
@@ -814,9 +842,11 @@ class GUIFrontend(BaseFrontend):
                 background-color: #4A2C2A;
                 border-right: 1px solid #3D2422;
             }
+            QFrame#sidebar QLabel { color: #F5E6D3; }
             QFrame#chatArea {
                 background-color: #FFFBF5;
             }
+            QLabel { color: #3D2C2E; }
         """)
 
         self._chat_display.setStyleSheet("""
@@ -1610,6 +1640,8 @@ class GUIFrontend(BaseFrontend):
             self._input_field.setEnabled(enabled)
 
     def stop(self):
+        if self._subagent_panel:
+            self._subagent_panel.disconnect_registry()
         if self._app:
             self._app.quit()
 

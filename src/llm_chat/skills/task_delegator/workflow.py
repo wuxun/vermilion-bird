@@ -5,6 +5,11 @@ Agent Workflow — 子 Agent 工作流编排层
 - simple:   单个子 agent 执行单一任务
 - parallel: 多个子 agent 并行执行独立子任务
 - pipeline: 多个子 agent 串行执行，前一个输出传给下一个
+
+线程模型：
+- Agent 执行 → SubAgentRegistry 的池 (max_workers=8)
+- parallel 节点编排 → 临时 ThreadPoolExecutor（用完即关）
+- 其余节点编排 → 同步串行（pipeline 本身语义即串行）
 """
 
 from __future__ import annotations
@@ -225,9 +230,12 @@ class AgentWorkflow:
 
 
 class WorkflowExecutor:
-    """工作流执行器 —— 负责在后台执行 AgentWorkflow。
+    """工作流执行器 —— 同步执行 AgentWorkflow。
 
-    使用 SubAgentRegistry 的 ThreadPoolExecutor 来运行子 agent 任务。
+    线程模型：
+    - execute() 调用方线程同步执行整个工作流（调用方通常是工具执行线程）
+    - Agent 任务委托给 SubAgentRegistry 的线程池
+    - parallel 节点使用临时 ThreadPoolExecutor 并行编排子节点
     """
 
     def __init__(
@@ -238,16 +246,11 @@ class WorkflowExecutor:
         self._registry = subagent_registry
         self._spawn_tool = spawn_tool
         self._running: Dict[str, WorkflowResult] = {}
-        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="wf-")
 
     def execute(self, workflow: AgentWorkflow) -> str:
-        """提交工作流执行，立即返回 workflow_id。
+        """同步执行工作流，阻塞直到完成，返回 workflow_id。
 
-        Args:
-            workflow: 要执行的工作流定义。
-
-        Returns:
-            workflow_id，可用于 get_workflow_status() 查询进度。
+        调用方可立即通过 get_workflow_status() 查询完整结果。
         """
         result = WorkflowResult(
             workflow_id=workflow.workflow_id,
@@ -256,19 +259,29 @@ class WorkflowExecutor:
         )
         self._running[workflow.workflow_id] = result
 
-        self._pool.submit(
-            self._execute_node,
+        logger.info(
+            "Workflow '%s' (%s) started: %s",
+            workflow.name,
+            workflow.workflow_id,
+            _describe_node(workflow.root),
+        )
+
+        self._execute_node(
             workflow.root,
             workflow,
             result,
             None,  # no parent_result for root
         )
 
+        # 所有节点执行完毕且无错误 → completed
+        if result.status == "running":
+            result.status = "completed"
+        result.end_time = time.time()
+
         logger.info(
-            "Workflow '%s' (%s) submitted: %s",
-            workflow.name,
-            workflow.workflow_id,
-            _describe_node(workflow.root),
+            "Workflow '%s' (%s) finished: status=%s, duration=%.1fs",
+            workflow.name, workflow.workflow_id,
+            result.status, result.duration_seconds,
         )
         return workflow.workflow_id
 
@@ -279,7 +292,7 @@ class WorkflowExecutor:
         result: WorkflowResult,
         parent_result: Optional[str] = None,
     ):
-        """递归执行工作流节点（在后台线程中运行）。"""
+        """递归执行工作流节点。"""
         try:
             if node.node_type == WorkflowNodeType.AGENT:
                 self._run_agent_node(node, workflow, result, parent_result)
@@ -301,8 +314,6 @@ class WorkflowExecutor:
             }
             result.status = "failed"
             result.error = str(e)
-        finally:
-            result.end_time = time.time()
 
     # --------------------------------------------------------------
     # Node execution strategies
@@ -316,8 +327,7 @@ class WorkflowExecutor:
         parent_result: Optional[str] = None,
     ):
         """执行单个 AGENT 节点 — 通过 spawn_subagent 异步创建并等待完成。"""
-        from llm_chat.skills.task_delegator.context import AgentContext
-        from datetime import datetime
+        from llm_chat.skills.task_delegator.context import make_agent_context
 
         # 构建任务（注入父节点结果）
         task = node.task_template or ""
@@ -326,14 +336,13 @@ class WorkflowExecutor:
 
         # 使用 SpawnSubagentTool 的 _execute_async 直接运行
         agent_id = str(uuid.uuid4())
-        context = AgentContext(
+        context = make_agent_context(
             agent_id=agent_id,
             parent_id=workflow.workflow_id,
             depth=0,
             allowed_tools=set(node.allowed_tools),
             conversation_id=f"wf_{workflow.workflow_id}_{node.node_id}",
-            created_at=datetime.utcnow(),
-            status="running",
+            task=task,
         )
         self._registry.spawn(agent_id, context)
 
@@ -375,30 +384,39 @@ class WorkflowExecutor:
         result: WorkflowResult,
         parent_result: Optional[str] = None,
     ):
-        """并行执行所有子节点。"""
+        """并行执行所有子节点。
+
+        使用临时 ThreadPoolExecutor，在工作流上下文中并行编排子节点。
+        Agent 的实际执行仍委托给 SubAgentRegistry 的线程池。
+        """
         futures: Dict[str, Future] = {}
         child_results: Dict[str, Any] = {}
 
-        for child in node.children:
-            f = self._pool.submit(
-                self._execute_node,
-                child,
-                workflow,
-                result,
-                parent_result,
-            )
-            futures[child.node_id] = f
-
-        # 等待所有子节点完成
-        for child_id, f in futures.items():
-            try:
-                f.result(timeout=node.timeout * len(node.children) + 30)
-            except Exception as e:
-                child_results[child_id] = {"status": "failed", "error": str(e)}
-                logger.error(
-                    "Workflow '%s' parallel child '%s' error: %s",
-                    workflow.name, child_id, e,
+        # 临时池：大小 = 子节点数，用完即关
+        with ThreadPoolExecutor(
+            max_workers=len(node.children),
+            thread_name_prefix=f"wf-par-{workflow.workflow_id[:8]}",
+        ) as pool:
+            for child in node.children:
+                f = pool.submit(
+                    self._execute_node,
+                    child,
+                    workflow,
+                    result,
+                    parent_result,
                 )
+                futures[child.node_id] = f
+
+            # 等待所有子节点完成
+            for child_id, f in futures.items():
+                try:
+                    f.result(timeout=node.timeout * len(node.children) + 30)
+                except Exception as e:
+                    child_results[child_id] = {"status": "failed", "error": str(e)}
+                    logger.error(
+                        "Workflow '%s' parallel child '%s' error: %s",
+                        workflow.name, child_id, e,
+                    )
 
         # 汇总
         failed = sum(
@@ -416,8 +434,6 @@ class WorkflowExecutor:
         if failed > 0 and node.on_error == "fail":
             result.status = "partial"
             result.error = f"{failed} child tasks failed"
-        elif result.status == "running":
-            pass  # keep running
 
     def _run_sequence(
         self,
@@ -469,10 +485,6 @@ class WorkflowExecutor:
             for r in self._running.values()
             if r.status == "running"
         ]
-
-    def shutdown(self, wait: bool = True):
-        """关闭线程池。"""
-        self._pool.shutdown(wait=wait)
 
 
 # ------------------------------------------------------------------

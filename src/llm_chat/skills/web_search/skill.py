@@ -31,6 +31,11 @@ class WebSearchTool(BaseTool):
 
     @property
     def description(self) -> str:
+        if self._fallback:
+            return (
+                "备用网络搜索工具。仅在首选的 MCP 搜索工具（如 tavily_search）"
+                "不可用、出错或返回空结果时才使用此工具。"
+            )
         return "搜索互联网获取实时信息。当用户询问时事新闻、最新信息、或需要查询网络内容时使用此工具。"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -59,12 +64,14 @@ class WebSearchTool(BaseTool):
         http_proxy: Optional[str] = None,
         https_proxy: Optional[str] = None,
         timeout: int = 30,
+        fallback: bool = False,
     ):
         self.engine = engine
         self.api_key = api_key
         self.http_proxy = http_proxy
         self.https_proxy = https_proxy
         self.timeout = timeout
+        self._fallback = fallback
 
     def _get_proxy_string(self) -> Optional[str]:
         if self.https_proxy:
@@ -307,6 +314,7 @@ class WebSearchSkill(BaseSkill):
         self._http_proxy = None
         self._https_proxy = None
         self._timeout = 30
+        self._fallback = False
 
     def get_tools(self) -> List[BaseTool]:
         return [
@@ -316,6 +324,7 @@ class WebSearchSkill(BaseSkill):
                 http_proxy=self._http_proxy,
                 https_proxy=self._https_proxy,
                 timeout=self._timeout,
+                fallback=self._fallback,
             )
         ]
 
@@ -325,10 +334,11 @@ class WebSearchSkill(BaseSkill):
         self._http_proxy = config.get("http_proxy")
         self._https_proxy = config.get("https_proxy")
         self._timeout = config.get("timeout", 30)
+        self._fallback = config.get("prefer_external", False)
 
         self.logger.info(
             f"WebSearchSkill loaded: engine={self._engine}, "
             f"api_key={'*' * 8 if self._api_key else 'None'}, "
             f"http_proxy={self._http_proxy}, https_proxy={self._https_proxy}, "
-            f"timeout={self._timeout}"
+            f"timeout={self._timeout}, fallback={self._fallback}"
         )

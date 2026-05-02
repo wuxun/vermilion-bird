@@ -5,10 +5,9 @@ import uuid
 import json
 import logging
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
-from datetime import datetime
 
 from llm_chat.tools.base import BaseTool
-from llm_chat.skills.task_delegator.context import AgentContext
+from llm_chat.skills.task_delegator.context import AgentContext, make_agent_context
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
 if TYPE_CHECKING:
@@ -129,14 +128,13 @@ class SpawnSubagentTool(BaseTool):
         agent_id = str(uuid.uuid4())
 
         # 创建子agent上下文
-        context = AgentContext(
+        context = make_agent_context(
             agent_id=agent_id,
             parent_id=self.parent_context.agent_id if self.parent_context else None,
             depth=(self.parent_context.depth + 1) if self.parent_context else 0,
             allowed_tools=set(filtered_tools),
             conversation_id=f"conv_{uuid.uuid4()}",
-            created_at=datetime.utcnow(),
-            status="running",
+            task=task,
             work_dir=work_dir,
         )
 
@@ -251,6 +249,11 @@ class SpawnSubagentTool(BaseTool):
                 logger.info(f"Subagent {agent_id} calling LLM without tools")
                 result = client.chat(task)
 
+            # 检查是否在 LLM 调用期间被取消
+            if context._cancelled.is_set():
+                logger.info(f"Subagent {agent_id} was cancelled during execution")
+                return "Cancelled"
+
             context.status = "completed"
             context.result = result
             logger.info(f"Subagent {agent_id} completed successfully")
@@ -260,6 +263,10 @@ class SpawnSubagentTool(BaseTool):
         except Exception as e:
             error_msg = f"Subagent {agent_id} failed: {str(e)}"
             logger.error(f"Subagent {agent_id} execution error: {e}", exc_info=True)
+
+            # cancelled 优先于 failed
+            if context._cancelled.is_set():
+                return "Cancelled"
 
             context.status = "failed"
             context.result = error_msg
@@ -462,7 +469,7 @@ class ExecuteWorkflowTool(BaseTool):
     """执行预定义的工作流模板。
 
     支持 simple / parallel / pipeline 三种模式。
-    工作流在后台异步执行，用 get_workflow_status 查询进度。
+    同步阻塞执行，完成后直接返回完整结果。
     """
 
     def __init__(
@@ -482,11 +489,10 @@ class ExecuteWorkflowTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "执行一个 agent 工作流。支持三种模式：\n"
+            "执行一个 agent 工作流（同步阻塞，完成后返回结果）。支持三种模式：\n"
             "1. 'simple': 单个子 agent 执行单一任务\n"
             "2. 'parallel': 并行执行多个子 agent 处理独立子任务\n"
-            "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个\n"
-            "工作流在后台异步执行，用 get_workflow_status 查询进度。"
+            "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -559,8 +565,9 @@ class ExecuteWorkflowTool(BaseTool):
             executor = WorkflowExecutor(self.registry, self._spawn_tool)
             self._executor_ref["executor"] = executor
 
-        # 提交工作流
+        # 同步执行工作流（阻塞直到完成）
         workflow_id = executor.execute(workflow)
+        wf_result = executor.get_result(workflow_id)
 
         return json.dumps(
             {
@@ -568,11 +575,10 @@ class ExecuteWorkflowTool(BaseTool):
                 "name": name,
                 "mode": mode,
                 "tasks_count": len(tasks),
-                "status": "running",
-                "message": (
-                    f"工作流已提交并在后台执行。"
-                    f"使用 get_workflow_status(\"{workflow_id}\") 查询进度。"
-                ),
+                "status": wf_result.status if wf_result else "completed",
+                "duration_seconds": round(wf_result.duration_seconds, 2) if wf_result else 0,
+                "node_results": wf_result.node_results if wf_result else {},
+                "error": wf_result.error if wf_result else None,
             },
             ensure_ascii=False,
             indent=2,
