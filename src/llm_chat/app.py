@@ -16,6 +16,8 @@ from llm_chat.mcp import MCPManager, MCPServerStatus
 from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
+from llm_chat.health import get_checker, create_database_checker, create_service_manager_checker
+from llm_chat.services import ConversationService
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -36,6 +38,10 @@ class App:
             memory_config=memory_config,
             default_model_params=default_model_params,
         )
+        self._conv_service = ConversationService(
+            self.conversation_manager,
+            self.storage,
+        )
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None
         self._tools_enabled = False
@@ -43,6 +49,17 @@ class App:
 
         # 初始化服务管理器
         self.service_manager = ServiceManager()
+
+        # 初始化健康检查
+        self._health_checker = get_checker()
+        self._health_checker.register_checker(
+            "database", create_database_checker(self.storage)
+        )
+        self._health_checker.register_checker(
+            "services", create_service_manager_checker(self.service_manager)
+        )
+        logger.info("HealthChecker initialized with database + services checks")
+
         self.scheduler: Optional["SchedulerService"] = None
 
         logger.info(f"Scheduler enabled config: {self.config.scheduler.enabled}")
@@ -99,6 +116,10 @@ class App:
 
     def get_scheduler(self) -> Optional["SchedulerService"]:
         return self.scheduler
+
+    def get_health(self) -> Dict[str, Any]:
+        """获取系统健康状态"""
+        return self._health_checker.get_summary()
 
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:
@@ -248,14 +269,13 @@ class App:
         if self.current_frontend.is_current_conversation_empty():
             return
 
-        conv = self.conversation_manager.create_conversation()
-        self._current_conversation_id = conv.conversation_id
-
-        self.current_frontend.set_current_conversation(conv.conversation_id, [])
+        result = self._conv_service.create()
+        self._current_conversation_id = result["id"]
+        self.current_frontend.set_current_conversation(result["id"], [])
         self.current_frontend.request_conversation_list_refresh()
 
     def _on_delete_conversation(self, conversation_id: str):
-        if conversation_id == self.current_frontend.conversation_id:
+        if conversation_id == self._conv_service.current_conversation_id:
             conversations = self.conversation_manager.list_conversations()
             if conversations:
                 next_conv = conversations[0]
@@ -268,7 +288,7 @@ class App:
                 self._on_new_conversation()
                 return
 
-        self.conversation_manager.delete_conversation(conversation_id)
+        self._conv_service.delete(conversation_id)
         self.current_frontend.request_conversation_list_refresh()
 
     def _on_rename_conversation(self, conversation_id: str):
@@ -280,16 +300,16 @@ class App:
         )
 
         if new_title:
-            self.storage.update_conversation(conversation_id, title=new_title)
+            self._conv_service.rename(conversation_id, new_title)
             self.current_frontend.request_conversation_list_refresh()
 
     def _on_switch_conversation(self, conversation_id: str):
+        messages = self._conv_service.switch(conversation_id)
         self._current_conversation_id = conversation_id
-        messages = self.storage.get_messages(conversation_id)
         self.current_frontend.set_current_conversation(conversation_id, messages)
 
     def _on_list_conversations(self):
-        conversations = self.conversation_manager.list_conversations()
+        conversations = self._conv_service.list()
         self.current_frontend.update_conversation_list(conversations)
 
     def run(self, frontend: BaseFrontend):

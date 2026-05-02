@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 venv/
+.venv/
 ENV/
 env/
 
@@ -68,5 +69,16 @@ work/
 
 # Build
 dist/
+
+# Project tooling caches
+.opencode/
+.sisyphus/
+.trae/
+.ruff_cache/
+.pytest_cache/
+
+# SQLite WAL/journal
+*.db-shm
+*.db-wal
 
 .todo_tasks.json

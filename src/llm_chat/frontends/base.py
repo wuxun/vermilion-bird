@@ -125,51 +125,6 @@ class BaseFrontend(ABC):
     def request_conversation_list_refresh(self):
         pass
 
-    @abstractmethod
-    def stop(self):
-        pass
-
-    @abstractmethod
-    def display_message(self, message: Message):
-        pass
-
-    @abstractmethod
-    def display_error(self, error: str):
-        pass
-
-    @abstractmethod
-    def display_info(self, info: str):
-        pass
-
-    @abstractmethod
-    def set_current_conversation(
-        self, conversation_id: str, messages: List[Dict[str, Any]]
-    ):
-        pass
-
-    @abstractmethod
-    def update_conversation_list(self, conversations: List[Dict[str, Any]]):
-        pass
-
-    @abstractmethod
-    def request_rename_input(
-        self, conversation_id: str, current_title: str
-    ) -> Optional[str]:
-        pass
-
-    @property
-    @abstractmethod
-    def conversation_id(self) -> str:
-        pass
-
-    @abstractmethod
-    def is_current_conversation_empty(self) -> bool:
-        pass
-
-    @abstractmethod
-    def request_conversation_list_refresh(self):
-        pass
-
     def _handle_message(self, message: Message, context: ConversationContext):
         if self._on_message_callback:
             self._on_message_callback(message, context)

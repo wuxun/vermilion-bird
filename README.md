@@ -428,52 +428,79 @@ conversation.clear_history()
 ```
 src/llm_chat/
 ├── __init__.py
-├── cli.py              # 命令行接口
-├── client.py           # 大模型客户端
-├── config.py           # 配置管理
-├── conversation.py     # 会话管理
-├── storage.py          # SQLite 存储管理
-├── app.py              # 应用核心
+├── app.py              # 应用核心协调器
+├── cli.py              # CLI 入口（Click），含 chat/feishu/skills/schedule/memory
+├── client.py           # 大模型客户端 API
+├── config.py           # Pydantic 配置管理（YAML/环境变量/CLI）
+├── conversation.py     # 会话管理 + ConversationManager
+├── storage.py          # SQLite 持久化（会话/消息/任务/执行/飞书记录）
+├── exceptions.py       # 统一异常层次（13 子类）
+├── health.py           # 组件健康检查（HealthChecker）
+├── service_manager.py  # 通用服务生命周期管理
 ├── protocols/          # 协议适配器
-│   ├── __init__.py
-│   ├── base.py         # 协议基类（含工具调用支持）
-│   ├── openai.py       # OpenAI 协议
-│   ├── anthropic.py    # Anthropic 协议
-│   └── gemini.py       # Gemini 协议
-├── frontends/          # 前端适配器
-│   ├── __init__.py
-│   ├── base.py         # 前端基类
-│   ├── cli.py          # CLI 前端
+│   ├── base.py         # BaseProtocol 基类 + ToolCall
+│   ├── openai.py       # OpenAI 协议（兼容 DeepSeek/Qwen 等）
+│   ├── anthropic.py    # Anthropic Claude 协议
+│   └── gemini.py       # Google Gemini 协议
+├── frontends/          # 用户界面
+│   ├── base.py         # BaseFrontend 抽象基类
+│   ├── cli.py          # CLI 终端前端
 │   ├── gui.py          # PyQt6 GUI 前端
 │   ├── mcp_dialog.py   # MCP 配置对话框
 │   ├── skills_dialog.py # 技能配置对话框
-│   ├── models_dialog.py # 模型配置对话框
+│   ├── models_dialog.py # 模型选择对话框
+│   ├── scheduler_dialog.py # 定时任务管理界面
 │   └── feishu/         # 飞书集成
-│       ├── __init__.py
-│       ├── adapter.py   # 飞书消息适配器
-│       ├── server.py    # 飞书 WebSocket 服务器
+│       ├── adapter.py   # 消息适配器（含安全检查）
+│       ├── server.py    # WebSocket 服务器
 │       ├── mapper.py    # 会话 ID 映射
-│       └── models.py    # 飞书数据模型
+│       ├── models.py    # 数据模型
+│       ├── push.py      # 推送服务
+│       ├── security.py  # 签名验证/加密
+│       └── error_handler.py # 错误处理/重试
 ├── mcp/                # MCP 客户端
-│   ├── __init__.py
-│   ├── types.py        # 类型定义
+│   ├── types.py        # MCPServerConfig/MCPServerStatus
 │   ├── config.py       # MCP 配置
 │   ├── client.py       # MCP 客户端封装
-│   └── manager.py      # MCP 服务器管理器
-├── memory/             # 记忆系统
-│   ├── __init__.py
-│   ├── storage.py      # 记忆存储
-│   └── manager.py      # 记忆管理器
-├── skills/             # 技能插件
-│   ├── __init__.py
-│   ├── base.py         # 技能基类
-│   ├── web_search/     # 网页搜索技能
-│   ├── calculator/     # 计算器技能
-│   ├── web_fetch/      # 网页抓取技能
-│   └── shell_exec/     # Shell执行技能（白名单限制）
+│   └── manager.py      # MCP 服务器生命周期管理
+├── scheduler/          # 定时任务调度
+│   ├── models.py       # Task/TaskExecution 数据模型
+│   ├── scheduler.py    # SchedulerService（APScheduler）
+│   ├── task_executor.py # TaskExecutor（含重试）
+│   └── notification.py # NotificationService（飞书/前端通知）
+├── memory/             # 多层记忆系统
+│   ├── storage.py      # 记忆文件持久化
+│   ├── manager.py      # MemoryManager（提取/压缩/进化）
+│   ├── extractor.py    # MemoryExtractor（LLM 辅助提取）
+│   └── templates.py    # short/mid/long/soul 模板
+├── context/            # 上下文管理
+│   ├── types.py        # CompressionLevel/ContextMessage
+│   ├── manager.py      # ContextManager（多级压缩+缓存）
+│   ├── compressor.py   # ContextCompressor
+│   └── cache.py        # ContextCache
+├── skills/             # 技能插件系统（10 个内置）
+│   ├── base.py         # BaseSkill 抽象基类
+│   ├── manager.py      # SkillManager（加载/卸载/发现）
+│   ├── registry.py     # 全局 BUILTIN_SKILLS 注册表
+│   ├── calculator/     # 安全数学表达式（AST 解析）
+│   ├── file_editor/    # 文件编辑
+│   ├── file_reader/    # 文件读取
+│   ├── file_writer/    # 文件写入
+│   ├── scheduler/      # 定时任务管理
+│   ├── shell_exec/     # 受控 Shell 执行
+│   ├── task_delegator/ # 任务委托（子代理+工具编排）
+│   ├── todo_manager/   # 待办事项管理
+│   ├── web_fetch/      # 网页抓取
+│   └── web_search/     # 网页搜索
+├── tools/              # 工具基础设施
+│   ├── base.py         # BaseTool 抽象基类
+│   ├── registry.py     # ToolRegistry（单例）
+│   └── executor.py     # ToolExecutor（并行+重试）
+├── services/           # 业务服务层
+│   └── conversation_service.py # ConversationService
 └── utils/              # 工具函数
-    ├── __init__.py
-    └── token_counter.py # Token 计数器
+    ├── token_counter.py # Token 计数器
+    └── retry.py         # 重试工具
 ```
 
 ## MCP 工具支持

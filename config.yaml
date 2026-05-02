@@ -9,28 +9,7 @@ llm:
 enable_tools: true
 
 mcp:
-  servers:
-    # Tavily Search - 专为 AI 设计的搜索引擎（推荐）
-    # 需要先获取 API Key: https://tavily.com/
-    # - name: "tavily-search"
-    #   transport: "stdio"
-    #   command: "npx"
-    #   args: ["-y", "tavily-mcp"]
-    #   env:
-    #     TAVILY_API_KEY: "your-tavily-api-key"
-    #   enabled: false
-    #   description: "Tavily 搜索引擎 - 专为 AI 设计"
-    
-    # Brave Search - 隐私友好的搜索引擎
-    # 需要先获取 API Key: https://brave.com/search/api/
-    # - name: "brave-search"
-    #   transport: "stdio"
-    #   command: "npx"
-    #   args: ["-y", "@modelcontextprotocol/server-brave-search"]
-    #   env:
-    #     BRAVE_API_KEY: "your-brave-api-key"
-    #   enabled: false
-    #   description: "Brave 搜索引擎"
+  servers: []
 
 # Scheduler 配置：不包含 db_path，复用现有数据库
 scheduler:

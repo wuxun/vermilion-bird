@@ -95,7 +95,7 @@ def test_scheduler_defaults():
     assert hasattr(config, "scheduler")
     assert config.scheduler.enabled is True
     assert config.scheduler.max_workers == 4
-    assert config.scheduler.default_timezone == "local"
+    assert config.scheduler.default_timezone == "UTC"
 
 
 def test_scheduler_from_yaml_basic():
