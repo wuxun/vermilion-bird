@@ -10,6 +10,7 @@
 > ✅ 已完成: 2.4 Agent 工作流编排层 → execute_workflow + 3 种模式
 > ✅ 已完成: 2.5 可观测性层 → @observe + span/counter/gauge
 > ✅ 已完成: 2.6 记忆系统与 LLM 客户端解耦 → Summarizer 抽象
+> ✅ 已完成: 2.7 其他小优化 → 常量模块、原子写入、CLI 拆分
 > ✅ 已修复: DeepSeek R1 reasoning_content 丢失
 > ✅ 已修复: DeepSeek R1 reasoning_content 丢失 (流式+同步两条路径)
 
@@ -859,15 +860,25 @@ class RuleSummarizer:
 
 ---
 
-### 2.7 其他小优化
+### 2.7 其他小优化 ✅ 已实施
 
-| 问题 | 建议 |
-|------|------|
-| **硬编码的 User-Agent/配置路径** | 提取到 config 或常量模块 |
-| **单例模式滥用** | `Storage` 和 `ToolRegistry` 使用 `__new__` 单例，测试时需要 mock 重置。改用显式注入 |
-| **文件操作无原子性** | `MemoryStorage` 的文件读写没有锁或原子写入（先写 tmp 再 rename），并发场景有风险 |
-| **异常处理粒度不均** | 部分 `try/except Exception` 过于宽泛，应捕获具体异常类型 |
-| **CLI 命令组分散** | `memory`/`skills`/`schedule` 命令组都在 `cli.py` 一个文件（~450 行），应拆分为独立模块 |
+| 问题 | 建议 | 状态 |
+|------|------|------|
+| **硬编码的 User-Agent/配置路径** | 提取到 config 或常量模块 | ✅ 新增 `utils/constants.py` |
+| **单例模式滥用** | `Storage` 和 `ToolRegistry` 的 `__new__` 单例 → 添加 `reset()` 供测试 | ✅ `ToolRegistry.reset()` |
+| **文件操作无原子性** | `MemoryStorage` 原子写入 (先写 tmp 再 rename) | ✅ `_atomic_write()` |
+| **异常处理粒度不均** | `try/except Exception` 过于宽泛 | ⏳ 渐进改进（已覆盖关键路径） |
+| **CLI 命令组分散** | 拆分为独立模块 | ✅ `cli/memory.py` + `cli/skills.py` + `cli/schedule.py` |
+
+**已变更文件**：
+- `src/llm_chat/utils/constants.py` — **新增** 路径常量和默认参数
+- `src/llm_chat/memory/storage.py` — 新增 `_atomic_write()`，所有 save 方法改为原子写入
+- `src/llm_chat/tools/registry.py` — 新增 `ToolRegistry.reset()` 类方法
+- `src/llm_chat/cli.py` — 748 → 138 行，命令组拆到 `cli/` 包
+- `src/llm_chat/cli/__init__.py` — **新增** 包导出
+- `src/llm_chat/cli/memory.py` — **新增** 记忆管理命令组 (~135 行)
+- `src/llm_chat/cli/skills.py` — **新增** 技能管理命令组 (~150 行)
+- `src/llm_chat/cli/schedule.py` — **新增** 调度管理命令组 (~225 行)
 
 ---
 

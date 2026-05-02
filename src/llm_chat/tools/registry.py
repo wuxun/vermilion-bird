@@ -48,6 +48,13 @@ class ToolRegistry:
             return tool.execute(**arguments)
         return tool.execute(**kwargs)
 
+    @classmethod
+    def reset(cls):
+        """重置单例 — 供测试使用。"""
+        if cls._instance is not None:
+            cls._instance._tools.clear()
+            cls._instance = None
+
 
 def get_tool_registry() -> ToolRegistry:
     return ToolRegistry()

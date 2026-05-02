@@ -1,6 +1,8 @@
 import re
 import shutil
 import logging
+import tempfile
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -29,6 +31,25 @@ class MemoryStorage:
         
         self._init_memory_files()
     
+    def _atomic_write(self, filepath: Path, content: str):
+        """原子写入 — 先写临时文件再 rename，防止并发读取到撕裂文件。"""
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            suffix=".tmp",
+            prefix=filepath.name + ".",
+            dir=filepath.parent,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, filepath)
+        except Exception:
+            # 清理临时文件
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
     def _init_memory_files(self):
         """初始化记忆文件"""
         if not self.short_term_path.exists():
@@ -55,10 +76,10 @@ class MemoryStorage:
             return get_short_term_template()
     
     def save_short_term(self, content: str):
-        """保存短期记忆"""
-        self.short_term_path.write_text(content, encoding="utf-8")
+        """保存短期记忆（原子写入）"""
+        self._atomic_write(self.short_term_path, content)
         logger.info("保存短期记忆")
-    
+
     def clear_short_term(self):
         """清空短期记忆"""
         self.save_short_term(get_short_term_template())
@@ -72,8 +93,8 @@ class MemoryStorage:
             return get_mid_term_template()
     
     def save_mid_term(self, content: str):
-        """保存中期记忆"""
-        self.mid_term_path.write_text(content, encoding="utf-8")
+        """保存中期记忆（原子写入）"""
+        self._atomic_write(self.mid_term_path, content)
         logger.info("保存中期记忆")
     
     def append_summary(self, date: str, summary: str):
@@ -108,8 +129,8 @@ class MemoryStorage:
             return get_long_term_template()
     
     def save_long_term(self, content: str):
-        """保存长期记忆"""
-        self.long_term_path.write_text(content, encoding="utf-8")
+        """保存长期记忆（原子写入）"""
+        self._atomic_write(self.long_term_path, content)
         logger.info("保存长期记忆")
     
     def update_section(self, section: str, content: str) -> bool:
@@ -201,8 +222,8 @@ class MemoryStorage:
             return None
     
     def save_soul(self, content: str):
-        """保存人格设定"""
-        self.soul_path.write_text(content, encoding="utf-8")
+        """保存人格设定（原子写入）"""
+        self._atomic_write(self.soul_path, content)
         logger.info("保存人格设定")
     
     def backup_memory(self, backup_dir: Optional[str] = None) -> str:
