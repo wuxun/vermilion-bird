@@ -234,6 +234,13 @@ class ToolsConfig(BaseSettings):
         default=10,
         description="子 agent 最大并发数（0=不限制），超过此数量 spawn_subagent 会拒绝",
     )
+    subagent_models: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "子 agent 按复杂度选择模型: {'simple': 'model-a', 'complex': 'model-b'}。"
+            "LLM 调用 spawn_subagent 时指定 complexity 级别即可，无需知道具体模型名。"
+        ),
+    )
 
     class Config:
         env_prefix = "TOOLS_"

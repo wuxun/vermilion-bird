@@ -337,6 +337,7 @@ class GUIFrontend(BaseFrontend):
         self._delete_conv_button: Optional[QPushButton] = None
         self._rename_conv_button: Optional[QPushButton] = None
         self._context_label: Optional[QLabel] = None
+        self._cost_label: Optional[QLabel] = None
         self._current_model: str = "deepseek-chat"  # 稍后由 set_config 覆盖
 
         self._on_new_conversation: Optional[Callable] = None
@@ -690,6 +691,11 @@ class GUIFrontend(BaseFrontend):
         self._context_label.setFont(QFont("Arial", 10))
         self._context_label.setStyleSheet("color: #666; padding: 2px;")
         layout.addWidget(self._context_label)
+
+        self._cost_label = QLabel("💲 成本: —")
+        self._cost_label.setFont(QFont("Arial", 10))
+        self._cost_label.setStyleSheet("color: #888; padding: 2px;")
+        layout.addWidget(self._cost_label)
 
         self._chat_scroll_area = QScrollArea()
         self._chat_scroll_area.setWidgetResizable(True)
@@ -1139,6 +1145,29 @@ class GUIFrontend(BaseFrontend):
             f"color: {color}; padding: 2px; font-weight: bold;"
         )
 
+        # 同时更新成本显示
+        self._update_cost_status()
+
+    def _update_cost_status(self):
+        """更新成本标签（从 observability 获取累计消耗）。"""
+        if self._cost_label is None:
+            return
+        try:
+            from llm_chat.utils.observability import get_cost_summary
+            summary = get_cost_summary()
+            total_tokens = summary.get("tokens", {}).get("total", 0)
+            total_cost = summary.get("cost", {}).get("total_usd", 0)
+            if total_tokens > 0:
+                self._cost_label.setText(
+                    f"💲 {total_tokens:,} tokens · $" + f"{total_cost:.4f}"
+                )
+                self._cost_label.setStyleSheet("color: #666; padding: 2px; font-weight: bold;")
+            else:
+                self._cost_label.setText("💲 成本: —")
+                self._cost_label.setStyleSheet("color: #888; padding: 2px;")
+        except Exception:
+            self._cost_label.setText("💲 成本: —")
+
     @staticmethod
     def _format_context_text(used: int, limit: int, percent: float = None) -> str:
         """格式化上下文状态文本。"""
@@ -1398,6 +1427,7 @@ class GUIFrontend(BaseFrontend):
             self._context_label.setStyleSheet(
                 f"color: {color}; padding: 2px; font-weight: bold;"
             )
+            self._update_cost_status()
 
     def _escape_html(self, text: str) -> str:
         return (

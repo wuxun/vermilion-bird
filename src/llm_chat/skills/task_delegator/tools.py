@@ -100,6 +100,15 @@ class SpawnSubagentTool(BaseTool):
                         },
                     },
                 },
+                "complexity": {
+                    "type": "string",
+                    "enum": ["simple", "moderate", "complex"],
+                    "description": (
+                        "任务复杂度级别。简单任务自动使用配置中的便宜模型，"
+                        "复杂任务使用高级模型。优先级高于 model_config。"
+                        "简单: 快速关键词搜索/简单问答 | 复杂: 深度分析/多步推理"
+                    ),
+                },
             },
             "required": ["task"],
         }
@@ -129,7 +138,21 @@ class SpawnSubagentTool(BaseTool):
         allowed_tools = kwargs.get("allowed_tools", []) or []
         timeout = kwargs.get("timeout", 60)
         model_config = kwargs.get("model_config")
+        complexity = kwargs.get("complexity")
         work_dir_arg = kwargs.get("work_dir")
+
+        # 复杂度→模型映射（config.tools.subagent_models）
+        if complexity and not model_config:
+            models_map = (
+                self.config.tools.subagent_models
+                if self.config and hasattr(self.config, "tools") else {}
+            )
+            mapped_model = models_map.get(complexity)
+            if mapped_model:
+                model_config = {"model": mapped_model}
+                logger.info(
+                    f"Subagent complexity={complexity} → model={mapped_model}"
+                )
 
         if self.parent_context and self.parent_context.depth >= 1:
             error_msg = (

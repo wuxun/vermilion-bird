@@ -84,6 +84,11 @@ class ExecuteWorkflowTool(BaseTool):
                                 "items": {"type": "string"},
                                 "description": "允许的工具白名单",
                             },
+                            "complexity": {
+                                "type": "string",
+                                "enum": ["simple", "moderate", "complex"],
+                                "description": "任务复杂度（自动选模型）",
+                            },
                         },
                         "required": ["task"],
                     },
@@ -139,6 +144,20 @@ class ExecuteWorkflowTool(BaseTool):
             )
 
         # 构建工作流
+        # 将 complexity 转为 model_config（如果配置了 subagent_models）
+        models_map = getattr(
+            getattr(self, 'config', None), 'tools', None
+        )
+        models_map = models_map.subagent_models if models_map else {}
+        for t in tasks:
+            if t.get("complexity") and not t.get("model_config") and models_map:
+                mapped = models_map.get(t["complexity"])
+                if mapped:
+                    t["model_config"] = {"model": mapped}
+                    logger.info(
+                        f"Workflow task complexity={t['complexity']} → model={mapped}"
+                    )
+
         workflow = AgentWorkflow.from_json({
             "name": name,
             "mode": mode,
