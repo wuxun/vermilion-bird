@@ -18,7 +18,7 @@ class LLMClientStreamToolsMixin:
 
     依赖 LLMClientBase 提供的:
     - self.config, self.session, self.protocol
-    - self._tool_registry, self._tool_executor, self._tool_executor_instance
+    - self._tool_registry, self._tool_executor_instance
     - self.execute_builtin_tool()
     """
 
@@ -163,7 +163,7 @@ class LLMClientStreamToolsMixin:
                 tool_args = tc["function"].get("arguments", "{}")
                 yield ("tool_call_start", tool_name, tool_args)
 
-            self._tool_executor_instance.execute_tools_parallel(
+            tool_results = self._tool_executor_instance.execute_tools_parallel(
                 tool_calls
             )
             logger.info(f"工具执行结果数量: {len(tool_results)}")

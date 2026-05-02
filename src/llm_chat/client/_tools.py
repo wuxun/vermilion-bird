@@ -18,7 +18,7 @@ class LLMClientToolsMixin:
 
     依赖 LLMClientBase 提供的:
     - self.config, self.session, self.protocol
-    - self._tool_registry, self._tool_executor, self._tool_executor_instance
+    - self._tool_registry, self._tool_executor_instance
     - self.execute_builtin_tool()
     """
 
