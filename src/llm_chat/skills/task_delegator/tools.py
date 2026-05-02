@@ -513,8 +513,13 @@ class ExecuteWorkflowTool(BaseTool):
     """执行预定义的工作流模板。
 
     支持 simple / parallel / pipeline 三种模式。
-    同步阻塞执行，完成后直接返回完整结果。
+    提交后立即返回 workflow_id，工作流在后台执行。
+    结果通过 get_workflow_status 获取。
     """
+
+    # 防重入：跟踪活跃的工作流 ID
+    _active_workflow_id: Optional[str] = None
+    _active_workflow_at: float = 0.0
 
     def __init__(
         self,
@@ -533,13 +538,15 @@ class ExecuteWorkflowTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "执行一个 agent 工作流。提交后立即返回 workflow_id，工作流在后台执行。\n"
+            "提交一个 agent 工作流到后台执行，立即返回 workflow_id。\n"
+            "提交后工作流在后台运行，不阻塞当前对话。\n"
             "支持三种模式：\n"
             "1. 'simple': 单个子 agent 执行单一任务\n"
             "2. 'parallel': 并行执行多个子 agent 处理独立子任务\n"
             "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个\n\n"
-            "如果返回 status='running'，说明工作流尚未完成，\n"
-            "请等待片刻后调用 get_workflow_status(workflow_id) 查询结果。"
+            "⚠️ 重要：返回后必须调用 get_workflow_status(workflow_id, wait=true) 获取结果。\n"
+            "不要重复调用 execute_workflow，否则会创建重复的工作流！\n"
+            "一次提交 = 一次执行，等待结果用 get_workflow_status。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -584,6 +591,37 @@ class ExecuteWorkflowTool(BaseTool):
         mode = kwargs.get("mode", "simple")
         tasks = kwargs.get("tasks", [])
 
+        # 提前获取 executor（防重入检查也需要）
+        executor = self._executor_ref.get("executor")
+
+        # 防重入：如果上一个工作流仍在活跃（10s 内），返回已有 ID
+        if (
+            ExecuteWorkflowTool._active_workflow_id
+            and (time.time() - ExecuteWorkflowTool._active_workflow_at) < 10
+        ):
+            existing = ExecuteWorkflowTool._active_workflow_id
+            existing_result = executor.get_result(existing) if executor else None
+            if existing_result and existing_result.status == "running":
+                logger.warning(
+                    "execute_workflow called again while workflow '%s' is still running",
+                    existing,
+                )
+                return json.dumps(
+                    {
+                        "workflow_id": existing,
+                        "name": name,
+                        "mode": mode,
+                        "status": "already_submitted",
+                        "message": (
+                            f"⚠️ 工作流已在执行中 (id={existing})。"
+                            f"请用 get_workflow_status(\"{existing}\", wait=true) 获取结果，"
+                            f"不要重复提交！"
+                        ),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+
         if not tasks:
             return json.dumps(
                 {"error": "tasks must not be empty", "status": "failed"},
@@ -597,8 +635,7 @@ class ExecuteWorkflowTool(BaseTool):
             "tasks": tasks,
         })
 
-        # 获取或创建共享 executor
-        executor = self._executor_ref.get("executor")
+        # 创建 executor（如果尚未存在）
         if executor is None:
             if self._spawn_tool is None:
                 return json.dumps(
@@ -620,6 +657,10 @@ class ExecuteWorkflowTool(BaseTool):
             bg_future = _bg_pool.submit(executor.execute, workflow)
             workflow_id = workflow.workflow_id  # 预先生成的 ID
 
+            # 标记活跃工作流（防重入）
+            ExecuteWorkflowTool._active_workflow_id = workflow_id
+            ExecuteWorkflowTool._active_workflow_at = time.time()
+
             # 轮询等待工作流完成（由 config.tools.workflow_poll_timeout 控制）
             poll_timeout = self.config.tools.workflow_poll_timeout
             poll_interval = 3
@@ -639,28 +680,28 @@ class ExecuteWorkflowTool(BaseTool):
             _bg_pool.shutdown(wait=False)
 
         if wf_result and wf_result.status == "running":
-            # 工作流仍在后台执行，返回 running 状态让 LLM 轮询
-            node_summary = {}
-            for nid, nr in (wf_result.node_results or {}).items():
-                if isinstance(nr, dict):
-                    node_summary[nid] = nr.get("status", "unknown")
+            # 工作流仍在后台执行，返回 submitted 状态
+            # 使用 "submitted" 而非 "running" 防止 LLM 误解为失败而重试
+            # 活跃标记保持，用于防重入
             return json.dumps(
                 {
                     "workflow_id": workflow_id,
                     "name": name,
                     "mode": mode,
                     "tasks_count": len(tasks),
-                    "status": "running",
+                    "status": "submitted",
                     "message": (
-                        f"工作流仍在后台执行中，当前已完成节点: {node_summary}。"
-                        f"请等待片刻后调用 get_workflow_status(\"{workflow_id}\") 查询最终结果。"
+                        f"✅ 工作流已提交，正在后台执行 ({len(tasks)} 个任务)。\n"
+                        f"⚠️ 切勿重复调用 execute_workflow！\n"
+                        f"请调用 get_workflow_status(workflow_id=\"{workflow_id}\", wait=true) 等待结果。"
                     ),
                 },
                 ensure_ascii=False,
                 indent=2,
             )
 
-        # 工作流已完成
+        # 工作流已完成，清除防重入标记
+        ExecuteWorkflowTool._active_workflow_id = None
         return json.dumps(
             {
                 "workflow_id": workflow_id,
@@ -694,8 +735,9 @@ class GetWorkflowStatusTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "查询工作流的执行状态和结果。支持 wait=true 阻塞等待完成。"
-            "execute_workflow 返回 running 状态时，用此工具轮询或等待最终结果。"
+            "获取工作流的执行结果。execute_workflow 提交后，必须用此工具获取结果。\n"
+            "使用 wait=true 会阻塞等待直到工作流完成（推荐）。"
+            "工作流 ID 从 execute_workflow 的返回值中获取。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
