@@ -251,6 +251,13 @@ class WorkflowExecutor:
         # Register cancel callback so panel cancel cascades to workflow
         self._registry.add_cancel_callback(self._on_agent_cancelled)
 
+    def _timeout_padding(self) -> int:
+        """节点超时 padding（可配置 via config.tools.workflow_timeout_padding）。"""
+        try:
+            return self._spawn_tool.config.tools.workflow_timeout_padding
+        except Exception:
+            return 30
+
     def _on_agent_cancelled(self, agent_id: str) -> None:
         """Called by registry when an agent is cancelled.
 
@@ -386,7 +393,7 @@ class WorkflowExecutor:
         )
 
         try:
-            agent_result = future.result(timeout=node.timeout + 30)
+            agent_result = future.result(timeout=node.timeout + self._timeout_padding())
             # Check if workflow was cancelled while waiting
             if result.status == "cancelled":
                 self._registry.cancel(agent_id)
@@ -447,7 +454,7 @@ class WorkflowExecutor:
             # 等待所有子节点完成
             for child_id, f in futures.items():
                 try:
-                    f.result(timeout=node.timeout * len(node.children) + 30)
+                    f.result(timeout=node.timeout * len(node.children) + self._timeout_padding())
                 except Exception as e:
                     child_results[child_id] = {"status": "failed", "error": str(e)}
                     logger.error(

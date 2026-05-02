@@ -63,6 +63,18 @@ class LLMClientBase:
         if not skip_skills_setup:
             self._setup_skills()
 
+    def close(self):
+        """关闭客户端，释放连接资源。
+
+        子 agent 执行完成后应调用此方法，避免 requests.Session
+        连接池泄漏（大量并发子代理可能耗尽文件描述符）。
+        """
+        try:
+            self.session.close()
+            logger.debug("LLMClient session closed")
+        except Exception as e:
+            logger.warning(f"Error closing LLMClient session: {e}")
+
     # ------------------------------------------------------------------
     # 技能设置
     # ------------------------------------------------------------------

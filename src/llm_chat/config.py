@@ -216,7 +216,19 @@ class ToolsConfig(BaseSettings):
     work_dir: str = Field(default="./work", description="任务临时文件工作目录")
     workflow_poll_timeout: int = Field(
         default=240,
-        description="execute_workflow 内部轮询超时时间（秒），超时后返回 running 状态让 LLM 自行轮询",
+        description="execute_workflow 内部轮询超时时间（秒），超时后返回 submitted 状态让 LLM 自行轮询",
+    )
+    workflow_timeout_padding: int = Field(
+        default=30,
+        description="workflow 节点超时额外 padding（秒），实际超时 = node.timeout + padding",
+    )
+    subagent_max_retries: int = Field(
+        default=2,
+        description="子 agent LLM 调用失败时的最大重试次数（0=不重试）",
+    )
+    subagent_retry_delay: float = Field(
+        default=2.0,
+        description="子 agent 重试初始延迟（秒），指数退避",
     )
 
     class Config:
