@@ -248,6 +248,7 @@ class App:
     def _get_mcp_manager(self) -> MCPManager:
         if self._mcp_manager is None:
             self._mcp_manager = MCPManager()
+            MCPManager.set_instance(self._mcp_manager)
             new_servers = []
             for server in self.config.mcp.servers:
                 server_dict = server.model_dump()
@@ -480,5 +481,8 @@ class App:
         # 使用服务管理器停止所有服务
         self.service_manager.stop_all()
         self.disable_tools()
+        # 关闭 MCP 事件循环
+        if self._mcp_manager:
+            self._mcp_manager.shutdown()
         if self.current_frontend:
             self.current_frontend.stop()

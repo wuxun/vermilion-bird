@@ -24,29 +24,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 全局注册表，用于从 job 函数访问 SchedulerService 实例
-_scheduler_registry: Dict[str, "SchedulerService"] = {}
-
-
-def _execute_job_wrapper(task_id: str, scheduler_id: str):
-    """模块级别的 job 包装函数，避免绑定方法的 pickle 问题。"""
-    scheduler = _scheduler_registry.get(scheduler_id)
-    if scheduler:
-        scheduler._execute_task(task_id)
-    else:
-        logger.error(f"Scheduler instance not found: {scheduler_id}")
-        # 尝试使用第一个可用的 scheduler 实例
-        if _scheduler_registry:
-            scheduler = next(iter(_scheduler_registry.values()))
-            scheduler._execute_task(task_id)
-
 
 class SchedulerService:
     """调度器服务，管理定时任务的调度和执行。
 
     使用 APScheduler BackgroundScheduler + ThreadPoolExecutor，
     支持 cron、date 两种触发器类型。
+
+    使用类级注册表 _instances 替代模块级全局变量，
+    避免 job wrapper 的跨模块状态污染。
     """
+
+    _instances: Dict[str, "SchedulerService"] = {}
+
+    @classmethod
+    def _get_instance(cls, scheduler_id: str) -> Optional["SchedulerService"]:
+        return cls._instances.get(scheduler_id)
+
+    @classmethod
+    def _job_wrapper(cls, task_id: str, scheduler_id: str):
+        """类方法 job 包装 — 避免绑定方法的 pickle 问题。"""
+        scheduler = cls._instances.get(scheduler_id)
+        if scheduler:
+            scheduler._execute_task(task_id)
+        else:
+            logger.error(f"Scheduler instance not found: {scheduler_id}")
+            if cls._instances:
+                scheduler = next(iter(cls._instances.values()))
+                scheduler._execute_task(task_id)
 
     @property
     def name(self) -> str:
@@ -70,7 +75,7 @@ class SchedulerService:
         # 生成唯一的 scheduler ID 用于注册表
         self._scheduler_id = str(uuid.uuid4())
         # 立即注册到全局注册表
-        _scheduler_registry[self._scheduler_id] = self
+        SchedulerService._instances[self._scheduler_id] = self
 
         self._setup_scheduler()
 
@@ -147,8 +152,8 @@ class SchedulerService:
         if self._scheduler:
             self._scheduler.shutdown(wait=wait)
             # 从全局注册表移除
-            if self._scheduler_id in _scheduler_registry:
-                del _scheduler_registry[self._scheduler_id]
+            if self._scheduler_id in SchedulerService._instances:
+                del SchedulerService._instances[self._scheduler_id]
             self._running = False
             logger.info("Scheduler shutdown")
 
@@ -166,7 +171,7 @@ class SchedulerService:
         trigger = self._build_trigger(task.trigger_config)
 
         self._scheduler.add_job(
-            _execute_job_wrapper,
+            SchedulerService._job_wrapper,
             trigger=trigger,
             id=task.id,
             args=[task.id, self._scheduler_id],

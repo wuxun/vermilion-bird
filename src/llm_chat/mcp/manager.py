@@ -13,21 +13,19 @@ logger = logging.getLogger(__name__)
 
 class MCPManager:
     _instance: Optional["MCPManager"] = None
-    _lock = threading.Lock()
 
-    def __new__(cls) -> "MCPManager":
+    @classmethod
+    def set_instance(cls, instance: Optional["MCPManager"]) -> None:
+        """注入自定义实例（App 初始化/测试 mock）。"""
+        cls._instance = instance
+
+    @classmethod
+    def get_instance(cls) -> "MCPManager":
         if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
+            cls._instance = cls()
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
-            return
-
-        self._initialized = True
         self._config: MCPConfig = MCPConfig()
         self._clients: Dict[str, MCPClient] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -63,6 +61,17 @@ class MCPManager:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future
 
+    def shutdown(self):
+        """关闭事件循环和线程（App.stop() 时调用）。"""
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                logger.warning("MCP event loop thread did not stop in time")
+        self._loop = None
+        self._thread = None
+
     def load_config(self, config: MCPConfig):
         self._config = config
 
@@ -78,33 +87,9 @@ class MCPManager:
         return self._config.remove_server(name)
 
     def connect_server(self, name: str) -> Future:
-        server_config = self._config.get_server(name)
-        if not server_config:
-            future = Future()
-            future.set_exception(MCPClientError(f"服务器配置不存在: {name}"))
-            return future
-
-        if name in self._clients:
-            client = self._clients[name]
-            if client.is_connected():
-                future = Future()
-                future.set_result(True)
-                return future
-
+        """连接单个服务器 — 委托给 _connect_server_async。"""
         async def _connect():
-            client = MCPClient(server_config)
-            self._clients[name] = client
-
-            self._notify_status(name, MCPServerStatus.CONNECTING)
-
-            success = await client.connect()
-            if success:
-                self._notify_status(name, MCPServerStatus.CONNECTED)
-            else:
-                self._notify_status(name, MCPServerStatus.ERROR)
-
-            return success
-
+            return await self._connect_server_async(name)
         return self._run_async(_connect())
 
     def disconnect_server(self, name: str) -> Future:
@@ -315,7 +300,8 @@ class MCPManager:
 
 
 def get_mcp_manager() -> MCPManager:
-    return MCPManager()
+    """向后兼容的便捷函数 — 优先从 DI 实例获取。"""
+    return MCPManager.get_instance()
 
 
 # ------------------------------------------------------------------
