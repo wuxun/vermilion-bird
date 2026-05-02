@@ -214,6 +214,10 @@ class ToolsConfig(BaseSettings):
     retry_delay: float = Field(default=1.0, description="重试间隔时间（秒）")
     timeout: int = Field(default=300, description="工具执行超时时间（秒）")
     work_dir: str = Field(default="./work", description="任务临时文件工作目录")
+    workflow_poll_timeout: int = Field(
+        default=240,
+        description="execute_workflow 内部轮询超时时间（秒），超时后返回 running 状态让 LLM 自行轮询",
+    )
 
     class Config:
         env_prefix = "TOOLS_"

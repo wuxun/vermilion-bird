@@ -466,9 +466,13 @@ class SubAgentPanel(QFrame):
     # (agent_id, status, task, result, extra_json)
     status_updated = pyqtSignal(str, str, str, str, str)
 
+    # Seconds before auto-removing completed/failed/cancelled entries
+    AUTO_CLEANUP_DELAY = 10
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._entries: Dict[str, AgentEntryWidget] = {}
+        self._cleanup_timers: Dict[str, QTimer] = {}
         self._registry: Optional["SubAgentRegistry"] = None
         self._collapsed = True
 
@@ -590,6 +594,32 @@ class SubAgentPanel(QFrame):
         self._update_title()
         self._schedule_auto_collapse()
 
+        # Auto-cleanup: remove completed/failed/cancelled entries after delay
+        if status in ("completed", "failed", "cancelled"):
+            if agent_id not in self._cleanup_timers:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(lambda aid=agent_id: self._remove_entry(aid))
+                self._cleanup_timers[agent_id] = timer
+                timer.start(self.AUTO_CLEANUP_DELAY * 1000)
+
+    def _remove_entry(self, agent_id: str):
+        """Remove a sub-agent entry from the panel (auto-cleanup or disconnect)."""
+        entry = self._entries.pop(agent_id, None)
+        if entry:
+            entry.setParent(None)
+            entry.deleteLater()
+        self._cleanup_timers.pop(agent_id, None)
+        # Close associated detail dialog
+        dlg = AgentDetailDialog._instances.pop(agent_id, None)
+        if dlg:
+            dlg.close()
+        self._update_title()
+        if not self._entries:
+            self._collapsed = True
+            self._scroll.hide()
+            self._collapse_btn.setText("▸")
+
     def _on_cancel_agent(self, agent_id: str):
         if self._registry:
             self._registry.cancel(agent_id)
@@ -671,18 +701,25 @@ def _add_tool_call_row(layout, index: int, call: Dict[str, Any]):
     row_layout.setContentsMargins(0, 1, 0, 1)
     row_layout.setSpacing(1)
 
-    call_text = f"#{index + 1} <b>{tool_name}</b>(<span style='color:{C_MEDIUM};'>{args_str[:120]}</span>)"
+    # 截断显示 + hover 工具提示完整参数
+    args_display = args_str[:200]
+    if len(args_str) > 200:
+        args_display += "..."
+    call_text = f"#{index + 1} <b>{tool_name}</b>(<span style='color:{C_MEDIUM};'>{args_display}</span>)"
     call_lbl = QLabel(call_text)
     call_lbl.setFont(QFont("Arial", 9))
     call_lbl.setStyleSheet(f"color: {C_DARK}; border: none; background: transparent; padding: 2px 0 0 4px;")
     call_lbl.setWordWrap(True)
     call_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    if len(args_str) > 200:
+        call_lbl.setToolTip(f"完整参数:\n{args_str}")
     row_layout.addWidget(call_lbl)
 
     if result_str:
-        preview = result_str[:200]
-        if len(result_str) > 200:
-            preview += "..."
+        max_preview = 500
+        preview = result_str[:max_preview]
+        if len(result_str) > max_preview:
+            preview += f"\n\n... (共 {len(result_str)} 字符，完整结果见下方 Result 区域)"
         res_lbl = QLabel(preview)
         res_lbl.setFont(QFont("Arial", 8))
         res_lbl.setStyleSheet(

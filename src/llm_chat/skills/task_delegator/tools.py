@@ -620,8 +620,8 @@ class ExecuteWorkflowTool(BaseTool):
             bg_future = _bg_pool.submit(executor.execute, workflow)
             workflow_id = workflow.workflow_id  # 预先生成的 ID
 
-            # 轮询等待工作流完成（最多等 240s，留 60s 给外层超时）
-            poll_timeout = 240
+            # 轮询等待工作流完成（由 config.tools.workflow_poll_timeout 控制）
+            poll_timeout = self.config.tools.workflow_poll_timeout
             poll_interval = 3
             waited = 0
             while waited < poll_timeout:
