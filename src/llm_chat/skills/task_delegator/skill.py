@@ -10,6 +10,8 @@ from llm_chat.skills.task_delegator.tools import (
     GetSubagentStatusTool,
     CancelSubagentTool,
     ListSubagentsTool,
+    ExecuteWorkflowTool,
+    GetWorkflowStatusTool,
 )
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
@@ -33,24 +35,44 @@ class TaskDelegatorSkill(BaseSkill):
 
     def __init__(self):
         self._registry = SubAgentRegistry(
-            max_workers=8,  # default, overridable via config
+            max_workers=8,
         )
         self._parent_context = None
         self._config = None
+        self._spawn_tool: Optional[SpawnSubagentTool] = None
+        self._workflow_executor = None
+        self._executor_ref: Dict[str, Any] = {}
 
     def get_tools(self) -> List[BaseTool]:
         if self._config is None:
             return []
-        return [
-            SpawnSubagentTool(
-                registry=self._registry,
-                parent_context=self._parent_context,
-                config=self._config,
-            ),
+
+        spawn = SpawnSubagentTool(
+            registry=self._registry,
+            parent_context=self._parent_context,
+            config=self._config,
+        )
+        self._spawn_tool = spawn  # keep ref for workflow executor
+
+        tools: List[BaseTool] = [
+            spawn,
             GetSubagentStatusTool(registry=self._registry),
             CancelSubagentTool(registry=self._registry),
             ListSubagentsTool(registry=self._registry),
+            ExecuteWorkflowTool(
+                registry=self._registry,
+                spawn_tool=spawn,
+                executor_ref=self._executor_ref,
+            ),
+            GetWorkflowStatusTool(executor_ref=self._executor_ref),
         ]
+
+        # Wire up workflow executor (shared between execute & status tools)
+        from llm_chat.skills.task_delegator.workflow import WorkflowExecutor
+        self._workflow_executor = WorkflowExecutor(self._registry, spawn)
+        self._executor_ref["executor"] = self._workflow_executor
+
+        return tools
 
     def on_load(self, config: Dict[str, Any]) -> None:
         import llm_chat.config as config_module

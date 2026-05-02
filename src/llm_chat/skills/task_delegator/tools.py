@@ -1,4 +1,4 @@
-"""Task Delegator Tools - 子Agent任务分配工具"""
+"""Task Delegator Tools - 子Agent任务分配工具 + 工作流编排工具"""
 
 import os
 import uuid
@@ -398,6 +398,193 @@ class ListSubagentsTool(BaseTool):
                     "completed": complete_count,
                     "failed": failed_count,
                 },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+class ExecuteWorkflowTool(BaseTool):
+    """执行预定义的工作流模板。
+
+    支持 simple / parallel / pipeline 三种模式。
+    工作流在后台异步执行，用 get_workflow_status 查询进度。
+    """
+
+    def __init__(
+        self,
+        registry: Optional[SubAgentRegistry] = None,
+        spawn_tool: Optional[SpawnSubagentTool] = None,
+        executor_ref: Optional[Dict[str, Any]] = None,
+    ):
+        self.registry = registry or SubAgentRegistry()
+        self._spawn_tool = spawn_tool
+        self._executor_ref = executor_ref or {}
+
+    @property
+    def name(self) -> str:
+        return "execute_workflow"
+
+    @property
+    def description(self) -> str:
+        return (
+            "执行一个 agent 工作流。支持三种模式：\n"
+            "1. 'simple': 单个子 agent 执行单一任务\n"
+            "2. 'parallel': 并行执行多个子 agent 处理独立子任务\n"
+            "3. 'pipeline': 串行执行多个子 agent，前一个的输出传给下一个\n"
+            "工作流在后台异步执行，用 get_workflow_status 查询进度。"
+        )
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "工作流名称"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["simple", "parallel", "pipeline"],
+                    "description": "工作流模式",
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "task": {
+                                "type": "string",
+                                "description": "子任务描述",
+                            },
+                            "tools": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "允许的工具白名单",
+                            },
+                        },
+                        "required": ["task"],
+                    },
+                    "description": "任务列表",
+                },
+            },
+            "required": ["name", "mode", "tasks"],
+        }
+
+    def execute(self, **kwargs) -> str:
+        from llm_chat.skills.task_delegator.workflow import (
+            AgentWorkflow,
+        )
+
+        name = kwargs.get("name", "unnamed")
+        mode = kwargs.get("mode", "simple")
+        tasks = kwargs.get("tasks", [])
+
+        if not tasks:
+            return json.dumps(
+                {"error": "tasks must not be empty", "status": "failed"},
+                ensure_ascii=False,
+            )
+
+        # 构建工作流
+        workflow = AgentWorkflow.from_json({
+            "name": name,
+            "mode": mode,
+            "tasks": tasks,
+        })
+
+        # 获取或创建共享 executor
+        executor = self._executor_ref.get("executor")
+        if executor is None:
+            if self._spawn_tool is None:
+                return json.dumps(
+                    {
+                        "error": "Workflow executor not configured: no spawn_tool available",
+                        "status": "failed",
+                    },
+                    ensure_ascii=False,
+                )
+            from llm_chat.skills.task_delegator.workflow import WorkflowExecutor
+            executor = WorkflowExecutor(self.registry, self._spawn_tool)
+            self._executor_ref["executor"] = executor
+
+        # 提交工作流
+        workflow_id = executor.execute(workflow)
+
+        return json.dumps(
+            {
+                "workflow_id": workflow_id,
+                "name": name,
+                "mode": mode,
+                "tasks_count": len(tasks),
+                "status": "running",
+                "message": (
+                    f"工作流已提交并在后台执行。"
+                    f"使用 get_workflow_status(\"{workflow_id}\") 查询进度。"
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+class GetWorkflowStatusTool(BaseTool):
+    """查询工作流状态的工具。"""
+
+    def __init__(
+        self,
+        executor_ref: Optional[Dict[str, Any]] = None,
+    ):
+        # executor_ref is a mutable dict so the skill can inject the executor
+        self._executor_ref = executor_ref or {}
+
+    @property
+    def name(self) -> str:
+        return "get_workflow_status"
+
+    @property
+    def description(self) -> str:
+        return (
+            "查询工作流的执行状态和结果。返回 status, nodes_completed, node_results 等。"
+        )
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "workflow_id": {
+                    "type": "string",
+                    "description": "要查询的工作流 ID",
+                },
+            },
+            "required": ["workflow_id"],
+        }
+
+    def execute(self, **kwargs) -> str:
+        workflow_id = kwargs.get("workflow_id", "")
+
+        executor = self._executor_ref.get("executor")
+        if executor is None:
+            return json.dumps(
+                {"error": "No workflow executor available", "status": "failed"},
+                ensure_ascii=False,
+            )
+
+        result = executor.get_result(workflow_id)
+        if result is None:
+            return json.dumps(
+                {
+                    "error": f"Workflow not found: {workflow_id}",
+                    "status": "not_found",
+                },
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "workflow_id": result.workflow_id,
+                "name": result.name,
+                "status": result.status,
+                "duration_seconds": round(result.duration_seconds, 2),
+                "node_results": result.node_results,
+                "error": result.error,
             },
             ensure_ascii=False,
             indent=2,

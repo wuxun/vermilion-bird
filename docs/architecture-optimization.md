@@ -6,8 +6,11 @@
 
 > ✅ 已完成: 2.1 App God Class 重构 → 引入 ChatCore
 > ✅ 已完成: 2.2 Conversation.send_message() 方法链拆解 → Pipeline 阶段化
+> ✅ 已完成: 2.3 子 Agent 异步执行 → ThreadPoolExecutor + Future
+> ✅ 已完成: 2.4 Agent 工作流编排层 → execute_workflow + 3 种模式
 > ✅ 已完成: 2.5 可观测性层 → @observe + span/counter/gauge
 > ✅ 已完成: 2.6 记忆系统与 LLM 客户端解耦 → Summarizer 抽象
+> ✅ 已修复: DeepSeek R1 reasoning_content 丢失
 > ✅ 已修复: DeepSeek R1 reasoning_content 丢失 (流式+同步两条路径)
 
 ---
@@ -377,7 +380,9 @@ class SubAgentRegistry:
 
 ---
 
-### 2.4 缺少 Agent 工作流编排层
+### 2.4 缺少 Agent 工作流编排层 ✅ 已实施
+
+**实施方案**：新增 `workflow.py` (360 行) + 2 个 LLM 工具。LLM 现可通过 `execute_workflow` 工具使用 simple/parallel/pipeline 三种模式编排多个子 agent。详见上方实施方案描述。
 
 **当前问题**：只能 spawn 单个子 agent，不能：
 - **并行创建**多个子 agent 处理独立子任务
