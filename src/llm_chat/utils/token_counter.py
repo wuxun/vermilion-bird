@@ -12,6 +12,7 @@ except ImportError:
 
 
 MODEL_CONTEXT_LIMITS = {
+    # OpenAI
     "gpt-4": 8192,
     "gpt-4-32k": 32768,
     "gpt-4-turbo": 128000,
@@ -19,25 +20,41 @@ MODEL_CONTEXT_LIMITS = {
     "gpt-4o-mini": 128000,
     "gpt-3.5-turbo": 4096,
     "gpt-3.5-turbo-16k": 16384,
+    "o1": 200000,
+    "o1-mini": 128000,
+    "o3-mini": 200000,
+    # Anthropic
     "claude-3-opus": 200000,
+    "claude-3-5-sonnet": 200000,
+    "claude-3-5-haiku": 200000,
     "claude-3-sonnet": 200000,
     "claude-3-haiku": 200000,
     "claude-2": 100000,
     "claude-instant": 100000,
-    "gemini-pro": 32760,
+    # Google
+    "gemini-2.5-pro": 1048576,
+    "gemini-2.0-flash": 1048576,
     "gemini-1.5-pro": 1048576,
     "gemini-1.5-flash": 1048576,
-    "deepseek-chat": 64000,
+    "gemini-pro": 32760,
+    # DeepSeek
+    "deepseek-chat": 1048576,        # DeepSeek V3
+    "deepseek-reasoner": 65536,      # DeepSeek R1
     "deepseek-coder": 64000,
-    "deepseek-ai/DeepSeek-V3": 64000,
-    "deepseek-ai/DeepSeek-R1": 64000,
+    "deepseek-ai/DeepSeek-V3": 1048576,
+    "deepseek-ai/DeepSeek-R1": 65536,
+    "deepseek-ai/DeepSeek-V4": 1048576,
+    # Qwen (通义千问)
     "Qwen/Qwen2.5-72B-Instruct": 32768,
     "Qwen/Qwen2.5-32B-Instruct": 32768,
     "Qwen/Qwen2.5-14B-Instruct": 32768,
     "Qwen/Qwen2.5-7B-Instruct": 32768,
+    "qwen-turbo": 1048576,
+    "qwen-plus": 131072,
+    "qwen-max": 32768,
 }
 
-DEFAULT_CONTEXT_LIMIT = 4096
+DEFAULT_CONTEXT_LIMIT = 8192
 
 
 def get_encoding_for_model(model: str) -> Optional[Any]:
@@ -107,21 +124,38 @@ def count_messages_tokens(messages: List[Dict[str, Any]], model: str = "gpt-3.5-
 
 
 def get_context_limit(model: str) -> int:
-    for key, limit in MODEL_CONTEXT_LIMITS.items():
-        if key.lower() in model.lower():
+    """获取模型的上下文上限 token 数。
+
+    匹配策略：精确匹配 → 最长子串匹配 → 聚类 fallback。
+    """
+    if not model:
+        return DEFAULT_CONTEXT_LIMIT
+
+    model_lower = model.lower()
+
+    # 1. 精确匹配
+    if model_lower in MODEL_CONTEXT_LIMITS:
+        return MODEL_CONTEXT_LIMITS[model_lower]
+
+    # 2. 最长子串匹配（短 key 可能误匹配，所以按长度降序）
+    for key, limit in sorted(
+        MODEL_CONTEXT_LIMITS.items(), key=lambda x: -len(x[0])
+    ):
+        if key.lower() in model_lower:
             return limit
-    
-    if "gpt" in model.lower():
+
+    # 3. 聚类 fallback
+    if "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
         return 128000
-    if "claude" in model.lower():
+    if "claude" in model_lower:
         return 200000
-    if "gemini" in model.lower():
+    if "gemini" in model_lower:
         return 1048576
-    if "deepseek" in model.lower():
-        return 64000
-    if "qwen" in model.lower():
+    if "deepseek" in model_lower:
+        return 1048576
+    if "qwen" in model_lower:
         return 32768
-    
+
     return DEFAULT_CONTEXT_LIMIT
 
 
