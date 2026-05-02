@@ -109,21 +109,34 @@ class OpenAIProtocol(BaseProtocol):
     def get_assistant_message_from_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         message = response["choices"][0]["message"]
         msg = {"role": "assistant"}
-        
+
         if message.get("content"):
             msg["content"] = message["content"]
-        
+
+        # DeepSeek R1 / OpenAI o1 等推理模型的思考内容，必须传回
+        if message.get("reasoning_content"):
+            msg["reasoning_content"] = message["reasoning_content"]
+
         if message.get("tool_calls"):
             msg["tool_calls"] = message["tool_calls"]
-        
+
         return msg
-    
+
+    @staticmethod
+    def parse_stream_reasoning_content(chunk: Dict[str, Any]) -> Optional[str]:
+        """提取流式 chunk 中的 reasoning_content (DeepSeek R1 / OpenAI o1)。"""
+        choices = chunk.get("choices", [])
+        if not choices:
+            return None
+        delta = choices[0].get("delta", {})
+        return delta.get("reasoning_content")
+
     def parse_stream_chunk(self, chunk: Dict[str, Any]) -> Optional[str]:
         choices = chunk.get("choices", [])
         if not choices:
             return None
-        
+
         delta = choices[0].get("delta", {})
         content = delta.get("content")
-        
+
         return content if content else None

@@ -70,6 +70,7 @@ class LLMClientStreamToolsMixin:
             logger.info(f"(流式请求, 迭代 {iteration + 1})")
 
             full_text = ""
+            reasoning_text = ""  # DeepSeek R1 / OpenAI o1 思考内容
             tool_calls_data = []
 
             try:
@@ -100,6 +101,12 @@ class LLMClientStreamToolsMixin:
                                 full_text += content
                                 yield content
 
+                            # 收集推理内容 (DeepSeek R1 / OpenAI o1)
+                            if hasattr(self.protocol, "parse_stream_reasoning_content"):
+                                rc = self.protocol.parse_stream_reasoning_content(chunk)
+                                if rc:
+                                    reasoning_text += rc
+
                             chunk_tool_calls = self._parse_stream_tool_calls(chunk)
                             if chunk_tool_calls:
                                 tool_calls_data.extend(chunk_tool_calls)
@@ -129,8 +136,12 @@ class LLMClientStreamToolsMixin:
             assistant_message = {
                 "role": "assistant",
                 "content": full_text if full_text else "",
-                "tool_calls": tool_calls,
             }
+            # 保留推理内容 — DeepSeek R1 要求 reasoning_content 必须传回
+            if reasoning_text:
+                assistant_message["reasoning_content"] = reasoning_text
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
             current_messages.append(assistant_message)
 
             for tc in tool_calls:

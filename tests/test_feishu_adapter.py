@@ -315,12 +315,13 @@ class TestProcessWithLlm:
 
         internal_msg = Message(content="Hello", role="user", msg_type=MessageType.TEXT)
 
-        with patch.object(app, "get_conversation") as mock_get_conv:
-            mock_conv = MagicMock()
-            mock_conv.send_message.return_value = "LLM response"
-
+        # 通过 ChatCore 统一处理（新架构），mock ChatCore.send_message
+        with patch.object(app.chat_core, "send_message", return_value="LLM response") as mock_send:
             result = adapter._process_with_llm(internal_msg, "test_conv_id")
 
             assert result == "LLM response"
-            assert mock_get_conv.called_once_with("test_conv_id")
+            mock_send.assert_called_once_with(
+                conversation_id="test_conv_id",
+                message="Hello",
+            )
         adapter.close()

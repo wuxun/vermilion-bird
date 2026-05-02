@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
 from llm_chat.conversation import Conversation, ConversationManager
+from llm_chat.chat_core import ChatCore
 from llm_chat.frontends.base import (
     BaseFrontend,
     Message,
@@ -24,6 +25,19 @@ if TYPE_CHECKING:
 
 
 class App:
+    """应用协调器
+
+    职责：
+    - 创建并装配所有组件 (client, storage, ChatCore, MCP, scheduler, health)
+    - 管理 MCP 工具连接
+    - 管理前端生命周期 (set_frontend / run / stop)
+    - 会话 CRUD 回调
+
+    NOT 负责：
+    - 对话处理管道 → 委托给 ChatCore
+    - 前端渲染 → 各前端自行处理
+    """
+
     def __init__(self, config: Optional[Config] = None):
         self.config = config or Config()
         self.client = LLMClient(self.config)
@@ -38,6 +52,15 @@ class App:
             memory_config=memory_config,
             default_model_params=default_model_params,
         )
+
+        # 核心对话引擎 — 所有前端通过它处理 LLM 对话
+        self.chat_core = ChatCore(
+            client=self.client,
+            conversation_manager=self.conversation_manager,
+            config=self.config,
+        )
+        logger.info("ChatCore initialized")
+
         self._conv_service = ConversationService(
             self.conversation_manager,
             self.storage,
@@ -147,6 +170,18 @@ class App:
         except Exception as e:
             return f"Error: {str(e)}"
 
+    # ------------------------------------------------------------------
+    # ChatCore 便捷访问 (供前端直接使用)
+    # ------------------------------------------------------------------
+
+    def get_chat_core(self) -> ChatCore:
+        """获取核心对话引擎。GUI/飞书等前端通过它进行 LLM 对话处理。"""
+        return self.chat_core
+
+    # ------------------------------------------------------------------
+    # MCP 工具管理 (App 负责 MCP 连接; ChatCore 共享同一个 client)
+    # ------------------------------------------------------------------
+
     def enable_tools(self):
         if self._tools_enabled:
             return
@@ -172,7 +207,9 @@ class App:
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
 
+        # 设置 MCP 工具执行器到 client（ChatCore 共享同一个 client 实例）
         self.client.set_tool_executor(self._execute_tool)
+        self.chat_core.set_tool_executor(self._execute_tool)
         self._tools_enabled = True
 
     def disable_tools(self):
@@ -188,6 +225,7 @@ class App:
                 logger.warning(f"断开 MCP 连接时出错: {e}")
 
         self.client.set_tool_executor(None)
+        self.chat_core.set_tool_executor(None)
         self._tools_enabled = False
 
     def get_available_tools(self) -> List[Dict[str, Any]]:
@@ -212,17 +250,15 @@ class App:
     def set_frontend(self, frontend: BaseFrontend):
         self.current_frontend = frontend
 
-        # Set storage for frontends that support it (e.g., GUIFrontend)
+        # 注入依赖到前端
         if hasattr(frontend, "set_storage"):
             frontend.set_storage(self.storage)
-
-        # Set config for frontends that support it
         if hasattr(frontend, "set_config"):
             frontend.set_config(self.config)
-
-        # Set app instance for frontends that support it (e.g., GUIFrontend for scheduler dialog)
         if hasattr(frontend, "set_app"):
             frontend.set_app(self)
+        if hasattr(frontend, "set_chat_core"):
+            frontend.set_chat_core(self.chat_core)
 
         frontend.set_conversation_callbacks(
             on_new=self._on_new_conversation,
@@ -232,20 +268,13 @@ class App:
             on_list=self._on_list_conversations,
         )
 
+        # 统一的消息处理回调 — 委托给 ChatCore（CLI/简单前端使用此路径）
         def handle_message(message: Message, ctx: ConversationContext):
-            conversation = self.get_conversation(ctx.conversation_id)
             try:
-                if self.config.enable_tools and self.has_tools_available():
-                    tools = self.get_available_tools()
-                    if tools:
-                        response = self.client.chat_with_tools(
-                            message.content, tools, history=conversation.get_history()
-                        )
-                    else:
-                        response = conversation.send_message(message.content)
-                else:
-                    response = conversation.send_message(message.content)
-
+                response = self.chat_core.send_message(
+                    conversation_id=ctx.conversation_id,
+                    message=message.content,
+                )
                 response_msg = Message(
                     content=response, role="assistant", msg_type=MessageType.TEXT
                 )

@@ -397,31 +397,12 @@ class FeishuAdapter:
 
         with conv_lock:
             try:
-                conversation = self.app.get_conversation(conversation_id)
-
-                history_count = len(conversation.get_history())
-                logger.info(f"历史消息数量: {history_count}")
-
-                if self.app.config.enable_tools and self.app.has_tools_available():
-                    tools = self.app.get_available_tools()
-                    if tools:
-                        tool_names = [t["function"]["name"] for t in tools]
-                        logger.info(f"使用工具调用: {tool_names}")
-                        conversation.add_user_message(message.content)
-                        response = self.app.client.chat_with_tools(
-                            message.content, tools, history=conversation.get_history()
-                        )
-                        conversation.add_assistant_message(response)
-                        # 手动触发记忆提取（因为直接调用 chat_with_tools 没有走 send_message 路径）
-                        self._extract_memory_from_conversation(
-                            conversation, message.content, response
-                        )
-                    else:
-                        logger.info("无可用工具，使用普通聊天")
-                        response = conversation.send_message(message.content)
-                else:
-                    logger.info("工具调用已禁用，使用普通聊天")
-                    response = conversation.send_message(message.content)
+                # 委托给 ChatCore 统一处理（记忆注入 + 上下文压缩 + LLM 调用 + 记忆提取）
+                chat_core = self.app.get_chat_core()
+                response = chat_core.send_message(
+                    conversation_id=conversation_id,
+                    message=message.content,
+                )
 
                 logger.info(
                     f"LLM 响应生成完成: conversation_id={conversation_id}, response_length={len(response)}"
@@ -436,35 +417,6 @@ class FeishuAdapter:
             except Exception as e:
                 logger.error(f"处理 LLM 消息时发生错误: {e}", exc_info=True)
                 return f"处理消息时发生错误: {str(e)}"
-
-    def _extract_memory_from_conversation(
-        self, conversation, user_message: str, assistant_response: str
-    ):
-        """从对话中提取记忆（用于工具调用路径）。
-
-        当使用工具调用时，我们需要手动触发记忆提取，因为直接调用
-        chat_with_tools() 没有走 send_message() 路径，不会自动记忆提取。
-
-        Args:
-            conversation: Conversation 对象
-            user_message: 用户消息
-            assistant_response: 助手响应
-        """
-        try:
-            # 访问 conversation 的私有 _memory_manager 来触发记忆提取
-            memory_manager = getattr(conversation, "_memory_manager", None)
-            if memory_manager is not None:
-                messages = [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": assistant_response},
-                ]
-                memory_manager.schedule_extraction(messages)
-                memory_manager.process_pending_extractions()
-                logger.info("飞书工具调用路径的记忆提取已触发")
-            else:
-                logger.debug("记忆管理器未初始化，跳过记忆提取")
-        except Exception as e:
-            logger.warning(f"飞书路径记忆提取失败: {e}")
 
     @retry(
         max_retries=3,

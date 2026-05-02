@@ -329,6 +329,7 @@ class GUIFrontend(BaseFrontend):
         self._is_streaming: bool = False
         self._streaming_conversation_id: Optional[str] = None
         self._storage: Optional[Any] = None
+        self._chat_core: Optional[Any] = None  # ChatCore 实例，由 App 注入
 
         self._conversation_list: Optional[QListWidget] = None
         self._new_conv_button: Optional[QPushButton] = None
@@ -355,6 +356,11 @@ class GUIFrontend(BaseFrontend):
 
     def set_app(self, app: Any):
         self._app_instance = app
+
+    def set_chat_core(self, chat_core: Any):
+        """注入 ChatCore — GUI 通过它进行流式对话，不再直接访问 client。"""
+        self._chat_core = chat_core
+        logger.info("GUIFrontend: ChatCore 已注入")
 
     def _init_model_combo(self):
         if self._model_combo is None:
@@ -1158,19 +1164,9 @@ class GUIFrontend(BaseFrontend):
 
         self._input_field.clear()
 
+        # 本地消息列表（仅用于 GUI 显示，持久化由 ChatCore 统一处理）
         self._messages.append({"role": "user", "content": content})
-
         self._update_context_status()
-
-        if self._storage:
-            self._storage.add_message(self.conversation_id, "user", content)
-            conv = self._storage.get_conversation(self.conversation_id)
-            if not conv or not conv.get("title"):
-                title = content[:30]
-                if len(content) > 30:
-                    title += "..."
-                self._storage.update_conversation(self.conversation_id, title=title)
-
         self._display_user_message(content)
 
         self._set_input_state(False)
@@ -1187,91 +1183,24 @@ class GUIFrontend(BaseFrontend):
 
         def stream_response():
             try:
-                from llm_chat.config import Config
-                from llm_chat.cli import setup_logging
-                from llm_chat.memory import MemoryStorage, MemoryManager
-
-                setup_logging(logging.INFO)
-
-                if self._app_instance:
-                    config = self._app_instance.config
-                else:
-                    config = Config()
-
-                history = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in self._messages[:-1]
-                ]
-
-                system_context = None
-                if config.memory.enabled:
-                    try:
-                        memory_storage = MemoryStorage(config.memory.storage_dir)
-                        memory_manager = MemoryManager(
-                            storage=memory_storage,
-                            db_storage=None,
-                            llm_client=self._app_instance.client
-                            if self._app_instance
-                            else None,
-                            config={},
-                        )
-                        system_context = memory_manager.build_system_prompt()
-                        if system_context:
-                            logger.info(f"加载记忆上下文: {len(system_context)} 字符")
-                    except Exception as e:
-                        logger.warning(f"加载记忆上下文失败: {e}")
-
-                if config.enable_tools and (
-                    self._app_instance.client.has_builtin_tools()
-                    or (self._app_instance and self._app_instance.has_tools_available())
-                ):
-                    tools = (
-                        self._app_instance.get_available_tools()
-                        if self._app_instance
-                        else self._app_instance.client.get_builtin_tools()
+                chat_core = self._chat_core
+                if chat_core is None:
+                    self._stream_signals.error_occurred.emit(
+                        current_conv_id, "ChatCore 未初始化"
                     )
+                    return
 
-                    full_text = ""
-                    for chunk in self._app_instance.client.chat_stream_with_tools(
-                        content,
-                        tools,
-                        history,
-                        system_context=system_context,
-                        **model_params,
-                    ):
-                        if isinstance(chunk, tuple) and chunk[0] == "tool_call_start":
-                            _, tool_name, tool_args = chunk
-                            self._stream_signals.tool_call_started.emit(
-                                tool_name, tool_args
-                            )
-                        elif isinstance(chunk, tuple) and chunk[0] == "tool_call_end":
-                            _, tool_name, tool_args, result = chunk
-                            self._stream_signals.tool_call_finished.emit(
-                                tool_name, tool_args, result
-                            )
-                        elif isinstance(chunk, tuple) and chunk[0] == "context_update":
-                            _, used_tokens, limit = chunk
-                            self._stream_signals.context_updated.emit(
-                                used_tokens, limit
-                            )
-                        elif isinstance(chunk, str):
-                            full_text += chunk
-                            self._stream_signals.text_received.emit(chunk)
+                full_text = chat_core.send_message_stream(
+                    conversation_id=current_conv_id,
+                    message=content,
+                    on_chunk=lambda text: self._stream_signals.text_received.emit(text),
+                    on_tool_start=lambda name, args: self._stream_signals.tool_call_started.emit(name, args),
+                    on_tool_end=lambda name, args, result: self._stream_signals.tool_call_finished.emit(name, args, result),
+                    on_context_update=lambda used, limit: self._stream_signals.context_updated.emit(used, limit),
+                    **model_params,
+                )
 
-                    self._stream_signals.stream_finished.emit(
-                        current_conv_id, full_text
-                    )
-                else:
-                    full_text = ""
-                    for chunk in self._app_instance.client.chat_stream(
-                        content, history, system_context=system_context, **model_params
-                    ):
-                        full_text += chunk
-                        self._stream_signals.text_received.emit(chunk)
-
-                    self._stream_signals.stream_finished.emit(
-                        current_conv_id, full_text
-                    )
+                self._stream_signals.stream_finished.emit(current_conv_id, full_text)
 
             except Exception as e:
                 self._stream_signals.error_occurred.emit(current_conv_id, str(e))
@@ -1336,6 +1265,7 @@ class GUIFrontend(BaseFrontend):
         self._is_streaming = False
         self._streaming_conversation_id = None
 
+        # 更新本地消息列表（持久化已由 ChatCore 统一处理）
         tool_calls_data = self._current_tool_calls.copy()
         self._messages.append(
             {"role": "assistant", "content": full_text, "tool_calls": tool_calls_data}
@@ -1345,71 +1275,9 @@ class GUIFrontend(BaseFrontend):
         self._current_tool_call_widgets.clear()
 
         self._update_context_status()
-
-        if self._storage:
-            self._storage.add_message(conv_id, "assistant", full_text)
-
-        self._extract_memory_async(full_text)
-
         self._refresh_chat_display()
         self._set_input_state(True)
-
         self._refresh_conversation_list()
-
-    def _extract_memory_async(self, assistant_response: str):
-        """异步处理记忆 - 短期记忆直接写入"""
-        if len(self._messages) < 2:
-            return
-
-        user_message = None
-        for msg in reversed(self._messages[:-1]):
-            if msg.get("role") == "user":
-                user_message = msg.get("content", "")
-                break
-
-        if not user_message:
-            return
-
-        def process_memory():
-            try:
-                from llm_chat.config import Config
-                from llm_chat.memory import MemoryStorage, MemoryManager
-                from llm_chat.client import LLMClient
-
-                config = Config.from_yaml()
-                if not config.memory.enabled:
-                    return
-
-                memory_storage = MemoryStorage(config.memory.storage_dir)
-                client = LLMClient(config, skip_skills_setup=True)
-
-                memory_manager = MemoryManager(
-                    storage=memory_storage,
-                    db_storage=None,
-                    llm_client=client,
-                    config={
-                        "extraction_interval": config.memory.extraction_interval,
-                        "extraction_time_interval": config.memory.extraction_time_interval,
-                        "short_term_max_entries": config.memory.short_term_max_entries,
-                    },
-                )
-
-                messages = [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": assistant_response},
-                ]
-
-                memory_manager.schedule_extraction(messages)
-                memory_manager.process_pending_extractions()
-
-                logger.info("记忆处理完成")
-            except Exception as e:
-                logger.warning(f"记忆处理失败: {e}")
-
-        import threading
-
-        thread = threading.Thread(target=process_memory, daemon=True)
-        thread.start()
 
     def _on_stream_error(self, conv_id: str, error: str):
         if conv_id != self.conversation_id:
