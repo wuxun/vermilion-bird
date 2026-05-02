@@ -221,6 +221,22 @@ class App:
                 logger.info(
                     f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
                 )
+                # 注册 MCP 工具到 ToolRegistry 单例 → 子 agent 自动可见
+                from llm_chat.mcp.manager import MCPToolAdapter
+                tool_registry = self.client._tool_registry
+                for mcp_tool in manager.get_all_tools():
+                    adapter = MCPToolAdapter(
+                        tool_name=mcp_tool.name,
+                        description=mcp_tool.description or "",
+                        input_schema=mcp_tool.input_schema or {},
+                        executor=lambda name, args, mgr=manager: mgr.call_tool(name, args),
+                    )
+                    tool_registry.register(adapter)
+                logger.info(
+                    f"MCP 工具已注册到 ToolRegistry: "
+                    f"{[t.name for t in manager.get_all_tools()]}"
+                )
+
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
 
@@ -233,7 +249,12 @@ class App:
         if not self._tools_enabled:
             return
 
+        # 先从 ToolRegistry 移除 MCP 工具
         if self._mcp_manager:
+            tool_registry = self.client._tool_registry
+            for mcp_tool in self._mcp_manager.get_all_tools():
+                tool_registry.unregister(mcp_tool.name)
+
             future = self._mcp_manager.disconnect_all()
             try:
                 future.result(timeout=10)
@@ -249,12 +270,9 @@ class App:
         tools = []
 
         builtin_tools = self.client.get_builtin_tools()
+        # MCP 工具已通过 MCPToolAdapter 注册到 ToolRegistry,
+        # get_builtin_tools() 已包含 MCP 工具，无需重复添加
         tools.extend(builtin_tools)
-
-        if self._tools_enabled:
-            manager = self._get_mcp_manager()
-            mcp_tools = manager.get_tools_for_openai()
-            tools.extend(mcp_tools)
 
         return tools
 

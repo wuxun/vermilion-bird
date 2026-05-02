@@ -316,3 +316,48 @@ class MCPManager:
 
 def get_mcp_manager() -> MCPManager:
     return MCPManager()
+
+
+# ------------------------------------------------------------------
+# MCP Tool Adapter — wraps MCP tools as BaseTool for ToolRegistry
+# ------------------------------------------------------------------
+
+from concurrent.futures import Future as _Future
+from typing import Callable as _Callable
+from llm_chat.tools.base import BaseTool as _BaseTool
+
+
+class MCPToolAdapter(_BaseTool):
+    """将 MCPTool 包装为 BaseTool，使其可被 ToolRegistry 发现。
+
+    子 agent 的 LLMClient (skip_skills_setup) 只从 ToolRegistry 单例
+    获取工具列表。通过此类将 MCP 工具注册到 ToolRegistry，
+    子 agent 即可自动发现和使用 MCP 工具。
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        description: str,
+        input_schema: Dict[str, Any],
+        executor: _Callable[[str, Dict[str, Any]], _Future],
+    ):
+        self._name = tool_name
+        self._description = description or ""
+        self._input_schema = input_schema or {}
+        self._executor = executor  # (tool_name, args) -> Future[str]
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return self._input_schema
+
+    def execute(self, **kwargs) -> str:
+        future = self._executor(self._name, kwargs)
+        return future.result(timeout=300)
