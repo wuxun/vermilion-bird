@@ -178,15 +178,6 @@ class App:
             self._mcp_manager.load_config(self.config.mcp)
         return self._mcp_manager
 
-    def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        manager = self._get_mcp_manager()
-        try:
-            future = manager.call_tool(tool_name, arguments)
-            result = future.result(timeout=60)
-            return str(result) if result else ""
-        except Exception as e:
-            return f"Error: {str(e)}"
-
     # ------------------------------------------------------------------
     # ChatCore 便捷访问 (供前端直接使用)
     # ------------------------------------------------------------------
@@ -240,9 +231,6 @@ class App:
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
 
-        # 设置 MCP 工具执行器到 client（ChatCore 共享同一个 client 实例）
-        self.client.set_tool_executor(self._execute_tool)
-        self.chat_core.set_tool_executor(self._execute_tool)
         self._tools_enabled = True
 
     def disable_tools(self):
@@ -262,8 +250,6 @@ class App:
             except Exception as e:
                 logger.warning(f"断开 MCP 连接时出错: {e}")
 
-        self.client.set_tool_executor(None)
-        self.chat_core.set_tool_executor(None)
         self._tools_enabled = False
 
     def get_available_tools(self) -> List[Dict[str, Any]]:

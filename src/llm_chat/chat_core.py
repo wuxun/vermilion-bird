@@ -36,7 +36,7 @@ class ChatCore:
     NOT 负责：
     - 前端渲染（由 GUI/CLI/飞书各自处理）
     - 会话列表管理（由 ConversationManager 处理）
-    - MCP 连接管理（由 App 处理，通过 client.set_tool_executor 注入）
+    - MCP 连接管理（由 App 处理，通过 ToolRegistry 注册 MCPToolAdapter）
     """
 
     def __init__(
@@ -48,11 +48,6 @@ class ChatCore:
         self.client = client
         self.conversation_manager = conversation_manager
         self.config = config
-
-        # 从 App 注入（见 app.py）
-        self._tool_executor_override: Optional[Callable[[str, Dict[str, Any]], str]] = (
-            None
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -166,7 +161,7 @@ class ChatCore:
         params = {**conv.get_model_params(), **model_params}
 
         # 6. 检查是否需要工具调用
-        has_tools = self.client.has_builtin_tools() or self._tool_executor_override is not None
+        has_tools = self.client.has_builtin_tools()
 
         full_text = ""
 
@@ -175,10 +170,6 @@ class ChatCore:
             tools = self.client.get_builtin_tools()
             if not tools:
                 tools = []
-
-            # 确保 tool_executor 已设置
-            if self._tool_executor_override:
-                self.client.set_tool_executor(self._tool_executor_override)
 
             logger.info(f"[ChatCore] 流式工具调用: tools={[t.get('function', {}).get('name', '?') for t in tools]}")
 
@@ -245,16 +236,11 @@ class ChatCore:
 
     def has_tools_available(self) -> bool:
         """是否有可用的工具。"""
-        return self.client.has_builtin_tools() or self._tool_executor_override is not None
+        return self.client.has_builtin_tools()
 
     # ------------------------------------------------------------------
     # Tool executor override (由 App 注入 MCP)
     # ------------------------------------------------------------------
-
-    def set_tool_executor(self, executor: Optional[Callable[[str, Dict[str, Any]], str]]):
-        """设置外部工具执行器（用于 MCP 工具）。"""
-        self._tool_executor_override = executor
-        self.client.set_tool_executor(executor)
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -346,13 +332,11 @@ class ChatCore:
         params: Dict[str, Any],
     ) -> str:
         """同步调用 LLM，自动选择工具调用或普通聊天路径。"""
-        has_tools = self.client.has_builtin_tools() or self._tool_executor_override is not None
+        has_tools = self.client.has_builtin_tools()
 
         if has_tools and self.config.enable_tools:
             tools = self.client.get_builtin_tools()
             if tools:
-                if self._tool_executor_override:
-                    self.client.set_tool_executor(self._tool_executor_override)
                 logger.info(
                     f"[ChatCore] 同步工具调用: tools={[t.get('function', {}).get('name', '?') for t in tools]}"
                 )
