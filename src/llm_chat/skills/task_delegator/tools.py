@@ -40,6 +40,11 @@ class SpawnSubagentTool(BaseTool):
                     "description": "子agent可以使用的工具白名单",
                     "default": [],
                 },
+                "wait": {
+                    "type": "boolean",
+                    "description": "是否阻塞等待子agent完成后再返回。默认false（异步）。设为true时直接返回执行结果，适用于单个子agent任务；设为false时立即返回agent_id，适用于并行多agent场景。",
+                    "default": False,
+                },
                 "timeout": {
                     "type": "integer",
                     "description": "子agent超时时间（秒），默认60",
@@ -146,13 +151,40 @@ class SpawnSubagentTool(BaseTool):
             agent_id, model_info, task[:50]
         )
 
-        # ✅ 异步提交到线程池，立即返回 agent_id
-        self.registry.submit(
+        # 提交到线程池
+        future = self.registry.submit(
             agent_id,
             self._execute_async,
             agent_id, task, filtered_tools, timeout, context, model_config,
         )
 
+        wait = kwargs.get("wait", False)
+        if wait:
+            # 同步模式：阻塞等待子agent完成
+            try:
+                result = future.result(timeout=timeout + 30)
+                return json.dumps(
+                    {
+                        "agent_id": agent_id,
+                        "status": "completed",
+                        "result": result,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            except Exception as e:
+                self.registry.cancel(agent_id)
+                return json.dumps(
+                    {
+                        "agent_id": agent_id,
+                        "status": "failed",
+                        "error": str(e),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+
+        # 异步模式：立即返回 agent_id
         return json.dumps(
             {
                 "agent_id": agent_id,
@@ -195,7 +227,7 @@ class SpawnSubagentTool(BaseTool):
                 subagent_config = self.config
                 logger.info(f"Subagent {agent_id} using default config")
 
-            client = LLMClient(subagent_config)
+            client = LLMClient(subagent_config, skip_skills_setup=True)
 
             if allowed_tools:
                 all_tools = client.get_builtin_tools()
@@ -273,13 +305,23 @@ class GetSubagentStatusTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "查询子agent的状态和结果。返回status, result, created_at等信息。"
+        return "查询子agent的状态和结果。支持阻塞等待（wait=true）或即时查询（默认）。返回status, result, created_at等信息。"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "agent_id": {"type": "string", "description": "要查询的子agent ID"}
+                "agent_id": {"type": "string", "description": "要查询的子agent ID"},
+                "wait": {
+                    "type": "boolean",
+                    "description": "是否阻塞等待子agent完成后再返回。默认false（立即返回当前状态）。用于并行多agent场景中逐个等待完成。",
+                    "default": False,
+                },
+                "wait_timeout": {
+                    "type": "integer",
+                    "description": "wait=true时的等待超时秒数，默认60",
+                    "default": 60,
+                },
             },
             "required": ["agent_id"],
         }
@@ -295,6 +337,18 @@ class GetSubagentStatusTool(BaseTool):
             error_msg = f"Subagent not found: {agent_id}"
             logger.warning(error_msg)
             return error_msg
+
+        # 如果请求等待且子agent仍在运行，阻塞等待完成
+        wait = kwargs.get("wait", False)
+        if wait and context.status == "running":
+            wait_timeout = kwargs.get("wait_timeout", 60)
+            waited_result = self.registry.wait_for(agent_id, timeout=wait_timeout)
+            if waited_result is not None:
+                context.result = waited_result
+                context.status = "completed"
+            elif context.status == "running":
+                # wait_for 超时或出错，保持 running 状态
+                pass
 
         result = {
             "agent_id": context.agent_id,
@@ -419,7 +473,7 @@ class ExecuteWorkflowTool(BaseTool):
     ):
         self.registry = registry or SubAgentRegistry()
         self._spawn_tool = spawn_tool
-        self._executor_ref = executor_ref or {}
+        self._executor_ref = executor_ref if executor_ref is not None else {}
 
     @property
     def name(self) -> str:
@@ -533,7 +587,7 @@ class GetWorkflowStatusTool(BaseTool):
         executor_ref: Optional[Dict[str, Any]] = None,
     ):
         # executor_ref is a mutable dict so the skill can inject the executor
-        self._executor_ref = executor_ref or {}
+        self._executor_ref = executor_ref if executor_ref is not None else {}
 
     @property
     def name(self) -> str:

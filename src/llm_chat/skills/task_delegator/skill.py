@@ -43,9 +43,27 @@ class TaskDelegatorSkill(BaseSkill):
         self._workflow_executor = None
         self._executor_ref: Dict[str, Any] = {}
 
+    def _init_root_context(self):
+        """创建根上下文，让直接 spawn 的 agent 有可追溯的 parent_id。"""
+        from llm_chat.skills.task_delegator.context import AgentContext
+        from datetime import datetime
+
+        self._parent_context = AgentContext(
+            agent_id="main",
+            parent_id=None,
+            depth=-1,  # 根节点，直接子 agent depth = 0
+            allowed_tools=set(),
+            conversation_id="main",
+            created_at=datetime.utcnow(),
+            status="running",
+        )
+
     def get_tools(self) -> List[BaseTool]:
         if self._config is None:
             return []
+
+        if self._parent_context is None:
+            self._init_root_context()
 
         spawn = SpawnSubagentTool(
             registry=self._registry,

@@ -171,6 +171,17 @@ class SubAgentRegistry:
                 for ctx in self._agents.values()
             ]
 
+    def wait_for(self, agent_id: str, timeout: Optional[float] = None) -> Optional[str]:
+        """Block until a sub-agent completes, return its result or None on timeout/error."""
+        with self._lock:
+            future = self._futures.get(agent_id)
+        if future is None:
+            return None
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            return None
+
     def shutdown(self, wait: bool = True):
         """Shut down the thread pool, optionally waiting for running tasks."""
         self._executor.shutdown(wait=wait)
