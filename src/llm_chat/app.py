@@ -484,5 +484,8 @@ class App:
         # 关闭 MCP 事件循环
         if self._mcp_manager:
             self._mcp_manager.shutdown()
+        # 释放 HTTP 会话
+        if self.client:
+            self.client.close()
         if self.current_frontend:
             self.current_frontend.stop()

@@ -308,7 +308,6 @@ def get_mcp_manager() -> MCPManager:
 # MCP Tool Adapter — wraps MCP tools as BaseTool for ToolRegistry
 # ------------------------------------------------------------------
 
-from concurrent.futures import Future as _Future
 from typing import Callable as _Callable
 from llm_chat.tools.base import BaseTool as _BaseTool
 
@@ -326,7 +325,7 @@ class MCPToolAdapter(_BaseTool):
         tool_name: str,
         description: str,
         input_schema: Dict[str, Any],
-        executor: _Callable[[str, Dict[str, Any]], _Future],
+        executor: _Callable[[str, Dict[str, Any]], Future],
     ):
         self._name = tool_name
         self._description = description or ""
