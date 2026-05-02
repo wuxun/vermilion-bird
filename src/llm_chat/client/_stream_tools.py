@@ -59,6 +59,8 @@ class LLMClientStreamToolsMixin:
             f"max_iterations={max_iterations}"
         )
 
+        total_output_chars = 0  # 累计输出字符数，用于 token 估算
+
         for iteration in range(max_iterations):
             url = self.protocol.get_chat_url()
             headers = self.protocol.get_headers()
@@ -127,6 +129,7 @@ class LLMClientStreamToolsMixin:
 
             if not tool_calls_data:
                 logger.info(f"流式聊天完成: response_length={len(full_text)}")
+                total_output_chars += len(full_text)
                 return
 
             tool_calls = self._merge_tool_calls(tool_calls_data)
@@ -200,6 +203,19 @@ class LLMClientStreamToolsMixin:
             )
             context_limit = get_context_limit(self.config.llm.model)
             yield ("context_update", current_tokens, context_limit)
+
+        # 流式完成：估算并记录 token 消耗
+        try:
+            from llm_chat.utils.observability import get_observability
+            obs = get_observability()
+            input_tokens = count_messages_tokens(current_messages, self.config.llm.model)
+            output_est = max(total_output_chars // 2, 1)
+            obs.increment("tokens.prompt", input_tokens)
+            obs.increment("tokens.completion", output_est)
+            obs.increment("tokens.total", input_tokens + output_est)
+            obs.increment(f"tokens.{self.config.llm.model}", input_tokens + output_est)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 流式工具调用解析 helpers

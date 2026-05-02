@@ -84,6 +84,7 @@ class LLMClientToolsMixin:
                         obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
                         obs.increment("tokens.completion", usage.get("completion_tokens", 0))
                         obs.increment("tokens.total", usage.get("total_tokens", 0))
+                        obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
                     break
                 except requests.RequestException as e:
                     if i == self.config.llm.max_retries - 1:
