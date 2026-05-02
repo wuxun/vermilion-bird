@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,6 @@ class App:
         3. config.yaml 中 prompt_skill_dirs 配置
         """
         from llm_chat.skills.prompt_skill import PromptSkill
-        import os
 
         skill_manager = self.get_skill_manager()
 
