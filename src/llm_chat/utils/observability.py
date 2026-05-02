@@ -327,18 +327,24 @@ def get_cost_summary() -> Dict[str, Any]:
     total_tokens = obs.counter("tokens.total")
     llm_calls = obs.counter("llm.calls")
 
-    # 按模型估算成本
+    # 按模型估算成本 — 用全局 prompt/completion 比例，而非固定 75/25
     model_stats = []
     total_cost = 0.0
+    total_all = total_prompt + total_completion
+    if total_all > 0:
+        prompt_ratio = total_prompt / total_all
+    else:
+        prompt_ratio = 0.75
 
     for key, count in sorted(obs._counters.items()):
         if key.startswith("tokens.") and key not in (
             "tokens.prompt", "tokens.completion", "tokens.total", "tokens.last_call"
         ):
             model = key[len("tokens."):]
-            # 无法精确分模型统计 prompt/completion，按 3:1 估算
-            est_prompt = int(count * 0.75)
-            est_completion = int(count * 0.25)
+            if model in ("total", "last_call"):
+                continue
+            est_prompt = int(count * prompt_ratio)
+            est_completion = count - est_prompt
             cost = get_model_cost(model, est_prompt, est_completion)
             total_cost += cost
             model_stats.append({

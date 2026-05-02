@@ -643,6 +643,17 @@ class GUIFrontend(BaseFrontend):
         self._dashboard_button.setFixedWidth(100)
         self._dashboard_button.setToolTip("Token & 成本仪表盘")
         self._dashboard_button.clicked.connect(self._on_dashboard)
+        self._dashboard_button.setStyleSheet("""
+            QPushButton {
+                background-color: #F5F0EB;
+                border: 1px solid #C8B6A6;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #EBE0D5;
+            }
+        """)
         header_layout.addWidget(self._dashboard_button)
 
         self._clear_button = QPushButton("Clear")
@@ -652,7 +663,7 @@ class GUIFrontend(BaseFrontend):
 
         layout.addLayout(header_layout)
 
-        self._context_label = QLabel("上下文: 0 / 4096 tokens (0.0%)")
+        self._context_label = QLabel(self._format_context_text(0, self._get_current_context_limit()))
         self._context_label.setFont(QFont("Arial", 10))
         self._context_label.setStyleSheet("color: #666; padding: 2px;")
         layout.addWidget(self._context_label)
@@ -1047,90 +1058,53 @@ class GUIFrontend(BaseFrontend):
         return len(self._messages) == 0
 
     def _update_context_status(self):
-        from llm_chat.utils.token_counter import (
-            calculate_context_usage,
-            format_context_usage_short,
-            count_tokens,
-            get_context_limit,
-        )
+        """更新上下文状态栏 (token 使用量 / 上下文上限)。"""
+        from llm_chat.utils.token_counter import count_tokens, get_context_limit
 
-        # 基础对话历史
+        # 对话历史 token 计数
         history = [{"role": m["role"], "content": m["content"]} for m in self._messages]
+        history_text = "\n".join(h.get("content", "") for h in history)
+        total_tokens = count_tokens(history_text, self._current_model)
 
-        # 计算对话历史的 token
-        base_usage = calculate_context_usage(history, self._current_model)
-        total_tokens = base_usage["used_tokens"]
-
-        # 计算系统提示词（记忆上下文）的 token
-        if self._config and self._config.memory.enabled:
+        # 系统上下文 (记忆注入) — 通过 ChatCore 获取实际内容
+        if self._chat_core and self._config and self._config.memory.enabled:
             try:
-                from llm_chat.memory import MemoryStorage, MemoryManager
-                from llm_chat.client import LLMClient
-
-                memory_storage = MemoryStorage(self._config.memory.storage_dir)
-                # 使用临时 client 仅用于 memory manager
-                temp_client = LLMClient(self._config, skip_skills_setup=True)
-                memory_manager = MemoryManager(
-                    storage=memory_storage,
-                    db_storage=None,
-                    llm_client=temp_client,
-                    config={},
-                )
-                system_context = memory_manager.build_system_prompt()
-                if system_context:
-                    system_tokens = count_tokens(system_context, self._current_model)
-                    # 系统消息格式开销（类似 OpenAI 格式）
-                    system_tokens += 4  # {"role": "system", "content": "..."} 格式开销
-                    total_tokens += system_tokens
-                    logger.debug(f"系统上下文 token: {system_tokens}")
+                system_ctx = self._chat_core.get_system_context(self.conversation_id)
+                if system_ctx:
+                    total_tokens += count_tokens(system_ctx, self._current_model) + 4
             except Exception as e:
-                logger.warning(f"计算系统上下文 token 失败: {e}")
+                logger.warning(f"获取系统上下文失败: {e}")
 
-        # 计算工具定义的 token
-        if self._config and self._config.enable_tools:
-            try:
-                from llm_chat.client import LLMClient
-                import json
-
-                temp_client = LLMClient(self._config, skip_skills_setup=True)
-                if temp_client.has_builtin_tools():
-                    tools = temp_client.get_builtin_tools()
-                    if tools:
-                        # 工具定义序列化为 JSON 计算 token
-                        tools_json = json.dumps(tools, ensure_ascii=False)
-                        tools_tokens = count_tokens(tools_json, self._current_model)
-                        total_tokens += tools_tokens
-                        logger.debug(f"工具定义 token: {tools_tokens}")
-            except Exception as e:
-                logger.warning(f"计算工具定义 token 失败: {e}")
-
-        # 构建完整的使用量信息
+        # 上下文上限
         limit = get_context_limit(self._current_model)
         usage_percent = (total_tokens / limit) * 100 if limit > 0 else 0
-        usage = {
-            "used_tokens": total_tokens,
-            "limit": limit,
-            "usage_percent": round(usage_percent, 1),
-            "remaining_tokens": max(0, limit - total_tokens),
-            "model": self._current_model,
-        }
 
-        status_text = format_context_usage_short(usage)
+        self._context_label.setText(
+            self._format_context_text(total_tokens, limit, usage_percent)
+        )
 
-        if self._context_label:
-            self._context_label.setText(status_text)
+        if usage_percent < 50:
+            color = "#28a745"
+        elif usage_percent < 80:
+            color = "#ffc107"
+        else:
+            color = "#dc3545"
 
-            percent = usage["usage_percent"]
-            if percent < 50:
-                color = "#28a745"
-            elif percent < 80:
-                color = "#ffc107"
-            else:
-                color = "#dc3545"
+        self._context_label.setStyleSheet(
+            f"color: {color}; padding: 2px; font-weight: bold;"
+        )
 
-            self._context_label.setStyleSheet(
-                f"color: {color}; padding: 2px; font-weight: bold;"
-            )
+    @staticmethod
+    def _format_context_text(used: int, limit: int, percent: float = None) -> str:
+        """格式化上下文状态文本。"""
+        if percent is None:
+            percent = (used / limit) * 100 if limit > 0 else 0
+        return f"上下文: {used:,} / {limit:,} tokens ({percent:.1f}%)"
+
+    def _get_current_context_limit(self) -> int:
+        """获取当前模型上下文上限。"""
+        from llm_chat.utils.token_counter import get_context_limit
+        return get_context_limit(self._current_model)
 
     def _on_temperature_changed(self, value):
         """温度滑块变化处理"""
@@ -1358,37 +1332,21 @@ class GUIFrontend(BaseFrontend):
         logger.info(f"工具调用完成: {tool_name}, result_length={result_len}")
 
     def _on_context_updated(self, used_tokens: int, limit: int):
-        from llm_chat.utils.token_counter import format_context_usage_short
-
-        usage_percent = (used_tokens / limit) * 100 if limit > 0 else 0
-        usage = {
-            "used_tokens": used_tokens,
-            "limit": limit,
-            "usage_percent": round(usage_percent, 1),
-            "remaining_tokens": max(0, limit - used_tokens),
-            "model": self._current_model,
-        }
-
-        status_text = format_context_usage_short(usage)
-
+        """ChatCore 回调 — 流式过程中实时更新上下文状态。"""
         if self._context_label:
-            self._context_label.setText(status_text)
-
-            percent = usage["usage_percent"]
-            if percent < 50:
+            usage_percent = (used_tokens / limit) * 100 if limit > 0 else 0
+            self._context_label.setText(
+                self._format_context_text(used_tokens, limit, usage_percent)
+            )
+            if usage_percent < 50:
                 color = "#28a745"
-            elif percent < 80:
+            elif usage_percent < 80:
                 color = "#ffc107"
             else:
                 color = "#dc3545"
-
             self._context_label.setStyleSheet(
                 f"color: {color}; padding: 2px; font-weight: bold;"
             )
-
-        logger.debug(
-            f"上下文已更新: {used_tokens}/{limit} tokens ({usage_percent:.1f}%)"
-        )
 
     def _escape_html(self, text: str) -> str:
         return (
