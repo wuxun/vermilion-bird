@@ -99,6 +99,14 @@ class LLMClientBase:
 
         skill_configs = self.config.skills.get_all_skill_configs()
 
+        # 如果用 skills_filter，过滤掉不在白名单中的 skill 配置
+        # 避免 load_from_config 中 "Skill class not found" 的无害报错
+        if skills_filter is not None:
+            skill_configs = {
+                k: v for k, v in skill_configs.items()
+                if k in skills_filter
+            }
+
         # 注入代理配置（不修改原始 config 对象）
         proxy_defaults = {
             "http_proxy": self.config.llm.http_proxy,

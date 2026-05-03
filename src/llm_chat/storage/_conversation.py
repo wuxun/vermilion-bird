@@ -69,13 +69,19 @@ class StorageConversationMixin:
     ) -> bool:
         with self._get_connection() as conn:
             now = datetime.now().isoformat()
-            if title is not None:
+            if title is not None and metadata is not None:
+                conn.execute(
+                    "UPDATE conversations SET title = ?, metadata = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (title, json.dumps(metadata), now, conversation_id),
+                )
+            elif title is not None:
                 conn.execute(
                     "UPDATE conversations SET title = ?, updated_at = ? "
                     "WHERE id = ?",
                     (title, now, conversation_id),
                 )
-            if metadata is not None:
+            elif metadata is not None:
                 conn.execute(
                     "UPDATE conversations SET metadata = ?, updated_at = ? "
                     "WHERE id = ?",

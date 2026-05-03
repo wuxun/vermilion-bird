@@ -164,23 +164,20 @@ class ContextCache:
         :param conversation_id: 失效指定会话的所有缓存
         :param cache_key: 失效指定缓存键
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self.storage._get_connection() as conn:
+            cursor = conn.cursor()
 
-        if cache_key:
-            cursor.execute(
-                "DELETE FROM context_cache WHERE cache_key = ?", (cache_key,)
-            )
-            logger.debug(f"已失效缓存: {cache_key}")
-        elif conversation_id:
-            cursor.execute(
-                "DELETE FROM context_cache WHERE conversation_id = ?",
-                (conversation_id,),
-            )
-            logger.debug(f"已失效会话缓存: {conversation_id}")
-
-        conn.commit()
-        conn.close()
+            if cache_key:
+                cursor.execute(
+                    "DELETE FROM context_cache WHERE cache_key = ?", (cache_key,)
+                )
+                logger.debug(f"已失效缓存: {cache_key}")
+            elif conversation_id:
+                cursor.execute(
+                    "DELETE FROM context_cache WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+                logger.debug(f"已失效会话缓存: {conversation_id}")
 
     def prune(self, max_age_days: int = 30, max_entries: int = 1000) -> int:
         """
@@ -189,37 +186,34 @@ class ContextCache:
         :param max_entries: 最大缓存条目数，超过时清理最久未使用的
         :return: 清理的条目数
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self.storage._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # 清理过期缓存
-        cutoff_time = time.time() - (max_age_days * 86400)
-        cursor.execute(
-            "DELETE FROM context_cache WHERE last_accessed < ?", (cutoff_time,)
-        )
-        deleted = cursor.rowcount
-
-        # 清理超出数量限制的缓存，按最后访问时间排序
-        cursor.execute("SELECT COUNT(*) FROM context_cache")
-        count = cursor.fetchone()[0]
-
-        if count > max_entries:
-            delete_count = count - max_entries
+            # 清理过期缓存
+            cutoff_time = time.time() - (max_age_days * 86400)
             cursor.execute(
-                """
-            DELETE FROM context_cache 
-            WHERE cache_key IN (
-                SELECT cache_key FROM context_cache 
-                ORDER BY last_accessed ASC 
-                LIMIT ?
+                "DELETE FROM context_cache WHERE last_accessed < ?", (cutoff_time,)
             )
-            """,
-                (delete_count,),
-            )
-            deleted += cursor.rowcount
+            deleted = cursor.rowcount
 
-        conn.commit()
-        conn.close()
+            # 清理超出数量限制的缓存，按最后访问时间排序
+            cursor.execute("SELECT COUNT(*) FROM context_cache")
+            count = cursor.fetchone()[0]
+
+            if count > max_entries:
+                delete_count = count - max_entries
+                cursor.execute(
+                    """
+                DELETE FROM context_cache 
+                WHERE cache_key IN (
+                    SELECT cache_key FROM context_cache 
+                    ORDER BY last_accessed ASC 
+                    LIMIT ?
+                )
+                """,
+                    (delete_count,),
+                )
+                deleted += cursor.rowcount
 
         if deleted > 0:
             logger.info(f"已清理{deleted}条过期缓存")
