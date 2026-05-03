@@ -213,7 +213,7 @@ class MCPConfigDialog(QDialog):
         self.setWindowTitle("MCP 工具配置")
         self.setMinimumSize(800, 600)
         
-        self._manager = MCPManager()
+        self._manager = MCPManager.get_instance()
         self._workers: List[ConnectWorker] = []
         
         self._setup_ui()

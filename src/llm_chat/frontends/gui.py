@@ -406,17 +406,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._dashboard_button.setFixedWidth(100)
         self._dashboard_button.setToolTip("Token & 成本仪表盘")
         self._dashboard_button.clicked.connect(self._on_dashboard)
-        self._dashboard_button.setStyleSheet("""
-            QPushButton {
-                background-color: #F5F0EB;
-                border: 1px solid #C8B6A6;
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-            QPushButton:hover {
-                background-color: #EBE0D5;
-            }
-        """)
         header_layout.addWidget(self._dashboard_button)
 
         self._clear_button = QPushButton("Clear")
@@ -705,6 +694,18 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """)
 
         self._scheduler_button.setStyleSheet("""
+            QPushButton {
+                background-color: #D4652F;
+                color: white;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #C84B31;
+            }
+        """)
+
+        self._dashboard_button.setStyleSheet("""
             QPushButton {
                 background-color: #D4652F;
                 color: white;
