@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Set
@@ -44,11 +45,13 @@ def make_agent_context(
     conversation_id: str,
     task: str = "",
     work_dir: str = ".vb/work",
+    timeout: int = 300,
 ) -> AgentContext:
     """统一创建 AgentContext，默认 status='running' 并标记创建时间。
 
     SpawnSubagentTool 和 WorkflowExecutor 共用此工厂，避免 AgentContext 创建逻辑重复。
     """
+    now = time.time()
     return AgentContext(
         agent_id=agent_id,
         parent_id=parent_id,
@@ -59,4 +62,7 @@ def make_agent_context(
         status="running",
         task=task,
         work_dir=work_dir,
+        # 僵死检测：deadline 在创建时即设置，防止 submit 失败后 running 状态挂起
+        started_at=now,
+        deadline=now + max(timeout, 60) + 120,
     )

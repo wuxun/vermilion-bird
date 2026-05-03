@@ -54,7 +54,10 @@ class SkillManager:
         return discovered
     
     def _load_skill_from_path(self, skill_path: Path) -> Optional[Type[BaseSkill]]:
-        module_name = f"skill_{skill_path.name}"
+        # 使用路径 hash 作为模块名前缀，避免不同目录下同名 skill 冲突
+        import hashlib
+        path_hash = hashlib.md5(str(skill_path).encode()).hexdigest()[:8]
+        module_name = f"skill_{path_hash}_{skill_path.name}"
         parent_dir = str(skill_path.parent)
         path_inserted = False
 

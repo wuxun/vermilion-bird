@@ -207,6 +207,7 @@ class SpawnSubagentTool(BaseTool):
             conversation_id=f"conv_{uuid.uuid4()}",
             task=task,
             work_dir=work_dir,
+            timeout=timeout,
         )
 
         self.registry.spawn(agent_id, context)
@@ -266,7 +267,8 @@ class SpawnSubagentTool(BaseTool):
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
         client = None
-        # 僵死检测：记录开始时间和截止时间
+        # 僵死检测：用实际 timeout 刷新 deadline（make_agent_context 已设默认值，
+        # 此处在子 agent 真正启动后覆盖为精确值）
         context.started_at = time.time()
         context.deadline = context.started_at + max(timeout, 60) + 120  # 额外 120s 容错
         try:

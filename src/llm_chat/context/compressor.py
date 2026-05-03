@@ -356,15 +356,22 @@ class ContextCompressor:
     def _generate_dialog_summary(
         self, messages: List[ContextMessage], is_global: bool = False
     ) -> str:
-        """生成对话摘要，优先使用LLM，降级到规则摘要"""
+        """生成对话摘要，优先使用LLM，降级到规则摘要。"""
         if not messages:
             return "无历史对话"
 
         # 如果有LLM客户端，使用LLM生成高质量摘要
         if self.llm_client:
             try:
+                # 准备摘要系统提示
+                system_prompt = (
+                    "你是一个精准的对话摘要助手。"
+                    "提取对话中的关键信息：主题、决策、待办事项和重要上下文。"
+                    "用简洁的中文输出，不要添加对话中没有的信息。"
+                )
+
                 # 准备摘要提示
-                prompt = "请生成以下对话的简洁摘要，保留关键信息和上下文：\n\n"
+                prompt = "请生成以下对话的简洁摘要：\n\n"
                 for msg in messages:
                     prompt += f"{msg.role}: {msg.content}\n\n"
 
@@ -373,7 +380,14 @@ class ContextCompressor:
                 else:
                     prompt += "\n生成简短摘要，不要超过500字。"
 
-                summary = self.llm_client.chat(prompt)
+                # 使用 chat() 传入 system_context 以获得更好的摘要质量
+                summary = self.llm_client.chat(
+                    message=prompt,
+                    system_context=system_prompt,
+                    history=[],
+                    max_tokens=512,
+                    temperature=0.3,
+                )
                 return summary.strip()
             except Exception as e:
                 logger.warning(f"LLM生成摘要失败，回退到规则摘要: {str(e)}")
