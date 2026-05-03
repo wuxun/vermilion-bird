@@ -90,6 +90,9 @@ class ContextManager:
                 messages, self.max_context_tokens
             )
 
+        # 预计算一次原始 token（后续多次使用）
+        total_original = sum(count_tokens(m.content) for m in messages)
+
         # 尝试从缓存获取
         if self.enable_cache and self.cache and not force_recompress:
             cached = self.cache.get(conversation_id, target_level, messages=messages)
@@ -100,16 +103,12 @@ class ContextManager:
                 return CompressionResult(
                     level=target_level,
                     messages=cached.messages,
-                    original_token_count=sum(
-                        count_tokens(msg.content) for msg in messages
-                    ),
+                    original_token_count=total_original,
                     compressed_token_count=cached.token_count,
-                    compression_ratio=cached.token_count
-                    / sum(count_tokens(msg.content) for msg in messages)
-                    if sum(count_tokens(msg.content) for msg in messages) > 0
+                    compression_ratio=cached.token_count / total_original
+                    if total_original > 0
                     else 0,
-                    saved_tokens=sum(count_tokens(msg.content) for msg in messages)
-                    - cached.token_count,
+                    saved_tokens=total_original - cached.token_count,
                 )
 
         # 执行压缩
