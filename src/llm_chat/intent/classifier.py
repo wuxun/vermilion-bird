@@ -32,6 +32,8 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     (re.compile(r"^/summary?\b", re.IGNORECASE), Intent.SUMMARIZE, "摘要"),
     # 清空对话 — 直接返回
     (re.compile(r"^/(?:clear|reset|清空|重置)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
+    # 新建会话
+    (re.compile(r"^/new\b", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 帮助
     (re.compile(r"^/(?:help|帮助|\\?)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
 ]
@@ -169,7 +171,8 @@ _HELP_TEXT = """🐦 **Vermilion Bird 快捷指令**
 | `/memory` | 查看/管理记忆 |
 | `/schedule` | 管理定时任务 |
 | `/summary` | 总结对话 |
-| `/clear` | 清空对话 |
+| `/new [标题]` | 新建会话 |
+| `/clear` | 清空当前会话 |
 | `/help` | 显示此帮助 |
 
 也可以直接聊 — 我会自动理解你的意图 😊"""
@@ -242,8 +245,16 @@ class IntentClassifier:
             m = pattern.match(msg)
             if m:
                 if intent == Intent.SHORTCUT:
+                    # /new → 新建会话
+                    if "new" in pattern.pattern:
+                        return RoutingDecision(
+                            intent=Intent.SHORTCUT,
+                            confidence=1.0,
+                            skip_llm=True,
+                            override_message="__new_conversation__",
+                        )
                     # /clear /reset /help → 直接回复
-                    if "clear" in pattern.pattern or "reset" in pattern.pattern or "清空" in pattern.pattern or "重置" in pattern.pattern:
+                    elif "clear" in pattern.pattern or "reset" in pattern.pattern or "清空" in pattern.pattern or "重置" in pattern.pattern:
                         return RoutingDecision.bypass(
                             Intent.SHORTCUT,
                             "对话已清空。开始新的对话吧！",

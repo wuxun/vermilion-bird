@@ -98,8 +98,20 @@ class ChatCore:
         if decision.skip_llm:
             conv.add_user_message(message)
 
+            # /new 特殊处理：创建新会话
+            if decision.override_message == "__new_conversation__":
+                # 从消息中提取标题 (如 /new 项目讨论 → 项目讨论)
+                title = message[4:].strip() if len(message) > 4 else None
+                new_conv = self.conversation_manager.create_conversation(title=title)
+                response = f"已创建新会话: {new_conv.conversation_id}"
+                if title:
+                    response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
+                conv.add_assistant_message(response)
+                logger.info(f"[INTENT] 新建会话: {new_conv.conversation_id}")
+                return response
+
             # /clear 特殊处理：清空对话
-            if decision.intent == Intent.SHORTCUT and decision.direct_response:
+            elif decision.intent == Intent.SHORTCUT and decision.direct_response:
                 conv.clear_history()
 
             conv.add_assistant_message(decision.direct_response)
@@ -199,6 +211,19 @@ class ChatCore:
         if decision.skip_llm:
             conv = self.conversation_manager.get_conversation(conversation_id)
             conv.add_user_message(message)
+
+            # /new 特殊处理：新建会话
+            if decision.override_message == "__new_conversation__":
+                title = message[4:].strip() if len(message) > 4 else None
+                new_conv = self.conversation_manager.create_conversation(title=title)
+                response = f"已创建新会话: {new_conv.conversation_id}"
+                if title:
+                    response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
+                conv.add_assistant_message(response)
+                if on_chunk:
+                    on_chunk(response)
+                logger.info(f"[INTENT] 新建会话: {new_conv.conversation_id}")
+                return response
 
             # /clear 特殊处理：清空对话
             if decision.intent == Intent.SHORTCUT and decision.direct_response:
