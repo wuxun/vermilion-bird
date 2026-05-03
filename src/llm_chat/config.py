@@ -1,11 +1,14 @@
 from __future__ import annotations
 import os
+import logging
 from typing import Optional, List, Dict, Any
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator, model_validator
 import yaml
 
 from llm_chat.mcp import MCPConfig
+
+logger = logging.getLogger(__name__)
 
 
 # FeishuConfig duplicate removed to unify with the later definition
@@ -458,6 +461,13 @@ class Config(BaseSettings):
             llm_data = config_data.get("llm", {})
             llm_config = LLMConfig(**llm_data)
 
+            # Resolve API key from keyring if prefixed with 'keyring:'
+            from llm_chat.utils.secure_storage import resolve_api_key
+            resolved_key = resolve_api_key(llm_config.api_key)
+            if resolved_key and resolved_key != llm_config.api_key:
+                llm_config.api_key = resolved_key
+                logger.info("LLM API key resolved from keyring/environment")
+
             # Parse available_models
             # Check if "available_models" key exists in config file
             has_available_models_key = "available_models" in llm_data
@@ -618,17 +628,12 @@ class Config(BaseSettings):
             elif isinstance(skill_data, SkillConfig):
                 skill_configs[skill_name] = skill_data
 
-        # 默认启用的 skills
-        default_skills = [
-            "web_search",
-            "calculator",
-            "web_fetch",
-            "file_reader",
-            "task_delegator",
-        ]
-        for skill_name in default_skills:
+        # 未在 config 中显式配置的 skill 使用 SkillsConfig 默认值
+        for skill_name in SkillsConfig.model_fields.keys():
             if skill_name not in skill_configs:
-                skill_configs[skill_name] = SkillConfig(enabled=True)
+                default = SkillsConfig.model_fields[skill_name].default
+                if default is not None:
+                    skill_configs[skill_name] = default
 
         return SkillsConfig(**skill_configs)
 

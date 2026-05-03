@@ -211,10 +211,73 @@ cli.add_command(memory)
 cli.add_command(skills)
 cli.add_command(schedule)
 
-# ===== 子命令组注册
-cli.add_command(memory)
-cli.add_command(skills)
-cli.add_command(schedule)
+
+# ===== keyring 命令 =====
+
+@cli.group()
+def keyring():
+    """管理系统密钥环中的 API Key"""
+    pass
+
+
+@keyring.command("set")
+@click.argument("username")
+@click.option("--service", default="vermilion-bird", help="Keyring service name")
+def keyring_set(username, service):
+    """将 API Key 存储到系统密钥环"""
+    from llm_chat.utils.secure_storage import store_api_key, is_keyring_available
+
+    if not is_keyring_available():
+        click.echo("错误: keyring 包未安装。请运行: pip install keyring", err=True)
+        sys.exit(1)
+
+    api_key = click.prompt("请输入 API Key", hide_input=True, confirmation_prompt=True)
+    if store_api_key(username, api_key, service):
+        click.echo(f"✓ API Key 已存入密钥环: {service}/{username}")
+    else:
+        click.echo("✗ 存储失败", err=True)
+        sys.exit(1)
+
+
+@keyring.command("delete")
+@click.argument("username")
+@click.option("--service", default="vermilion-bird", help="Keyring service name")
+def keyring_delete(username, service):
+    """从系统密钥环中删除 API Key"""
+    from llm_chat.utils.secure_storage import delete_api_key, is_keyring_available
+
+    if not is_keyring_available():
+        click.echo("错误: keyring 包未安装。请运行: pip install keyring", err=True)
+        sys.exit(1)
+
+    if delete_api_key(username, service):
+        click.echo(f"✓ API Key 已从密钥环删除: {service}/{username}")
+    else:
+        click.echo("✗ 删除失败（可能不存在）", err=True)
+        sys.exit(1)
+
+
+@keyring.command("list")
+def keyring_list():
+    """列出 keyring 配置说明"""
+    from llm_chat.utils.secure_storage import is_keyring_available
+
+    click.echo("Keyring API Key 管理")
+    click.echo("=" * 40)
+    click.echo(f"Keyring 可用: {'是' if is_keyring_available() else '否 (pip install keyring)'}")
+    click.echo()
+    click.echo("使用方法:")
+    click.echo("  1. 存储: vermilion-bird keyring set openai")
+    click.echo("  2. 在 config.yaml 中设置:")
+    click.echo("     llm:")
+    click.echo('       api_key: "keyring:vermilion-bird/openai"')
+    click.echo("  3. 删除: vermilion-bird keyring delete openai")
+    click.echo()
+    click.echo("系统密钥环:")
+    click.echo("  - macOS: Keychain")
+    click.echo("  - Linux: Secret Service / KWallet")
+    click.echo("  - Windows: Credential Manager")
+
 
 # ===== 全局搜索命令
 

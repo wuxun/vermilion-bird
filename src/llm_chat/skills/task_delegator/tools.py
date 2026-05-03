@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 
 from llm_chat.tools.base import BaseTool
+from llm_chat.tools.registry import ToolRegistry
 from llm_chat.utils.observability import observe
 
 # Workflow tools (split to separate file for readability)
@@ -46,6 +47,13 @@ def _truncate_args(args: dict, max_len: int = 200) -> str:
 
 class SpawnSubagentTool(BaseTool):
     """创建子agent并分配任务的工具"""
+
+    # 子 agent 安全技能白名单：排除递归危险技能 (task_delegator, scheduler)
+    SAFE_SKILLS = [
+        "web_search", "web_fetch", "calculator",
+        "file_reader", "file_writer", "file_editor",
+        "shell_exec", "todo_manager",
+    ]
 
     @property
     def name(self) -> str:
@@ -297,9 +305,19 @@ class SpawnSubagentTool(BaseTool):
                 })
                 self.registry._notify_status_change(agent_id)
 
+            # 为子 agent 创建独立的 ToolRegistry，加载安全技能子集
+            # 排除递归危险技能 (task_delegator, scheduler 等)
+            subagent_registry = ToolRegistry()
+            # 复制父 registry 中的 MCP 工具
+            for tool in self._tool_registry.get_all_tools():
+                if hasattr(tool, '_is_mcp_tool') or tool.name.startswith("mcp__"):
+                    subagent_registry.register(tool)
+
             client = LLMClient(
-                subagent_config, skip_skills_setup=True, tool_call_hook=_on_tool_call,
-                tool_registry=self._tool_registry,
+                subagent_config, skip_skills_setup=False,
+                tool_call_hook=_on_tool_call,
+                tool_registry=subagent_registry,
+                skills_filter=SpawnSubagentTool.SAFE_SKILLS,
             )
 
             if allowed_tools:

@@ -199,8 +199,8 @@ class App:
             str(Path.cwd() / ".agents" / "skills"),
         ]
 
-        # 配置文件额外目录
-        extra = self.config.prompt_skill_dirs if hasattr(self.config, 'prompt_skill_dirs') else []
+        # 配置文件额外目录（prompt_skill_dirs 在 Config 上始终存在）
+        extra = self.config.prompt_skill_dirs or []
 
         for d in default_dirs + extra:
             skill_manager.add_prompt_skill_dir(d)
@@ -275,9 +275,21 @@ class App:
     # MCP 工具管理 (App 负责 MCP 连接; ChatCore 共享同一个 client)
     # ------------------------------------------------------------------
 
-    def enable_tools(self):
+    def enable_tools(self, background: bool = True):
+        """连接 MCP 服务器并注册工具。
+
+        Args:
+            background: 如果为 True，在后台线程中执行连接，避免阻塞 UI。
+                       默认为 True。
+        """
         if self._tools_enabled:
             return
+
+        # 防止重复连接
+        if getattr(self, '_mcp_connecting', False):
+            logger.info("MCP connection already in progress, skipping")
+            return
+        self._mcp_connecting = True
 
         manager = self._get_mcp_manager()
 
@@ -286,36 +298,82 @@ class App:
             f"准备连接 {len(enabled_servers)} 个 MCP 服务器: {[s.name for s in enabled_servers]}"
         )
 
+        if background:
+            import threading
+            thread = threading.Thread(
+                target=self._connect_mcp_background,
+                args=(manager,),
+                name="mcp-connect",
+                daemon=True,
+            )
+            thread.start()
+            logger.info("MCP 连接已在后台线程启动")
+        else:
+            self._connect_mcp_sync(manager)
+
+    def _connect_mcp_sync(self, manager):
+        """同步连接 MCP 服务器并注册工具。"""
         try:
             future = manager.connect_all()
             results = future.result(timeout=180)
             logger.info(f"MCP 连接结果: {results}")
-
-            connected_tools = manager.get_tools_for_openai()
-            logger.info(f"MCP 工具加载完成，共 {len(connected_tools)} 个工具")
-            if connected_tools:
-                logger.info(
-                    f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
-                )
-                # 注册 MCP 工具到 ToolRegistry → 子 agent 自动可见
-                from llm_chat.mcp.manager import MCPToolAdapter
-                for mcp_tool in manager.get_all_tools():
-                    adapter = MCPToolAdapter(
-                        tool_name=mcp_tool.name,
-                        description=mcp_tool.description or "",
-                        input_schema=mcp_tool.input_schema or {},
-                        executor=lambda name, args, mgr=manager: mgr.call_tool(name, args),
-                    )
-                    self.tool_registry.register(adapter)
-                logger.info(
-                    f"MCP 工具已注册到 ToolRegistry: "
-                    f"{[t.name for t in manager.get_all_tools()]}"
-                )
-
+            self._register_mcp_tools(manager)
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
+        finally:
+            self._tools_enabled = True
+            self._mcp_connecting = False
 
-        self._tools_enabled = True
+    def _connect_mcp_background(self, manager):
+        """后台线程中连接 MCP 并通知前端。"""
+        try:
+            future = manager.connect_all()
+            results = future.result(timeout=180)
+            logger.info(f"MCP 连接结果: {results}")
+            self._register_mcp_tools(manager)
+
+            # 通知前端 MCP 工具已就绪
+            if self.current_frontend:
+                try:
+                    tool_names = [t.name for t in manager.get_all_tools()]
+                    self.current_frontend.display_info(
+                        f"MCP 工具已就绪: {', '.join(tool_names) if tool_names else '无'}"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"MCP 连接失败: {e}", exc_info=True)
+            if self.current_frontend:
+                try:
+                    self.current_frontend.display_error(f"MCP 连接失败: {e}")
+                except Exception:
+                    pass
+        finally:
+            self._tools_enabled = True
+            self._mcp_connecting = False
+
+    def _register_mcp_tools(self, manager):
+        """将 MCP 工具注册到 ToolRegistry。"""
+        from llm_chat.mcp.manager import MCPToolAdapter
+
+        connected_tools = manager.get_tools_for_openai()
+        logger.info(f"MCP 工具加载完成，共 {len(connected_tools)} 个工具")
+        if connected_tools:
+            logger.info(
+                f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
+            )
+            for mcp_tool in manager.get_all_tools():
+                adapter = MCPToolAdapter(
+                    tool_name=mcp_tool.name,
+                    description=mcp_tool.description or "",
+                    input_schema=mcp_tool.input_schema or {},
+                    executor=lambda name, args, mgr=manager: mgr.call_tool(name, args),
+                )
+                self.tool_registry.register(adapter)
+            logger.info(
+                f"MCP 工具已注册到 ToolRegistry: "
+                f"{[t.name for t in manager.get_all_tools()]}"
+            )
 
     def disable_tools(self):
         if not self._tools_enabled:

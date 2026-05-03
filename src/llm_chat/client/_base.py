@@ -24,7 +24,8 @@ class LLMClientBase:
     """
 
     def __init__(self, config: Config, skip_skills_setup: bool = False,
-                 tool_call_hook=None, tool_registry=None):
+                 tool_call_hook=None, tool_registry=None,
+                 skills_filter: list = None):
         self.config = config
         self._tool_call_hook = tool_call_hook  # Callable[[str, dict, str], None]
         self.session = requests.Session()
@@ -61,7 +62,7 @@ class LLMClientBase:
             timeout=config.tools.timeout,
         )
         if not skip_skills_setup:
-            self._setup_skills()
+            self._setup_skills(skills_filter=skills_filter)
 
     def close(self):
         """关闭客户端，释放连接资源。
@@ -79,11 +80,18 @@ class LLMClientBase:
     # 技能设置
     # ------------------------------------------------------------------
 
-    def _setup_skills(self):
-        """加载并初始化所有技能"""
+    def _setup_skills(self, skills_filter: list = None):
+        """加载并初始化技能。
+
+        Args:
+            skills_filter: 可选，只加载列表中的技能名称。
+                          None 表示加载所有技能。用于子 agent 的场景。
+        """
         self._tool_registry.clear()
 
         for skill_name, skill_class in get_builtin_skills().items():
+            if skills_filter is not None and skill_name not in skills_filter:
+                continue
             self._skill_manager.register_skill_class(skill_class)
 
         if self.config.external_skill_dirs:
@@ -145,6 +153,7 @@ class LLMClientBase:
         Raises: LLMError on exhaustion
         """
         import time
+        import random
         last_error = None
         for attempt in range(self.config.llm.max_retries):
             try:
@@ -162,7 +171,14 @@ class LLMClientBase:
                             error_msg = f"{error_msg}\n响应: {e.response.text}"
                     logger.error(f"[{label}] 重试耗尽: {error_msg}")
                     raise LLMError(f"API 请求失败: {error_msg}")
-                logger.warning(f"[{label}] 请求失败, {attempt+1}后重试: {e}")
-                time.sleep(1)
+                # 指数退避 + 抖动: base=1s, max=60s
+                delay = min(2 ** attempt, 60)
+                jitter = delay * 0.1 * random.random()
+                total_delay = delay + jitter
+                logger.warning(
+                    f"[{label}] 请求失败, {total_delay:.1f}s后重试 "
+                    f"({attempt + 1}/{self.config.llm.max_retries}): {e}"
+                )
+                time.sleep(total_delay)
         # unreachable
         raise LLMError(f"API 请求失败: {last_error}")

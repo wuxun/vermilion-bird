@@ -88,6 +88,11 @@ class FeishuServer:
         self._client: Optional[ws.Client] = None
         self._event_handler = None
 
+        # 事件去重缓存: set of recently processed event_ids
+        self._processed_events: set = set()
+        self._max_dedup_cache = 10_000
+        self._dedup_lock = threading.Lock()
+
     def start(self) -> None:
         """Start Feishu WebSocket server in background thread."""
         if self._thread and self._thread.is_alive():
@@ -133,40 +138,68 @@ class FeishuServer:
         self._logger.info("FeishuServer stop requested")
 
     def _run_loop(self) -> None:
-        """Main run loop - starts WebSocket client."""
-        try:
-            self._logger.info("Connecting to Feishu WebSocket...")
-            self._client.start()
-        except Exception as e:
-            if self._stop_event.is_set():
-                self._logger.info("FeishuServer shutting down")
-                return
-            self._logger.error(f"WebSocket error: {e}", exc_info=True)
+        """Main run loop - starts WebSocket client with auto-reconnect."""
+        consecutive_failures = 0
+        max_backoff = 300  # 5 minutes max backoff
+
+        while not self._stop_event.is_set():
+            try:
+                self._logger.info("Connecting to Feishu WebSocket...")
+                self._client.start()
+                # start() blocks until connection closes; reset failures on clean exit
+                consecutive_failures = 0
+                if self._stop_event.is_set():
+                    self._logger.info("FeishuServer shutting down")
+                    return
+                self._logger.warning("WebSocket disconnected unexpectedly")
+            except Exception as e:
+                if self._stop_event.is_set():
+                    self._logger.info("FeishuServer shutting down")
+                    return
+                consecutive_failures += 1
+                self._logger.error(f"WebSocket error: {e}", exc_info=True)
+
+            # Exponential backoff with jitter
+            delay = min(self.reconnect_interval * (2 ** consecutive_failures), max_backoff)
+            if consecutive_failures > 1:
+                import random
+                delay = delay * (0.5 + random.random())
+            self._logger.info(
+                f"Reconnecting in {delay:.1f}s (attempt {consecutive_failures + 1})..."
+            )
+            self._stop_event.wait(timeout=delay)
 
     def _handle_message_event(self, event: P2ImMessageReceiveV1) -> None:
-        """Handle incoming message event.
+        """Handle incoming message event with deduplication.
 
         Args:
             event: P2ImMessageReceiveV1 event object
         """
         try:
-            # Debug: 打印完整事件对象结构
-            self._logger.info(f"DEBUG - Raw event object type: {type(event)}")
-            self._logger.info(
-                f"DEBUG - Event dir: {[a for a in dir(event) if not a.startswith('_')]}"
-            )
-            if hasattr(event, "event"):
-                self._logger.info(f"DEBUG - event.event type: {type(event.event)}")
-                if event.event:
-                    self._logger.info(
-                        f"DEBUG - event.event dir: {[a for a in dir(event.event) if not a.startswith('_')]}"
-                    )
-
             event_id = (
-                getattr(event.header, "event_id", "unknown")
+                getattr(event.header, "event_id", None)
                 if event.header
-                else "unknown"
+                else None
             )
+
+            # 事件去重：飞书可能短时间重发同一事件
+            if event_id:
+                with self._dedup_lock:
+                    if event_id in self._processed_events:
+                        self._logger.debug(f"Duplicate event ignored: {event_id}")
+                        return
+                    self._processed_events.add(event_id)
+                    # 防止内存无限增长
+                    if len(self._processed_events) > self._max_dedup_cache:
+                        # 清空一半（简单的 FIFO 近似）
+                        to_remove = list(self._processed_events)[:len(self._processed_events) // 2]
+                        self._processed_events.difference_update(to_remove)
+                        self._logger.debug(
+                            f"Dedup cache pruned: {len(to_remove)} events removed"
+                        )
+
+            # Debug: 打印完整事件对象结构
+            self._logger.debug(f"Event object type: {type(event)}")
 
             sender_id = None
             chat_id = None

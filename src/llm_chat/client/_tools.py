@@ -107,33 +107,26 @@ class LLMClientToolsMixin:
                 )
 
                 tool_result = None
-                is_error = False
+                # 使用 ToolExecutor 统一执行（含重试+超时），与流式路径一致
+                tool_call_id = tool_call.id if hasattr(tool_call, 'id') else f"tc_{tool_call.name}"
+                args_dict = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                result = self._tool_executor_instance.execute_single_tool(
+                    tool_call.name, args_dict, tool_call_id
+                )
+                tool_result = result.get("content", "")
+                is_error = result.get("is_error", False)
 
-                if self._tool_registry.has_tool(tool_call.name):
-                    try:
-                        tool_result = self.execute_builtin_tool(
-                            tool_call.name, tool_call.arguments
-                        )
-                        is_error = False
-                        if tool_result is None:
-                            tool_result = "工具执行返回空结果"
-                            logger.warning(f"工具 {tool_call.name} 返回 None")
-                        else:
-                            logger.info(
-                                f"工具 {tool_call.name} 执行成功, "
-                                f"结果长度: {len(tool_result)}"
-                            )
-                    except Exception as e:
-                        tool_result = str(e)
-                        is_error = True
-                        logger.error(f"工具 {tool_call.name} 执行失败: {e}")
+                if is_error:
+                    logger.error(f"工具 {tool_call.name} 执行失败: {tool_result}")
                 else:
-                    tool_result = (
-                        f"Error: Unknown tool '{tool_call.name}' - "
-                        f"not registered in ToolRegistry"
-                    )
-                    is_error = True
-                    logger.error(f"未知工具: {tool_call.name}")
+                    if tool_result is None:
+                        tool_result = "工具执行返回空结果"
+                        logger.warning(f"工具 {tool_call.name} 返回 None")
+                    else:
+                        logger.info(
+                            f"工具 {tool_call.name} 执行成功, "
+                            f"结果长度: {len(str(tool_result))}"
+                        )
 
                 # Fire tool_call_hook for observability (sub-agent panel etc.)
                 if self._tool_call_hook:
