@@ -12,12 +12,36 @@ class GeminiProtocol(BaseProtocol):
     
     def build_chat_request(self, messages: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
         contents = []
+        system_instruction = None
+
         for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                # Gemini 使用 systemInstruction 而非 message
+                if system_instruction is None:
+                    system_instruction = {"parts": [{"text": content}]}
+                else:
+                    system_instruction["parts"].append({"text": content})
+            elif role in ("user", "function"):
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": content}]
+                })
+            elif role == "tool":
+                # 工具结果消息 (从 build_tool_result_message 来，有 parts 字段)
+                parts_data = msg.get("parts", [{"text": content}])
+                contents.append({
+                    "role": "function",
+                    "parts": parts_data
+                })
+            else:
+                # assistant / model / fallback
+                contents.append({
+                    "role": "model",
+                    "parts": [{"text": content}]
+                })
         
         generation_config = {}
         
@@ -42,6 +66,8 @@ class GeminiProtocol(BaseProtocol):
             "contents": contents,
             "generationConfig": generation_config
         }
+        if system_instruction:
+            data["systemInstruction"] = system_instruction
         return data
     
     def parse_chat_response(self, response: Dict[str, Any]) -> str:

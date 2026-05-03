@@ -18,10 +18,19 @@ class AnthropicProtocol(BaseProtocol):
         return f"{self.base_url}/messages"
     
     def build_chat_request(self, messages: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
-        system_prompt = kwargs.get("system", "")
+        # Extract system messages from the list (Anthropic uses a separate "system" field)
+        system_parts = []
+        chat_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_parts.append(msg["content"])
+            else:
+                chat_messages.append(msg)
+
+        system_prompt = "\n\n".join(system_parts) if system_parts else kwargs.get("system", "")
         data = {
             "model": self.model,
-            "messages": messages,
+            "messages": chat_messages,
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         if system_prompt:

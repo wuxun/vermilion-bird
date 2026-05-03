@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Set
 
 
@@ -55,7 +55,7 @@ def make_agent_context(
         depth=depth,
         allowed_tools=allowed_tools,
         conversation_id=conversation_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         status="running",
         task=task,
         work_dir=work_dir,
