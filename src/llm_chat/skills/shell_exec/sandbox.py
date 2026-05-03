@@ -48,6 +48,8 @@ class SandboxExecutor:
         self._mode: str = "none"  # docker | bwrap | subprocess
         self._container_id: Optional[str] = None
         self._started = False
+        self._heartbeat_running = False
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -92,6 +94,9 @@ class SandboxExecutor:
             return
 
         self._started = False
+
+        # 停止心跳线程
+        self._heartbeat_running = False
 
         if self._mode == "docker" and self._container_id:
             try:
@@ -161,7 +166,13 @@ class SandboxExecutor:
         return shutil.which("docker") is not None
 
     def _start_docker(self):
-        """创建持久化 Docker 容器 (sleep infinity 挂起)。"""
+        """创建持久化 Docker 容器，带心跳存活性监控。
+
+        Python 在 daemon 线程中每 2 秒更新心跳文件。
+        容器每 3 秒检查心跳，超过 10 秒无更新 → 自动退出。
+        Docker --rm 保证容器退出后自动清理。
+        即使 Python 崩溃/abort，心跳停止 → 容器 10 秒内自毁。
+        """
         self._container_id = f"vb-sandbox-{os.getpid()}"
 
         # 先清理可能存在的同名容器
@@ -174,6 +185,29 @@ class SandboxExecutor:
         subprocess.run(
             ["docker", "pull", "alpine:latest"],
             capture_output=True, timeout=120,
+        )
+
+        # 心跳文件 (Python ↔ 容器共享，通过挂载的 /work)
+        heartbeat_path = os.path.join(self._work_dir, ".sandbox_heartbeat")
+
+        # 启动心跳 daemon 线程
+        self._heartbeat_running = True
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(heartbeat_path,),
+            daemon=True,
+            name="sandbox-heartbeat",
+        )
+        self._heartbeat_thread.start()
+
+        # 容器内 keepalive: 心跳超时 10s → 退出
+        keepalive = (
+            'while true; do '
+            '  now=$(date +%s); '
+            '  last=$(cat /work/.sandbox_heartbeat 2>/dev/null || echo 0); '
+            '  if [ $((now - last)) -gt 10 ]; then exit 0; fi; '
+            '  sleep 3; '
+            'done'
         )
 
         result = subprocess.run(
@@ -190,7 +224,7 @@ class SandboxExecutor:
                 "-v", f"{self._work_dir}:/work:rw",
                 "-w", "/work",
                 "alpine:latest",
-                "sleep", "infinity",
+                "sh", "-c", keepalive,
             ],
             capture_output=True, text=True, timeout=30,
         )
@@ -304,3 +338,18 @@ class SandboxExecutor:
             output += f"\nSTDERR:\n{result.stderr}"
         output += f"\n\nReturn code: {result.returncode}"
         return output
+
+    def _heartbeat_loop(self, heartbeat_path: str):
+        """心跳 daemon 线程：每 2 秒更新时间戳到共享文件。
+
+        容器通过挂载的 /work 目录读取此文件。
+        Python 线程死亡 → 文件不再更新 → 容器 10 秒后自毁。
+        """
+        import time as _time
+        while self._heartbeat_running:
+            try:
+                with open(heartbeat_path, "w") as f:
+                    f.write(str(int(_time.time())))
+            except Exception:
+                pass  # 工作目录不可写时静默跳过
+            _time.sleep(2)
