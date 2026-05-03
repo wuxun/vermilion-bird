@@ -11,6 +11,7 @@ class TaskType(str, Enum):
     LLM_CHAT = "LLM_CHAT"
     SKILL_EXECUTION = "SKILL_EXECUTION"
     SYSTEM_MAINTENANCE = "SYSTEM_MAINTENANCE"
+    WEBHOOK = "WEBHOOK"  # 事件驱动：HTTP webhook 触发
 
 
 class TaskStatus(str, Enum):

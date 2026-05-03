@@ -79,6 +79,17 @@ class SchedulerService:
 
         self._setup_scheduler()
 
+        # Webhook 事件驱动触发器
+        self._webhook_server: Optional[WebhookServer] = None
+        webhook_enabled = getattr(config, 'webhook_enabled', False)
+        webhook_port = getattr(config, 'webhook_port', 9100)
+        if webhook_enabled:
+            from .webhook import WebhookServer
+            self._webhook_server = WebhookServer(port=webhook_port)
+            logger.info(
+                f"Webhook server configured on port {webhook_port}"
+            )
+
     def _get_notification_service(self):
         """动态创建通知服务"""
         from .notification import NotificationService
@@ -140,14 +151,24 @@ class SchedulerService:
             self._running = True
             logger.info("Scheduler started")
 
+        # 启动 webhook 服务器
+        if self._webhook_server:
+            self._webhook_server.start()
+            # 注册已存在的 webhook 任务
+            self._register_webhook_tasks()
+
     def shutdown(self, wait: bool = True):
         """关闭调度器
 
         Args:
             wait: 是否等待正在执行的任务完成
         """
-        if not self._running:
+        if not self._running and not self._webhook_server:
             return
+
+        # 停止 webhook 服务器
+        if self._webhook_server:
+            self._webhook_server.stop()
 
         if self._scheduler:
             self._scheduler.shutdown(wait=wait)
@@ -168,6 +189,19 @@ class SchedulerService:
         """
         self._storage.save_task(task)
 
+        # Webhook 任务：注册到 webhook 服务器
+        if task.task_type == TaskType.WEBHOOK:
+            if self._webhook_server and self._webhook_server.is_running:
+                secret = task.trigger_config.get("secret")
+                self._webhook_server.register_task(
+                    task.id,
+                    callback=lambda tid, payload: self._execute_webhook_task(tid, payload),
+                    secret=secret,
+                )
+            logger.info(f"Webhook task registered: {task.id} ({task.name})")
+            return task.id
+
+        # 常规任务：注册到 APScheduler
         trigger = self._build_trigger(task.trigger_config)
 
         self._scheduler.add_job(
@@ -199,6 +233,10 @@ class SchedulerService:
         if not task:
             logger.debug(f"Task not found in storage: {task_id}")
             return False
+
+        # Webhook 任务：从 webhook 服务器注销
+        if task.task_type == TaskType.WEBHOOK and self._webhook_server:
+            self._webhook_server.unregister_task(task_id)
 
         # 尝试从调度器删除（任务可能已不存在，如一次性触发任务）
         try:
@@ -572,3 +610,47 @@ class SchedulerService:
             logger.error(f"Job error: {event.job_id} - {event.exception}")
         elif event.code == EVENT_JOB_MISSED:
             logger.warning(f"Job missed: {event.job_id}")
+
+    # ------------------------------------------------------------------
+    # Webhook 事件驱动触发器
+    # ------------------------------------------------------------------
+
+    def _register_webhook_tasks(self):
+        """将数据库中已存在的 webhook 任务注册到 webhook 服务器。"""
+        if not self._webhook_server:
+            return
+
+        tasks = self._storage.get_all_tasks()
+        for task in tasks:
+            if task.task_type == TaskType.WEBHOOK and task.enabled:
+                secret = task.trigger_config.get("secret")
+                self._webhook_server.register_task(
+                    task.id,
+                    callback=lambda tid, payload, t=task: self._execute_webhook_task(tid, payload),
+                    secret=secret,
+                )
+        logger.info(f"Registered {sum(1 for t in tasks if t.task_type == TaskType.WEBHOOK and t.enabled)} webhook tasks")
+
+    def _execute_webhook_task(self, task_id: str, payload: dict):
+        """执行 webhook 触发的任务。
+
+        Args:
+            task_id: 任务 ID
+            payload: webhook 请求的 JSON body
+        """
+        task = self._storage.load_task(task_id)
+        if not task:
+            logger.warning(f"Webhook task not found: {task_id}")
+            return
+
+        # 注入 webhook payload 到 task params
+        task.params["webhook_payload"] = payload
+
+        # 直接执行 (webhook 不需要 APScheduler job)
+        self._execute_task(task_id)
+
+    def get_webhook_info(self) -> Optional[dict]:
+        """获取 webhook 服务器状态信息。"""
+        if self._webhook_server:
+            return self._webhook_server.get_status()
+        return None

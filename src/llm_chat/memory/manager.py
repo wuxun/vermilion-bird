@@ -137,19 +137,19 @@ class MemoryManager:
         return self.storage.search_memories(query)
     
     def compress_mid_term(self, max_days: int = 30):
-        """压缩中期记忆"""
+        """压缩中期记忆：删除过期条目 + 合并相似摘要。"""
         content = self.storage.load_mid_term()
-        
+
         import re
         summary_section = re.search(r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
-        
+
         if summary_section:
             summaries_text = summary_section.group(1)
             date_pattern = r'### (\d{4}-\d{2}-\d{2})'
             dates = re.findall(date_pattern, summaries_text)
-            
+
             cutoff_date = datetime.now() - timedelta(days=max_days)
-            
+
             for date_str in dates:
                 try:
                     date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -159,8 +159,135 @@ class MemoryManager:
                         logger.info(f"压缩旧记忆: {date_str}")
                 except ValueError:
                     continue
-            
+
             self.storage.save_mid_term(content)
+
+        # 去重：合并相似摘要
+        self._dedup_mid_term()
+
+    def _dedup_mid_term(self, min_entries: int = 7) -> int:
+        """合并中期记忆中语意相似的每日摘要。
+
+        使用 LLM 对近期摘要进行主题聚类，将相似主题合并为一条精炼条目。
+        仅在摘要条目 ≥ min_entries 时触发，避免频繁调用 LLM。
+
+        Returns:
+            合并的条目数
+        """
+        if not self._summarizer:
+            return 0
+
+        content = self.storage.load_mid_term()
+
+        import re
+        # 提取所有每日摘要
+        summary_section = re.search(
+            r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL
+        )
+        if not summary_section:
+            return 0
+
+        summaries_text = summary_section.group(1)
+        entries = re.findall(
+            r'### (\d{4}-\d{2}-\d{2})\n(.*?)(?=\n###|\Z)',
+            summaries_text,
+            re.DOTALL,
+        )
+
+        if len(entries) < min_entries:
+            logger.debug(
+                f"中期记忆去重跳过: {len(entries)} < {min_entries} 条目"
+            )
+            return 0
+
+        # 构建 LLM 提示
+        summaries_list = "\n".join(
+            f"[{date}] {text.strip()[:200]}"
+            for date, text in entries
+        )
+
+        prompt = f"""你是一个记忆整理助手。以下是最近 {len(entries)} 天的每日摘要：
+
+{summaries_list}
+
+请分析这些摘要，找出语意相似的条目（如讨论同一主题、同一项目、同一任务的连续多天记录），将它们合并为一条精炼的摘要。
+
+要求：
+1. 合并后保留最早日期作为新日期
+2. 去重重复信息，保留关键内容
+3. 每条合并摘要不超过 200 字
+4. 不要改变任何事实
+
+输出格式 (JSON array):
+[
+  {{"date": "合并后日期", "merged_dates": ["原始日期1", "原始日期2"], "summary": "合并后的摘要"}},
+  ...
+]
+
+只返回 JSON，不要其他内容。"""
+
+        try:
+            response = self._summarizer.generate(prompt, max_tokens=2000)
+            if not response:
+                return 0
+
+            import json
+            # 提取 JSON (LLM 可能包裹在 markdown code block 中)
+            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
+            if json_match:
+                clusters = json.loads(json_match.group(1))
+            else:
+                # 尝试直接解析
+                clusters = json.loads(response.strip())
+
+            if not isinstance(clusters, list):
+                return 0
+
+            # 构建合并后的摘要块
+            merged = {}
+            all_merged_dates = set()
+            for cluster in clusters:
+                date = cluster.get("date", "")
+                merged_dates = cluster.get("merged_dates", [])
+                summary = cluster.get("summary", "")
+                if date and summary:
+                    merged[date] = summary
+                    all_merged_dates.update(merged_dates)
+
+            if not merged:
+                return 0
+
+            # 重建近期摘要块：保留未合并的 + 添加合并后的
+            kept_entries = []
+            for date, text in entries:
+                if date not in all_merged_dates:
+                    kept_entries.append(f"### {date}\n{text.strip()}")
+
+            for date, summary in merged.items():
+                kept_entries.append(f"### {date}\n{summary.strip()}")
+
+            # 按日期排序
+            kept_entries.sort()
+            new_section = "## 近期摘要\n" + "\n".join(kept_entries) + "\n"
+
+            # 替换原摘要段
+            content = (
+                content[:summary_section.start()]
+                + new_section
+                + content[summary_section.end():]
+            )
+            self.storage.save_mid_term(content)
+
+            merged_count = len(all_merged_dates) - len(merged)
+            logger.info(
+                f"中期记忆去重完成: {len(entries)} → {len(kept_entries)} 条目 "
+                f"(合并 {merged_count} 条)"
+            )
+            return merged_count
+
+        except Exception as e:
+            logger.warning(f"中期记忆去重失败: {e}")
+            return 0
     
     def evolve_understanding(self):
         """进化对用户的理解"""

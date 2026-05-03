@@ -397,6 +397,15 @@ class SchedulerConfig(BaseSettings):
     enabled: bool = Field(default=True, description="是否启用调度器")
     max_workers: int = Field(default=4, description="调度器并发最大工作线程数")
     default_timezone: str = Field(default="UTC", description="默认时区")
+    webhook_enabled: bool = Field(
+        default=False, description="启用 webhook 事件驱动触发器"
+    )
+    webhook_port: int = Field(
+        default=9100, description="Webhook HTTP 服务器端口"
+    )
+    webhook_host: str = Field(
+        default="127.0.0.1", description="Webhook HTTP 服务器监听地址"
+    )
 
     class Config:
         env_prefix = "SCHEDULER_"
