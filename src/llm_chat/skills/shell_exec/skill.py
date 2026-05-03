@@ -186,6 +186,13 @@ class ShellExecSkill(BaseSkill):
     def version(self) -> str:
         return "1.0.0"
 
+    def on_unload(self) -> None:
+        """卸载时销毁沙箱，防止 Docker 容器泄漏。"""
+        if self._sandbox:
+            self._sandbox.stop()
+            self._sandbox = None
+            logger.info("ShellExec 沙箱已销毁")
+
     def get_tools(self) -> List[BaseTool]:
         if self._tool is None:
             self._tool = ShellExecTool(

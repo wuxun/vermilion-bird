@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import shutil
@@ -59,6 +60,9 @@ class SandboxExecutor:
 
         os.makedirs(self._work_dir, exist_ok=True)
 
+        # 注册退出清理 (进程正常/异常退出时自动销毁容器)
+        atexit.register(self.stop)
+
         # 1. 尝试 Docker
         if self._check_docker():
             try:
@@ -83,7 +87,12 @@ class SandboxExecutor:
         logger.warning("沙箱不可用，回退到白名单模式 (无真正隔离)")
 
     def stop(self):
-        """停止沙箱，清理资源。"""
+        """停止沙箱，清理资源。幂等，可多次调用。"""
+        if not self._started:
+            return
+
+        self._started = False
+
         if self._mode == "docker" and self._container_id:
             try:
                 subprocess.run(
@@ -95,7 +104,6 @@ class SandboxExecutor:
                 logger.warning(f"Docker 沙箱清理失败: {e}")
             self._container_id = None
 
-        self._started = False
         self._mode = "none"
 
     # ------------------------------------------------------------------
@@ -139,6 +147,10 @@ class SandboxExecutor:
     def is_isolated(self) -> bool:
         """是否有真正的安全隔离 (docker/bwrap)。"""
         return self._mode in ("docker", "bwrap")
+
+    def __del__(self):
+        """析构时清理 (安全兜底)。"""
+        self.stop()
 
     # ------------------------------------------------------------------
     # Docker 实现
