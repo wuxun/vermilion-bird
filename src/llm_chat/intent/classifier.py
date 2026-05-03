@@ -34,6 +34,8 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     (re.compile(r"^/(?:clear|reset|清空|重置)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 新建会话
     (re.compile(r"^/new\b", re.IGNORECASE), Intent.SHORTCUT, ""),
+    # 切换风格
+    (re.compile(r"^/style\s+(\w+)", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 帮助
     (re.compile(r"^/(?:help|帮助|\\?)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
 ]
@@ -172,8 +174,11 @@ _HELP_TEXT = """🐦 **Vermilion Bird 快捷指令**
 | `/schedule` | 管理定时任务 |
 | `/summary` | 总结对话 |
 | `/new [标题]` | 新建会话 |
+| `/style <风格>` | 切换回复风格 |
 | `/clear` | 清空当前会话 |
 | `/help` | 显示此帮助 |
+
+**风格选项**: `default` `academic` `casual` `concise` `coach` `architect`
 
 也可以直接聊 — 我会自动理解你的意图 😊"""
 
@@ -252,6 +257,15 @@ class IntentClassifier:
                             confidence=1.0,
                             skip_llm=True,
                             override_message="__new_conversation__",
+                        )
+                    # /style → 切换风格
+                    elif "style" in pattern.pattern:
+                        style_name = m.group(1).strip() if m.lastindex else "default"
+                        return RoutingDecision(
+                            intent=Intent.SHORTCUT,
+                            confidence=1.0,
+                            skip_llm=True,
+                            override_message=f"__style__:{style_name}",
                         )
                     # /clear /reset /help → 直接回复
                     elif "clear" in pattern.pattern or "reset" in pattern.pattern or "清空" in pattern.pattern or "重置" in pattern.pattern:

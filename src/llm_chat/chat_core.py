@@ -52,6 +52,7 @@ class ChatCore:
         self.config = config
         self._cancel_event: Optional[threading.Event] = None
         self._prompt_skills_context: str = ""  # 由 App.set_prompt_skills_context() 注入
+        self._current_style: str = "default"  # 当前对话风格预设
 
         # 意图识别 (减少不必要的 LLM 调用)
         from llm_chat.intent import IntentClassifier
@@ -97,6 +98,14 @@ class ChatCore:
         # 0a. 短路：跳过 LLM 直接返回
         if decision.skip_llm:
             conv.add_user_message(message)
+
+            # /style 特殊处理：切换对话风格
+            if decision.override_message and decision.override_message.startswith("__style__:"):
+                style_name = decision.override_message.split(":", 1)[1]
+                response = self._apply_style(style_name)
+                conv.add_assistant_message(response)
+                logger.info(f"[INTENT] 风格切换: {style_name}")
+                return response
 
             # /new 特殊处理：创建新会话
             if decision.override_message == "__new_conversation__":
@@ -211,6 +220,16 @@ class ChatCore:
         if decision.skip_llm:
             conv = self.conversation_manager.get_conversation(conversation_id)
             conv.add_user_message(message)
+
+            # /style 特殊处理：切换对话风格
+            if decision.override_message and decision.override_message.startswith("__style__:"):
+                style_name = decision.override_message.split(":", 1)[1]
+                response = self._apply_style(style_name)
+                conv.add_assistant_message(response)
+                if on_chunk:
+                    on_chunk(response)
+                logger.info(f"[INTENT] 风格切换: {style_name}")
+                return response
 
             # /new 特殊处理：新建会话
             if decision.override_message == "__new_conversation__":
@@ -395,6 +414,11 @@ class ChatCore:
         if self._prompt_skills_context:
             parts.append(self._prompt_skills_context)
 
+        # 4. 当前对话风格 (非 default 时注入)
+        style_ctx = self._get_style_context()
+        if style_ctx:
+            parts.append(style_ctx)
+
         if not parts:
             return None
         return "\n\n---\n\n".join(parts)
@@ -402,6 +426,43 @@ class ChatCore:
     def set_prompt_skills_context(self, context: str) -> None:
         """由 App 注入 prompt skills 上下文（SkillManager 构建后调用）。"""
         self._prompt_skills_context = context
+
+    def _apply_style(self, style_name: str) -> str:
+        """切换对话风格预设。
+
+        Args:
+            style_name: 风格名称 (default/academic/casual/concise/coach/architect)
+
+        Returns:
+            确认消息
+        """
+        from llm_chat.memory.templates import SOUL_STYLE_PRESETS
+
+        available = list(SOUL_STYLE_PRESETS.keys())
+        if style_name not in available:
+            return (
+                f"未知风格「{style_name}」。可用风格: {', '.join(available)}\n"
+                f"用法: /style <风格名>"
+            )
+
+        self._current_style = style_name
+        description = SOUL_STYLE_PRESETS[style_name]
+        if style_name == "default":
+            desc_preview = "直接、有用、不啰嗦"
+        else:
+            desc_preview = description.split("\n")[1].lstrip("- ") if "\n" in description else description[:60]
+
+        logger.info(f"Style switched to: {style_name}")
+        return f"✅ 已切换为 **{style_name}** 风格 ({desc_preview})"
+
+    def _get_style_context(self) -> Optional[str]:
+        """获取当前风格的 system prompt 注入片段。"""
+        if self._current_style == "default":
+            return None
+
+        from llm_chat.memory.templates import SOUL_STYLE_PRESETS
+
+        return SOUL_STYLE_PRESETS.get(self._current_style)
 
     def _compress_context(
         self,
