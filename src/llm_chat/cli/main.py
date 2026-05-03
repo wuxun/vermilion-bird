@@ -211,6 +211,43 @@ cli.add_command(memory)
 cli.add_command(skills)
 cli.add_command(schedule)
 
+# ===== 子命令组注册
+cli.add_command(memory)
+cli.add_command(skills)
+cli.add_command(schedule)
+
+# ===== 全局搜索命令
+
+@cli.command()
+@click.argument("query")
+@click.option("--limit", type=int, default=10, help="返回结果数量")
+@click.option("--conversation-id", default=None, help="限定对话 ID")
+def search(query, limit, conversation_id):
+    """全文搜索历史对话"""
+    setup_logging(logging.INFO)
+
+    config = Config.from_yaml()
+    app = App(config)
+
+    results = app.conversation_manager.search_messages(
+        query, conversation_id=conversation_id, limit=limit
+    )
+
+    if not results:
+        click.echo("未找到相关对话。")
+        return
+
+    click.echo(f"\n找到 {len(results)} 条相关消息:\n")
+    for i, r in enumerate(results, 1):
+        role = r.get("role", "unknown")
+        content = r.get("content", "")[:200]
+        conv_id = r.get("conversation_id", "")
+        created = r.get("created_at", "")
+        click.echo(f"{i}. [{role}] ({conv_id[:8]}... | {created})")
+        click.echo(f"   {content}")
+        click.echo()
+
+
 # ===== 入口 =====
 
 def main():

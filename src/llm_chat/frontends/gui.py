@@ -344,6 +344,19 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
+        # 搜索栏
+        search_layout = QHBoxLayout()
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("🔍 搜索历史对话...")
+        self._search_input.returnPressed.connect(self._on_search)
+        search_layout.addWidget(self._search_input)
+        self._search_clear_button = QPushButton("✕")
+        self._search_clear_button.setFixedSize(24, 24)
+        self._search_clear_button.clicked.connect(self._clear_search)
+        self._search_clear_button.setVisible(False)
+        search_layout.addWidget(self._search_clear_button)
+        layout.addLayout(search_layout)
+
         self._conversation_list = QListWidget()
         self._conversation_list.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection
@@ -766,6 +779,47 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _on_rename_conv(self):
         if self._on_rename_conversation:
             self._on_rename_conversation(self.conversation_id)
+
+    def _on_search(self):
+        """搜索历史对话 — 在侧边栏显示结果"""
+        query = self._search_input.text().strip()
+        if not query:
+            return
+        self._search_clear_button.setVisible(True)
+
+        if not self._app_instance or not hasattr(self._app_instance, 'conversation_manager'):
+            self.display_error("对话管理器不可用")
+            return
+
+        try:
+            results = self._app_instance.conversation_manager.search_messages(
+                query, limit=10
+            )
+            if not results:
+                self._conversation_list.clear()
+                self._conversation_list.addItem(f'未找到: "{query}"')
+                return
+
+            self._conversation_list.clear()
+            conv_counts = {}
+            for r in results:
+                cid = r.get('conversation_id', '')
+                conv_counts[cid] = conv_counts.get(cid, 0) + 1
+
+            for cid, count in conv_counts.items():
+                preview = next(
+                    (r.get('content', '')[:80] for r in results if r.get('conversation_id') == cid),
+                    ''
+                )
+                self._conversation_list.addItem(f'{cid[:12]}... ({count} 条匹配)\n  {preview}')
+        except Exception as e:
+            self.display_error(f"搜索失败: {e}")
+
+    def _clear_search(self):
+        """清除搜索，恢复对话列表"""
+        self._search_input.clear()
+        self._search_clear_button.setVisible(False)
+        self._refresh_conversation_list()
 
     def _on_conversation_selected(self, item: QListWidgetItem):
         if self._is_streaming:

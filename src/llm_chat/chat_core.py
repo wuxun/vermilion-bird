@@ -81,7 +81,7 @@ class ChatCore:
         conv.add_user_message(message)
 
         # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv)
+        system_context = self._build_system_context(conv, message)
 
         # 3. 获取对话历史（不含刚添加的用户消息）
         history = conv.get_history()
@@ -154,7 +154,7 @@ class ChatCore:
         conv.add_user_message(message)
 
         # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv)
+        system_context = self._build_system_context(conv, message)
 
         # 3. 获取对话历史
         history = conv.get_history()
@@ -262,10 +262,10 @@ class ChatCore:
     # internal helpers
     # ------------------------------------------------------------------
 
-    def _build_system_context(self, conv) -> Optional[str]:
+    def _build_system_context(self, conv, user_message: str = None) -> Optional[str]:
         """从 Conversation 的记忆管理器构建系统上下文。
 
-        注入顺序：记忆 → prompt skills (渐进式加载)
+        注入顺序：记忆 → 相关对话搜索(FTS5) → prompt skills
         """
         memory_manager = getattr(conv, "_memory_manager", None)
         parts = []
@@ -279,7 +279,29 @@ class ChatCore:
             except Exception as e:
                 logger.warning(f"构建系统上下文失败: {e}")
 
-        # 2. Prompt skills (Agent Skills 标准 — 由 App 注入)
+        # 2. 相关历史对话搜索 (FTS5)
+        if user_message and self.conversation_manager:
+            try:
+                search_results = self.conversation_manager.search_messages(
+                    user_message, limit=5
+                )
+                if search_results:
+                    # 过滤掉太短的匹配（通常无关）
+                    relevant = [
+                        m for m in search_results
+                        if len(m.get("content", "")) > 20
+                    ]
+                    if relevant:
+                        ctx = "## 相关历史对话\n以下是与当前问题相关的历史对话片段，可作为回答参考：\n"
+                        for i, r in enumerate(relevant[:3], 1):
+                            role = r.get("role", "unknown")
+                            content = r.get("content", "")[:300]
+                            ctx += f"{i}. [{role}]: {content}\n"
+                        parts.append(ctx)
+            except Exception:
+                pass  # FTS 不可用时静默跳过
+
+        # 3. Prompt skills (Agent Skills 标准 — 由 App 注入)
         if self._prompt_skills_context:
             parts.append(self._prompt_skills_context)
 
