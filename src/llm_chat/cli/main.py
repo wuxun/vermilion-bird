@@ -117,6 +117,94 @@ def chat(
     app.run(frontend_instance)
 
 
+@cli.command()
+@click.option("--config-path", default=None, help="配置文件路径")
+@click.option("--log-file", default=None, help="日志文件路径")
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    default="INFO",
+    help="日志级别",
+)
+def feishu(config_path, log_file, log_level):
+    """启动 Feishu 服务（非阻塞，后台运行）"""
+    setup_logging(getattr(logging, log_level), log_file)
+
+    # Load Feishu configuration
+    try:
+        config = Config.from_yaml(config_path)
+    except Exception as e:
+        click.echo(f"加载 Feishu 配置失败: {e}")
+        return
+
+    feishu_cfg = getattr(config, "feishu", None)
+    if not feishu_cfg or not feishu_cfg.enabled:
+        click.echo(
+            "Feishu 集成未开启，请在配置中开启 Feishu 并提供所需凭证（app_id/app_secret）"
+        )
+        return
+    if not feishu_cfg.app_id or not feishu_cfg.app_secret:
+        click.echo("Feishu 集成需要 app_id 与 app_secret，请在配置中设置")
+        return
+
+    # Create and start the Feishu server
+    from llm_chat.frontends.feishu.adapter import FeishuAdapter
+
+    app = App(config=config)
+    # 启用工具（包括 MCP）
+    if config.enable_tools and config.mcp.servers:
+        app.enable_tools()
+    adapter = FeishuAdapter(
+        app=app,
+        app_id=feishu_cfg.app_id,
+        app_secret=feishu_cfg.app_secret,
+    )
+
+    # 使用服务管理器启动所有服务
+    logging.info("Starting all services...")
+    app.service_manager.start_all()
+    logging.info("All services started")
+
+    server = FeishuServer(
+        app_id=feishu_cfg.app_id,
+        app_secret=feishu_cfg.app_secret,
+        adapter=adapter,
+        tenant_key=feishu_cfg.tenant_key,
+        encrypt_key=feishu_cfg.encrypt_key or "",
+        verification_token=feishu_cfg.verification_token,
+    )
+    try:
+        server.start()
+    except Exception as e:
+        click.echo(f"无法启动 Feishu 服务器: {e}")
+        return
+
+    stop_event = threading.Event()
+
+    def _shutdown(signum, frame):
+        logging.info("Received signal %s, shutting down FeishuServer", signum)
+        stop_event.set()
+        try:
+            server.stop()
+        except Exception:
+            pass
+        # 使用服务管理器停止所有服务
+        logging.info("Shutting down all services...")
+        app.service_manager.stop_all()
+        logging.info("All services shut down")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    click.echo("Feishu 服务器已启动。按 Ctrl+C 停止。")
+
+    while not stop_event.is_set():
+        stop_event.wait(timeout=1)
+
+    click.echo("Feishu 服务器已停止。")
+    sys.exit(0)
+
 
 # ===== 注册子命令组 =====
 cli.add_command(memory)
