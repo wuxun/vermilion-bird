@@ -132,6 +132,20 @@ mcp:
 # MCP 服务器配置示例
 # ============================================================
 
+# MCP 搜索服务器 (推荐优先于内置 web_search)
+# mcp:
+#   servers:
+#     - name: "tavily-search"
+#       transport: "stdio"
+#       command: "npx"
+#       args:
+#         - "-y"
+#         - "@tavily/mcp-server-tavily"
+#       env:
+#         TAVILY_API_KEY: "your-tavily-api-key"
+#       enabled: true
+#       description: "Tavily Search - AI Agent 优化的搜索引擎"
+
 # Brave Search 搜索服务
 # mcp:
 #   servers:
