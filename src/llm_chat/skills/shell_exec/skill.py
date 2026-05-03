@@ -21,7 +21,6 @@ DEFAULT_WHITELIST = [
     "df",
     "git",
     "find",
-    "wc",
     "echo",
     "date",
     "whoami",
