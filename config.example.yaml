@@ -152,3 +152,118 @@ mcp:
 #       transport: "sse"
 #       url: "http://localhost:8080/sse"
 #       enabled: true
+
+# ============================================================
+# 🔐 API Key 安全存储
+# ============================================================
+
+# 推荐: keyring (系统密钥链)
+#   vermilion-bird keyring set openai default
+#   vermilion-bird keyring list
+#
+# 引用格式:
+# llm:
+#   api_key: "keyring:openai/default"
+
+# ============================================================
+# 🧠 意图识别 + 多模型路由
+# ============================================================
+
+# 场景: 问候直接回复，简单问答用小模型，复杂推理用大模型
+# 效果: 节省 30-50% API 费用
+
+# ═══ 方案 A: 单模型 (只做快速回复，不区分模型) ═══
+
+# llm:
+#   model: "gpt-4o"
+# tools:
+#   enable_intent: true
+
+# ═══ 方案 B: 大小模型分层 (最推荐，省钱) ═══
+
+# llm:
+#   model: "gpt-4o-mini"              # 默认用小模型
+# tools:
+#   enable_intent: true
+#   intent_model_map:
+#     small: "gpt-4o-mini"            # 问候/感谢/简单问答/搜索
+#     medium: "gpt-4o"                # 文件操作/记忆/定时任务
+#     large: "gpt-4o"                 # 代码/复杂对话
+
+# ═══ 方案 C: 全明星阵容 (极致性能) ═══
+
+# llm:
+#   model: "deepseek-chat"            # 默认 DeepSeek V3 ($0.07/1M)
+# tools:
+#   enable_intent: true
+#   intent_model_map:
+#     small: "deepseek-chat"          # 简单任务 → 极致便宜
+#     medium: "gpt-4o"                # 常规任务 → $2.50/1M
+#     large: "claude-3-5-sonnet"      # 代码推理 → 最强模型
+
+# ═══ 方案 D: 本地 + 云端 (离线可用) ═══
+
+# llm:
+#   base_url: "http://localhost:11434/v1"
+#   model: "llama3.2"                 # 本地 Ollama
+#   api_key: ""
+# tools:
+#   enable_intent: true
+#   intent_model_map:
+#     small: "llama3.2"               # 本地免费 (离线可用)
+#     medium: "deepseek-chat"         # 云端便宜
+#     large: "gpt-4o"                 # 仅复杂任务上云端
+
+# ═══ / 快捷指令 (Layer 0 自动拦截) ═══
+#
+#   /new [标题]     → 新建会话
+#   /clear          → 清空当前会话
+#   /help           → 显示帮助
+#   /search <key>   → 路由 web_search
+#   /file <path>    → 路由文件操作
+#   /code <desc>    → 路由代码 + 推理模型
+#   /memory         → 记忆管理
+#   /schedule       → 定时任务
+#   /summary        → 对话摘要
+
+# ============================================================
+# 🔔 Webhook 事件驱动触发器
+# ============================================================
+
+# scheduler:
+#   enabled: true
+#   webhook_enabled: true             # 开启 HTTP webhook 服务
+#   webhook_port: 9100
+#
+# 创建 webhook 任务:
+#   vermilion-bird schedule create \
+#     --name "GitHub Code Review" \
+#     --task-type WEBHOOK \
+#     --webhook-secret "my-secret" \
+#     --message "审查最新代码改动，检查安全漏洞和逻辑错误"
+#
+# 外部触发:
+#   curl -X POST http://localhost:9100/hooks/<task-id> \
+#     -H "X-Webhook-Secret: my-secret" \
+#     -d '{"event":"push", "repo":"my-project"}'
+
+# ============================================================
+# 🧩 中期记忆去重
+# ============================================================
+
+# memory:
+#   mid_term:
+#     max_days: 30              # 保留最近 30 天
+#     compress_after_days: 7    # 每 7 天自动压缩 + LLM 主题聚类去重
+
+# ============================================================
+# 🤖 子 Agent 配置 (已有功能)
+# ============================================================
+
+# tools:
+#   subagent_max_concurrent: 10       # 最大并发
+#   subagent_max_retries: 2           # 重试次数
+#   subagent_models:
+#     simple: "gpt-4o-mini"
+#     medium: "gpt-4o"
+#     complex: "claude-3-5-sonnet"
