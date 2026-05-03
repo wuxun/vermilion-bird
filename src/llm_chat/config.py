@@ -245,6 +245,19 @@ class ToolsConfig(BaseSettings):
         ),
     )
 
+    # ── 意图识别 ──
+    enable_intent: bool = Field(
+        default=True,
+        description="启用意图识别 (问候/快捷指令等直接回复，跳过 LLM)",
+    )
+    intent_model_map: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "意图 → 模型映射，按 size hint 分配具体模型名。"
+            "例: {'small': 'gpt-4o-mini', 'medium': 'gpt-4o', 'large': 'claude-3-5-sonnet'}"
+        ),
+    )
+
     class Config:
         env_prefix = "TOOLS_"
         case_sensitive = False

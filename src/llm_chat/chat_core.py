@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional, Callable, Generator
 from llm_chat.config import Config
 from llm_chat.client import LLMClient
 from llm_chat.conversation import ConversationManager
+from llm_chat.intent.types import Intent
 from llm_chat.utils.token_counter import count_tokens
 from llm_chat.utils.observability import observe
 
@@ -50,7 +51,16 @@ class ChatCore:
         self.conversation_manager = conversation_manager
         self.config = config
         self._cancel_event: Optional[threading.Event] = None
-        self._prompt_skills_context: str = ""  # 由 App.set_prompt_skills_context() 注入  # Set during streaming
+        self._prompt_skills_context: str = ""  # 由 App.set_prompt_skills_context() 注入
+
+        # 意图识别 (减少不必要的 LLM 调用)
+        from llm_chat.intent import IntentClassifier
+
+        self.intent_classifier = IntentClassifier(
+            enable_layer1=config.tools.enable_intent
+            if hasattr(config.tools, 'enable_intent') else True
+        )
+        logger.info("IntentClassifier 已初始化")
 
     # ------------------------------------------------------------------
     # Public API
@@ -77,11 +87,33 @@ class ChatCore:
         """
         conv = self.conversation_manager.get_conversation(conversation_id)
 
+        # ── 0. 意图识别 ──
+        decision = self.intent_classifier.classify(message)
+        logger.debug(
+            f"[INTENT] {decision.intent.value} (conf={decision.confidence:.2f}, "
+            f"skip_llm={decision.skip_llm}, model={decision.suggested_model})"
+        )
+
+        # 0a. 短路：跳过 LLM 直接返回
+        if decision.skip_llm:
+            conv.add_user_message(message)
+
+            # /clear 特殊处理：清空对话
+            if decision.intent == Intent.SHORTCUT and decision.direct_response:
+                conv.clear_history()
+
+            conv.add_assistant_message(decision.direct_response)
+            logger.info(f"[INTENT] 快速回复 (跳过 LLM): {decision.intent.value}")
+            return decision.direct_response
+
+        # 0b. 覆盖消息内容（如 /search xxx → xxx）
+        effective_message = decision.override_message or message
+
         # 1. 持久化用户消息
         conv.add_user_message(message)
 
         # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv, message)
+        system_context = self._build_system_context(conv, effective_message)
 
         # 3. 获取对话历史（不含刚添加的用户消息）
         history = conv.get_history()
@@ -89,11 +121,24 @@ class ChatCore:
 
         # 4. 上下文压缩（如果有 ContextManager）
         processed_history, processed_message = self._compress_context(
-            conv, history, message, system_context
+            conv, history, effective_message, system_context
         )
 
-        # 5. 合并模型参数
-        params = {**conv.get_model_params(), **model_params}
+        # 5. 合并模型参数（意图推荐的模型优先于会话默认）
+        params = conv.get_model_params()
+        if decision.suggested_model:
+            from llm_chat.intent.classifier import IntentClassifier
+            model_hint = IntentClassifier.get_model_hint(decision.intent)
+            # 如果配置了 intent_model_map，则映射到具体模型名
+            if hasattr(self.config, 'tools') and hasattr(self.config.tools, 'intent_model_map'):
+                model_map = getattr(self.config.tools, 'intent_model_map', {})
+                suggested = model_map.get(model_hint)
+                if suggested:
+                    params["model"] = suggested
+                    logger.info(
+                        f"[INTENT] 模型路由: {decision.intent.value} → {suggested} (hint={model_hint})"
+                    )
+        params.update(model_params)
 
         # 6. 调用 LLM（带工具或无工具）
         response = self._call_llm(
@@ -148,13 +193,33 @@ class ChatCore:
         Returns:
             AI 回复的完整文本（在所有 chunk 发送完毕后）
         """
+        # ── 0. 意图识别 (只在短路时起作用) ──
+        decision = self.intent_classifier.classify(message)
+
+        if decision.skip_llm:
+            conv = self.conversation_manager.get_conversation(conversation_id)
+            conv.add_user_message(message)
+
+            # /clear 特殊处理：清空对话
+            if decision.intent == Intent.SHORTCUT and decision.direct_response:
+                conv.clear_history()
+
+            conv.add_assistant_message(decision.direct_response)
+            # 通过回调发送完整文本作为 single chunk
+            if on_chunk:
+                on_chunk(decision.direct_response)
+            logger.info(f"[INTENT] 快速回复 (跳过 LLM): {decision.intent.value}")
+            return decision.direct_response
+
+        effective_message = decision.override_message or message
+
         conv = self.conversation_manager.get_conversation(conversation_id)
 
         # 1. 持久化用户消息
         conv.add_user_message(message)
 
         # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv, message)
+        system_context = self._build_system_context(conv, effective_message)
 
         # 3. 获取对话历史
         history = conv.get_history()
@@ -162,7 +227,7 @@ class ChatCore:
 
         # 4. 上下文压缩
         processed_history, processed_message = self._compress_context(
-            conv, history, message, system_context
+            conv, history, effective_message, system_context
         )
 
         # 5. 合并模型参数
