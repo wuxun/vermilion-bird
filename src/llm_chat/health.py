@@ -256,3 +256,130 @@ def create_service_manager_checker(service_manager) -> Callable[[], HealthCheckR
             )
 
     return checker
+
+
+def create_llm_checker(client) -> Callable[[], HealthCheckResult]:
+    """创建 LLM 连通性健康检查器。
+
+    发送一个最小 token 的测试请求，验证 LLM 是否可达。
+    """
+
+    def checker() -> HealthCheckResult:
+        try:
+            response = client.chat(
+                "ping", max_tokens=1, temperature=0
+            )
+            if response:
+                return HealthCheckResult(
+                    name="llm",
+                    status=HealthStatus.HEALTHY,
+                    message=f"LLM ({client.config.llm.model}) 连接正常",
+                    details={"model": client.config.llm.model},
+                )
+            return HealthCheckResult(
+                name="llm",
+                status=HealthStatus.DEGRADED,
+                message="LLM 返回空响应",
+            )
+        except Exception as e:
+            return HealthCheckResult(
+                name="llm",
+                status=HealthStatus.UNHEALTHY,
+                message=f"LLM 连接失败: {str(e)}",
+                details={"error": str(e)},
+            )
+
+    return checker
+
+
+def create_disk_checker(path: str = ".") -> Callable[[], HealthCheckResult]:
+    """创建磁盘空间健康检查器。"""
+    import shutil
+
+    def checker() -> HealthCheckResult:
+        try:
+            usage = shutil.disk_usage(path)
+            free_gb = usage.free / (1024 ** 3)
+            total_gb = usage.total / (1024 ** 3)
+            percent_used = (usage.used / usage.total) * 100
+
+            if free_gb < 1:
+                status = HealthStatus.UNHEALTHY
+                msg = f"磁盘空间严重不足: {free_gb:.1f}GB / {total_gb:.1f}GB"
+            elif free_gb < 5:
+                status = HealthStatus.DEGRADED
+                msg = f"磁盘空间偏低: {free_gb:.1f}GB / {total_gb:.1f}GB"
+            else:
+                status = HealthStatus.HEALTHY
+                msg = f"磁盘空间正常: {free_gb:.1f}GB / {total_gb:.1f}GB"
+
+            return HealthCheckResult(
+                name="disk",
+                status=status,
+                message=msg,
+                details={
+                    "free_gb": round(free_gb, 1),
+                    "total_gb": round(total_gb, 1),
+                    "percent_used": round(percent_used, 1),
+                },
+            )
+        except Exception as e:
+            return HealthCheckResult(
+                name="disk",
+                status=HealthStatus.UNKNOWN,
+                message=f"磁盘检查失败: {str(e)}",
+            )
+
+    return checker
+
+
+def create_mcp_checker(mcp_manager) -> Callable[[], HealthCheckResult]:
+    """创建 MCP 服务器状态健康检查器。"""
+
+    def checker() -> HealthCheckResult:
+        try:
+            status = mcp_manager.get_all_status()
+            if not status:
+                return HealthCheckResult(
+                    name="mcp",
+                    status=HealthStatus.HEALTHY,
+                    message="未配置 MCP 服务器",
+                    details={"servers": 0},
+                )
+
+            connected = sum(
+                1 for s in status.values() if s.get("connected", False)
+            )
+            total = len(status)
+
+            if connected == total:
+                hs = HealthStatus.HEALTHY
+                msg = f"所有 MCP 服务器已连接 ({connected}/{total})"
+            elif connected > 0:
+                hs = HealthStatus.DEGRADED
+                msg = f"部分 MCP 服务器已连接 ({connected}/{total})"
+            else:
+                hs = HealthStatus.UNHEALTHY
+                msg = f"所有 MCP 服务器未连接 (0/{total})"
+
+            return HealthCheckResult(
+                name="mcp",
+                status=hs,
+                message=msg,
+                details={
+                    "total": total,
+                    "connected": connected,
+                    "servers": {
+                        name: {"connected": s.get("connected", False)}
+                        for name, s in status.items()
+                    },
+                },
+            )
+        except Exception as e:
+            return HealthCheckResult(
+                name="mcp",
+                status=HealthStatus.UNKNOWN,
+                message=f"MCP 检查失败: {str(e)}",
+            )
+
+    return checker

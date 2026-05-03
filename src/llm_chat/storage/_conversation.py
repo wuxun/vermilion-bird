@@ -2,8 +2,19 @@
 
 import json
 import os
+import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+try:
+    import jieba
+
+    JIEBA_AVAILABLE = True
+except ImportError:
+    jieba = None
+    JIEBA_AVAILABLE = False
 
 
 class StorageConversationMixin:
@@ -168,12 +179,51 @@ class StorageConversationMixin:
             )
             return True
 
+    @staticmethod
+    def _tokenize_query(query: str) -> str:
+        """对中文查询进行分词预处理，构建 FTS5 前缀查询。
+
+        - 如果有 jieba：分词后用 OR 连接每个词的前缀查询 (word*)
+        - 如果无 jieba：直接返回原查询
+        """
+        if not JIEBA_AVAILABLE:
+            return query
+
+        words = list(jieba.cut_for_search(query))
+        if not words:
+            return query
+
+        # 构建前缀查询: word1* OR word2* OR ...
+        # 同时保留原始精确短语匹配以获得精确结果
+        terms = []
+        unique = list(dict.fromkeys(words))  # 去重保序
+        for w in unique:
+            w = w.strip()
+            if not w:
+                continue
+            # 对于单字符词不加 * (否则匹配太多)
+            if len(w) == 1:
+                terms.append(w)
+            else:
+                terms.append(f'"{w}"*')
+
+        if not terms:
+            return query
+
+        return " OR ".join(terms)
+
     def search_messages(
         self,
         query: str,
         conversation_id: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
+        try:
+            # 中文分词预处理 (jieba)
+            fts_query = self._tokenize_query(query)
+        except Exception:
+            fts_query = query
+
         with self._get_connection() as conn:
             try:
                 if conversation_id:
@@ -184,7 +234,7 @@ class StorageConversationMixin:
                         WHERE messages_fts MATCH ? AND m.conversation_id = ?
                         ORDER BY m.created_at DESC LIMIT ?
                         """,
-                        (query, conversation_id, limit),
+                        (fts_query, conversation_id, limit),
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -194,7 +244,7 @@ class StorageConversationMixin:
                         WHERE messages_fts MATCH ?
                         ORDER BY m.created_at DESC LIMIT ?
                         """,
-                        (query, limit),
+                        (fts_query, limit),
                     ).fetchall()
                 return [self._row_to_dict(row) for row in rows]
             except Exception:

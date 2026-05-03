@@ -439,7 +439,13 @@ class SchedulerService:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
     def _run_llm_chat_task(self, task: Task) -> str:
-        """执行 LLM 聊天任务。
+        """执行 LLM 聊天任务，通过 ChatCore 完整管道。
+
+        与旧实现 (client.chat 裸调用) 相比，现在可以使用：
+        - 工具调用 (web_search, file_reader 等)
+        - 对话历史上下文 (按 task.id 持久化)
+        - 记忆系统注入
+        - 上下文压缩
 
         Args:
             task: 任务对象
@@ -449,14 +455,26 @@ class SchedulerService:
         """
         params = task.params
         message = params.get("message", "")
+        if not message:
+            return "No message provided"
+
         model = params.get("model")
+        # 每个 task 拥有独立的 conversation，自动累积上下文
+        conversation_id = f"scheduled:{task.id}"
 
-        if model:
-            response = self._app.client.chat(message, model=model)
-        else:
-            response = self._app.client.chat(message)
+        chat_core = self._app.chat_core
+        if chat_core is None:
+            # fallback: 直接调用 client (无工具/历史)
+            logger.warning(
+                "ChatCore unavailable, falling back to direct client.chat (no tools)"
+            )
+            if model:
+                return self._app.client.chat(message, model=model)
+            return self._app.client.chat(message)
 
-        return response
+        return chat_core.send_message(
+            conversation_id, message, **({} if model is None else {"model": model})
+        )
 
     def _run_skill_task(self, task: Task) -> str:
         """执行技能任务。

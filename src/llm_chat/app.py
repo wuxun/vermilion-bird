@@ -128,7 +128,14 @@ class App:
         hc = get_checker()
         hc.register_checker("database", create_database_checker(self.storage))
         hc.register_checker("services", create_service_manager_checker(self.service_manager))
-        logger.info("HealthChecker initialized with database + services checks")
+
+        # 新增健康检查
+        from llm_chat.health import create_llm_checker, create_disk_checker
+
+        hc.register_checker("llm", create_llm_checker(self.client))
+        hc.register_checker("disk", create_disk_checker())
+
+        logger.info("HealthChecker initialized with database + services + llm + disk checks")
         return hc
 
     def _init_scheduler(self):
@@ -318,6 +325,7 @@ class App:
             results = future.result(timeout=180)
             logger.info(f"MCP 连接结果: {results}")
             self._register_mcp_tools(manager)
+            self._register_mcp_health_check(manager)
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
         finally:
@@ -331,6 +339,7 @@ class App:
             results = future.result(timeout=180)
             logger.info(f"MCP 连接结果: {results}")
             self._register_mcp_tools(manager)
+            self._register_mcp_health_check(manager)
 
             # 通知前端 MCP 工具已就绪
             if self.current_frontend:
@@ -374,6 +383,14 @@ class App:
                 f"MCP 工具已注册到 ToolRegistry: "
                 f"{[t.name for t in manager.get_all_tools()]}"
             )
+
+    def _register_mcp_health_check(self, manager):
+        """注册 MCP 健康检查到 HealthChecker。"""
+        from llm_chat.health import create_mcp_checker, get_checker
+
+        hc = get_checker()
+        hc.register_checker("mcp", create_mcp_checker(manager))
+        logger.info("MCP health checker registered")
 
     def disable_tools(self):
         if not self._tools_enabled:
