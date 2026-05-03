@@ -226,6 +226,14 @@ class App:
     def get_skill_manager(self) -> SkillManager:
         return self.client.get_skill_manager()
 
+    def refresh_client_config(self):
+        """Refresh LLMClient protocol/session after model switch.
+
+        Call after config.llm.model / base_url / api_key / protocol changes.
+        """
+        self.client.reconfigure()
+        logger.info("Client config refreshed")
+
     def reload_skills_from_config(self):
         """Reload config from file and re-initialize all skills.
 
@@ -236,6 +244,7 @@ class App:
         new_config = Config.from_yaml()
         self.config = new_config
         self.client.config = new_config
+        self.client.reconfigure()  # 重建 protocol 以使用新模型/base_url
         self.client._setup_skills()
         # Re-enable MCP tools (wiped by _setup_skills → tool_registry.clear())
         if self._tools_enabled:

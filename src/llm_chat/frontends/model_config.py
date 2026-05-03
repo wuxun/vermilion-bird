@@ -100,6 +100,10 @@ class ModelConfigMixin:
         logger.info(f"模型切换: {old_model} -> {model_id}")
         self._save_config()
 
+        # 刷新 LLMClient 的 protocol 以立即生效
+        if getattr(self, '_app_instance', None):
+            self._app_instance.refresh_client_config()
+
     # ------------------------------------------------------------------
     # Temperature / Reasoning
     # ------------------------------------------------------------------
@@ -155,6 +159,7 @@ class ModelConfigMixin:
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if getattr(self, '_app_instance', None):
                 self._app_instance.reload_skills_from_config()
+                self._app_instance.refresh_client_config()
                 self._init_model_combo()
 
     def _on_scheduler_config(self):

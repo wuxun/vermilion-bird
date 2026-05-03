@@ -64,6 +64,35 @@ class LLMClientBase:
         if not skip_skills_setup:
             self._setup_skills(skills_filter=skills_filter)
 
+    def reconfigure(self):
+        """根据当前 config 重建 protocol 适配器和 session。
+
+        在 config.llm.model / base_url / api_key / protocol 变更后调用，
+        使后续 LLM 调用使用新配置。
+        """
+        self.session.timeout = self.config.llm.timeout
+
+        if self.config.llm.http_proxy or self.config.llm.https_proxy:
+            proxies = {}
+            if self.config.llm.http_proxy:
+                proxies["http"] = self.config.llm.http_proxy
+            if self.config.llm.https_proxy:
+                proxies["https"] = self.config.llm.https_proxy
+            self.session.proxies = proxies
+
+        self.protocol = get_protocol(
+            protocol=self.config.llm.protocol,
+            base_url=self.config.llm.base_url,
+            api_key=self.config.llm.api_key,
+            model=self.config.llm.model,
+            timeout=self.config.llm.timeout,
+            max_retries=self.config.llm.max_retries,
+        )
+        logger.info(
+            f"LLMClient reconfigured: protocol={self.config.llm.protocol}, "
+            f"model={self.config.llm.model}, base_url={self.config.llm.base_url}"
+        )
+
     def close(self):
         """关闭客户端，释放连接资源。
 

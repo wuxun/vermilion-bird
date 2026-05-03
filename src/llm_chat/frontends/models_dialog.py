@@ -91,6 +91,11 @@ class ModelEditDialog(QDialog):
         protocol_layout.addWidget(self._protocol_combo)
         api_layout.addLayout(protocol_layout)
 
+        self._tools_check = QCheckBox("支持工具调用 (function calling)")
+        self._tools_check.setChecked(True)
+        self._tools_check.setToolTip("本地小模型（如 gemma, llama3.2 小参数版）建议取消勾选")
+        api_layout.addWidget(self._tools_check)
+
         form_layout.addWidget(api_group)
 
         layout.addLayout(form_layout)
@@ -118,6 +123,7 @@ class ModelEditDialog(QDialog):
         index = self._protocol_combo.findText(protocol)
         if index >= 0:
             self._protocol_combo.setCurrentIndex(index)
+        self._tools_check.setChecked(config.get("supports_tools", True))
 
     def _on_save(self):
         model_id = self._id_edit.text().strip()
@@ -136,6 +142,7 @@ class ModelEditDialog(QDialog):
             "base_url": self._base_url_edit.text().strip() or None,
             "api_key": self._api_key_edit.text().strip() or None,
             "protocol": self._protocol_combo.currentText(),
+            "supports_tools": self._tools_check.isChecked(),
         }
 
         self.accept()
@@ -288,9 +295,11 @@ class ModelsConfigDialog(QDialog):
             self._show_model_detail(model)
 
     def _show_model_detail(self, model: Dict[str, Any]):
+        tools_support = "✅ 支持" if model.get("supports_tools", True) else "❌ 不支持"
         detail = f"""模型 ID: {model.get("id", "N/A")}
 显示名称: {model.get("name", "N/A")}
 描述: {model.get("description", "N/A")}
+工具调用: {tools_support}
 
 API 配置:
   Base URL: {model.get("base_url", "使用全局配置")}
@@ -377,6 +386,7 @@ API 配置:
                     base_url=model_data.get("base_url"),
                     api_key=model_data.get("api_key"),
                     protocol=model_data.get("protocol", "openai"),
+                    supports_tools=model_data.get("supports_tools", True),
                 )
             )
 

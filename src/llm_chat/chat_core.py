@@ -277,13 +277,14 @@ class ChatCore:
         # 5. 合并模型参数
         params = {**conv.get_model_params(), **model_params}
 
-        # 6. 检查是否需要工具调用
+        # 6. 检查是否需要工具调用 (模型不支持 tools 则跳过)
         has_tools = self.client.has_builtin_tools()
+        model_supports_tools = self._current_model_supports_tools()
 
         full_text = ""
         self._cancel_event = threading.Event()  # 创建本次生成的取消事件
 
-        if has_tools and self.config.enable_tools:
+        if has_tools and self.config.enable_tools and model_supports_tools:
             # 获取可用工具
             tools = self.client.get_builtin_tools()
             if not tools:
@@ -540,8 +541,9 @@ class ChatCore:
     ) -> str:
         """同步调用 LLM，自动选择工具调用或普通聊天路径。"""
         has_tools = self.client.has_builtin_tools()
+        model_supports_tools = self._current_model_supports_tools()
 
-        if has_tools and self.config.enable_tools:
+        if has_tools and self.config.enable_tools and model_supports_tools:
             tools = self.client.get_builtin_tools()
             if tools:
                 logger.info(
@@ -570,6 +572,24 @@ class ChatCore:
             memory_manager.process_pending_extractions()
         except Exception as e:
             logger.warning(f"记忆提取失败: {e}")
+
+    def _current_model_supports_tools(self) -> bool:
+        """检查当前模型是否支持 function calling / tools。
+
+        优先检查 available_models 中该模型的 supports_tools 字段；
+        若模型不在列表中则默认返回 True（向后兼容）。
+        """
+        available = getattr(self.config.llm, "available_models", [])
+        current_model = self.config.llm.model
+        for mi in available:
+            model_id = mi.id if hasattr(mi, "id") else mi.get("id", "")
+            if model_id == current_model:
+                if hasattr(mi, "supports_tools"):
+                    return bool(mi.supports_tools)
+                if hasattr(mi, "get"):
+                    return bool(mi.get("supports_tools", True))
+                break
+        return True  # 不在列表中，默认支持（兼容旧配置）
 
     def _record_tokens(
         self,

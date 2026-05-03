@@ -21,6 +21,10 @@ class ModelInfo(BaseSettings):
     base_url: Optional[str] = Field(default=None, description="模型 API 基础 URL")
     api_key: Optional[str] = Field(default=None, description="API 密钥")
     protocol: Optional[str] = Field(default=None, description="API 协议类型")
+    supports_tools: bool = Field(
+        default=True,
+        description="是否支持 function calling / tools，本地小模型建议设为 false",
+    )
 
     class Config:
         extra = "allow"
