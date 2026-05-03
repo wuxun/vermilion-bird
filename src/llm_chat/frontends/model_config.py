@@ -159,7 +159,12 @@ class ModelConfigMixin:
 
     def _on_scheduler_config(self):
         from llm_chat.frontends.scheduler_dialog import SchedulerDialog
-        dialog = SchedulerDialog(app=self._app_instance, parent=None)
+        app = getattr(self, '_app_instance', None)
+        dialog = SchedulerDialog(
+            parent=None,
+            scheduler=app.scheduler if app else None,
+            storage=app.storage if app else None,
+        )
         dialog.exec()
 
     def _on_dashboard(self):
