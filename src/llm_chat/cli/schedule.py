@@ -51,24 +51,37 @@ def _get_scheduler_or_exit():
 @click.option("--skill", help="SKILL_EXECUTION 类型的技能名称")
 @click.option("--action", help="SYSTEM_MAINTENANCE 类型的操作名称")
 @click.option("--params", help="额外参数 (JSON 格式)")
-def create(name, cron, interval, date, task_type, message, skill, action, params):
+@click.option(
+    "--webhook-secret",
+    help="WEBHOOK 类型的密钥 (X-Webhook-Secret header 校验)",
+)
+def create(
+    name, cron, interval, date, task_type, message, skill,
+    action, params, webhook_secret,
+):
     """创建调度任务
 
     示例:
       vermilion-bird schedule create --name "每日问候" --cron "0 9 * * *" --message "早上好！"
       vermilion-bird schedule create --name "每小时检查" --interval 3600 --message "检查系统状态"
+      vermilion-bird schedule create --name "Code Review" --task-type WEBHOOK --webhook-secret my-secret \\
+          --message "Review the latest git diff, check for bugs and security issues"
     """
     scheduler = _get_scheduler_or_exit()
 
     trigger_config = {}
-    if cron:
+    if task_type == "WEBHOOK":
+        trigger_config["type"] = "webhook"
+        if webhook_secret:
+            trigger_config["secret"] = webhook_secret
+    elif cron:
         trigger_config["cron"] = cron
     elif interval:
         trigger_config["interval"] = interval
     elif date:
         trigger_config["date"] = date
     else:
-        click.echo("必须指定 --cron, --interval 或 --date 其中之一")
+        click.echo("必须指定 --cron, --interval, --date 或使用 --task-type WEBHOOK")
         sys.exit(1)
 
     task_params = {}
@@ -91,6 +104,13 @@ def create(name, cron, interval, date, task_type, message, skill, action, params
             click.echo("SYSTEM_MAINTENANCE 类型需要 --action 参数")
             sys.exit(1)
         task_params["action"] = action
+        if params:
+            task_params.update(json.loads(params))
+    elif task_type == "WEBHOOK":
+        if not message:
+            click.echo("WEBHOOK 类型需要 --message 参数 (LLM 提示词)")
+            sys.exit(1)
+        task_params["message"] = message
         if params:
             task_params.update(json.loads(params))
 
@@ -142,6 +162,8 @@ def list_tasks():
             trigger_str = f"interval: {trigger['interval']}s"
         elif "date" in trigger:
             trigger_str = f"date: {trigger['date']}"
+        elif trigger.get("type") == "webhook":
+            trigger_str = f"webhook (/hooks/{task.id})"
 
         click.echo(f"\n{status} {task.id}")
         click.echo(f"  名称: {task.name}")
@@ -237,7 +259,18 @@ def task_info(task_id):
     click.echo(f"最大重试次数: {task.max_retries}")
 
     trigger = task.trigger_config
-    if "cron" in trigger:
+    if trigger.get("type") == "webhook":
+        click.echo(f"触发器: Webhook")
+        # 获取 webhook 服务器信息
+        webhook_info = scheduler.get_webhook_info()
+        if webhook_info and webhook_info.get("running"):
+            port = webhook_info.get("port", 9100)
+            click.echo(f"URL: http://localhost:{port}/hooks/{task.id}")
+            if trigger.get("secret"):
+                click.echo(f"密钥: {'*' * len(trigger['secret'])}")
+        else:
+            click.echo(f"URL: (webhook 服务器未启动) /hooks/{task.id}")
+    elif "cron" in trigger:
         click.echo(f"触发器: cron ({trigger['cron']})")
     elif "interval" in trigger:
         click.echo(f"触发器: interval ({trigger['interval']} 秒)")
