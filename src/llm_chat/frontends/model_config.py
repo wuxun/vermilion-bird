@@ -142,15 +142,17 @@ class ModelConfigMixin:
 
     def _on_skills_config(self):
         from llm_chat.frontends.skills_dialog import SkillsConfigDialog
+        from PyQt6.QtWidgets import QDialog
         dialog = SkillsConfigDialog(parent=None)
-        if dialog.exec() == SkillsConfigDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             if getattr(self, '_app_instance', None):
                 self._app_instance.reload_skills_from_config()
 
     def _on_models_config(self):
         from llm_chat.frontends.models_dialog import ModelsConfigDialog
+        from PyQt6.QtWidgets import QDialog
         dialog = ModelsConfigDialog(config=self._config, parent=None)
-        if dialog.exec() == ModelsConfigDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             if getattr(self, '_app_instance', None):
                 self._app_instance.reload_skills_from_config()
                 self._init_model_combo()
