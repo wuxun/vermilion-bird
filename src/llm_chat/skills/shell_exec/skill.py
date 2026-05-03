@@ -2,9 +2,12 @@ import subprocess
 import os
 import logging
 import shlex
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from llm_chat.skills.base import BaseSkill
 from llm_chat.tools.base import BaseTool
+
+if TYPE_CHECKING:
+    from .sandbox import SandboxExecutor
 
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
@@ -36,10 +39,12 @@ class ShellExecTool(BaseTool):
         whitelist: List[str] = None,
         allowed_workdir: str = "./",
         max_output_length: int = 10000,
+        sandbox: "SandboxExecutor" = None,
     ):
         self._whitelist = whitelist or DEFAULT_WHITELIST
         self._allowed_workdir = os.path.abspath(allowed_workdir)
         self._max_output_length = max_output_length
+        self._sandbox = sandbox  # 可选沙箱执行器
 
     @property
     def name(self) -> str:
@@ -48,6 +53,16 @@ class ShellExecTool(BaseTool):
     @property
     def description(self) -> str:
         return "在受控环境中执行shell命令，仅允许执行白名单内的命令。"
+
+    def _truncate_output(self, output: str) -> str:
+        """截断过长输出。"""
+        if len(output) <= self._max_output_length:
+            return output
+        truncated = len(output) - self._max_output_length
+        return (
+            output[:self._max_output_length]
+            + f"\n\n[Output truncated - {truncated} characters omitted]"
+        )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -74,9 +89,24 @@ class ShellExecTool(BaseTool):
     def execute(self, **kwargs) -> str:
         command = kwargs.get("command")
         workdir = kwargs.get("workdir", "./")
-        timeout = kwargs.get("timeout", 5)
+        timeout = kwargs.get("timeout", 30)
 
         base_command = command.strip().split()[0] if command.strip() else ""
+
+        # ── 沙箱模式: 有真正隔离，跳过白名单 ──
+        if self._sandbox and self._sandbox.is_isolated:
+            try:
+                os.makedirs(self._allowed_workdir, exist_ok=True)
+                logger.info(
+                    f"ShellExecTool [sandbox:{self._sandbox.mode}]: {command}"
+                )
+                raw_output = self._sandbox.execute(command, workdir, timeout)
+                return self._truncate_output(raw_output)
+            except Exception as e:
+                logger.error(f"沙箱执行失败: {e}")
+                return f"Error: 沙箱执行失败: {e}"
+
+        # ── 白名单模式: 无隔离，严格检查 ──
         if base_command not in self._whitelist:
             allowed = ", ".join(self._whitelist)
             error_msg = f"Command '{base_command}' not in whitelist. Allowed: {allowed}"
@@ -116,27 +146,15 @@ class ShellExecTool(BaseTool):
             logger.info(
                 f"ShellExecTool: Command '{command}' completed with return code {result.returncode}"
             )
-            if result.stdout:
-                logger.debug(f"ShellExecTool stdout: {result.stdout[:200]}...")
-            if result.stderr:
-                logger.debug(f"ShellExecTool stderr: {result.stderr[:200]}...")
 
             output = ""
             if result.stdout:
                 output += result.stdout
             if result.stderr:
                 output += f"\nSTDERR:\n{result.stderr}"
-
-            if len(output) > self._max_output_length:
-                truncated_length = len(output) - self._max_output_length
-                output = (
-                    output[: self._max_output_length]
-                    + f"\n\n[Output truncated - {truncated_length} characters omitted]"
-                )
-
             output += f"\n\nReturn code: {result.returncode}"
 
-            return output
+            return self._truncate_output(output)
 
         except subprocess.TimeoutExpired:
             error_msg = f"Command timed out after {timeout} seconds"
@@ -154,6 +172,7 @@ class ShellExecSkill(BaseSkill):
         self._allowed_workdir = PROJECT_ROOT
         self._max_output_length = 10000
         self._tool = None
+        self._sandbox: Optional[SandboxExecutor] = None
 
     @property
     def name(self) -> str:
@@ -173,6 +192,7 @@ class ShellExecSkill(BaseSkill):
                 whitelist=self._whitelist,
                 allowed_workdir=self._allowed_workdir,
                 max_output_length=self._max_output_length,
+                sandbox=self._sandbox,
             )
         return [self._tool]
 
@@ -187,7 +207,27 @@ class ShellExecSkill(BaseSkill):
         self._max_output_length = config.get("max_output_length", 10000)
         self._tool = None
 
+        # 初始化沙箱 (仅在显式配置时启用)
+        sandbox_enabled = config.get("sandbox_enabled", False)
+        if sandbox_enabled:
+            from .sandbox import SandboxExecutor
+
+            if self._sandbox:
+                self._sandbox.stop()
+
+            self._sandbox = SandboxExecutor(
+                work_dir=self._allowed_workdir,
+                timeout=config.get("sandbox_timeout", 60),
+                max_memory_mb=config.get("sandbox_max_memory_mb", 256),
+            )
+            self._sandbox.start()
+            logger.info(
+                f"ShellExec 沙箱已启动: mode={self._sandbox.mode}, "
+                f"isolated={self._sandbox.is_isolated}"
+            )
+
         logger.info(
             f"ShellExecSkill loaded: whitelist={self._whitelist}, "
-            f"workdir={self._allowed_workdir}, max_output={self._max_output_length}"
+            f"workdir={self._allowed_workdir}, max_output={self._max_output_length}, "
+            f"sandbox={self._sandbox.mode if self._sandbox else 'disabled'}"
         )
