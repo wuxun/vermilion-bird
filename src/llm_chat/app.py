@@ -342,7 +342,7 @@ class App:
         """同步连接 MCP 服务器并注册工具。"""
         try:
             future = manager.connect_all()
-            results = future.result(timeout=30)
+            results = future.result(timeout=120)
             logger.info(f"MCP 连接结果 (同步): {results}")
             self._register_mcp_tools(manager)
             self._register_mcp_health_check(manager)
@@ -356,7 +356,7 @@ class App:
         """后台线程中连接 MCP 并通知前端。"""
         try:
             future = manager.connect_all()
-            results = future.result(timeout=30)
+            results = future.result(timeout=120)
             logger.info(f"MCP 连接结果 (后台): {results}")
             self._register_mcp_tools(manager)
             self._register_mcp_health_check(manager)

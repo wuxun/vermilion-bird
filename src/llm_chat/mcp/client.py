@@ -67,6 +67,14 @@ class MCPClient:
         env = os.environ.copy()
         env.update(self.config.env)
         
+        # 确保 PATH 包含命令所在目录（PyInstaller 打包后 PATH 可能不完整）
+        cmd_dir = os.path.dirname(os.path.abspath(os.path.expanduser(self.config.command)))
+        if cmd_dir:
+            current_path = env.get("PATH", "")
+            if cmd_dir not in current_path:
+                env["PATH"] = f"{cmd_dir}:{current_path}" if current_path else cmd_dir
+                logger.info(f"PATH 已补充: {cmd_dir}")
+        
         if hasattr(self.config, "http_proxy") and self.config.http_proxy:
             env["HTTP_PROXY"] = self.config.http_proxy
             logger.info(f"设置 HTTP_PROXY: {self.config.http_proxy}")
