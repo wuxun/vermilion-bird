@@ -203,6 +203,7 @@ class ContextConfig(BaseSettings):
     class Config:
         env_prefix = "CONTEXT_"
         case_sensitive = False
+        extra = "allow"
 
     @field_validator("auto_compact_threshold")
     @classmethod
