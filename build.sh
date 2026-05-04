@@ -40,13 +40,17 @@ echo "→ 开始构建 (可能需要 1-3 分钟)..."
 source venv/bin/activate
 pyinstaller vermilion-bird.spec
 
+# 清理冗余的 GUI 中间二进制（已嵌入 .app 内）
+rm -f dist/vermilion-bird-gui
+
 echo ""
 echo "=== 打包完成 ==="
-echo "CLI:   dist/vermilion-bird"
-echo "GUI:   dist/Vermilion Bird.app"
-ls -lh dist/ 2>/dev/null
+CLI_SIZE=$(ls -lh dist/vermilion-bird 2>/dev/null | awk '{print $5}')
+APP_SIZE=$(du -sh 'dist/Vermilion Bird.app' 2>/dev/null | awk '{print $1}')
+echo "CLI:   dist/vermilion-bird          (${CLI_SIZE:-?})"
+echo "GUI:   dist/Vermilion Bird.app      (${APP_SIZE:-?})"
 echo ""
 echo "使用方式:"
 echo "  ./dist/vermilion-bird chat              # CLI 模式"
 echo "  ./dist/vermilion-bird chat --gui        # GUI 模式"
-echo "  open 'dist/Vermilion Bird.app'          # 双击启动"
+echo "  open 'dist/Vermilion Bird.app'          # 双击启动 GUI"
