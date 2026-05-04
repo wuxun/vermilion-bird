@@ -1,6 +1,7 @@
 """LLMClient 核心：初始化、技能设置、工具管理"""
 
 import logging
+import os
 from typing import List, Dict, Any, Optional, Callable
 
 import requests
@@ -142,7 +143,7 @@ class LLMClientBase:
             "https_proxy": self.config.llm.https_proxy,
             "timeout": self.config.llm.timeout,
         }
-        work_dir = self.config.tools.work_dir
+        work_dir = os.path.abspath(os.path.expanduser(self.config.tools.work_dir))
 
         for skill_name in ("web_search", "web_fetch"):
             if skill_name in skill_configs:
@@ -157,6 +158,15 @@ class LLMClientBase:
         if "task_delegator" in skill_configs:
             if "work_dir" not in skill_configs["task_delegator"]:
                 skill_configs["task_delegator"]["work_dir"] = work_dir
+
+        # 注入工作目录到所有文件/Shell 技能
+        for skill_name in ("file_reader", "file_writer", "file_editor"):
+            if skill_name in skill_configs:
+                if "base_dir" not in skill_configs[skill_name]:
+                    skill_configs[skill_name]["base_dir"] = work_dir
+        if "shell_exec" in skill_configs:
+            if "allowed_workdir" not in skill_configs["shell_exec"]:
+                skill_configs["shell_exec"]["allowed_workdir"] = work_dir
 
         self._skill_manager.load_from_config(skill_configs)
 
