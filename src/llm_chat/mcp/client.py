@@ -113,7 +113,7 @@ class MCPClient:
                 task = asyncio.create_task(maintain_connection())
                 
                 try:
-                    await asyncio.wait_for(self._connection_ready.wait(), timeout=180)
+                    await asyncio.wait_for(self._connection_ready.wait(), timeout=30)
                     if self._stopping:
                         raise MCPClientError("连接被中断")
                     return True

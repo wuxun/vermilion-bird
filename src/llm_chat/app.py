@@ -331,8 +331,8 @@ class App:
         """同步连接 MCP 服务器并注册工具。"""
         try:
             future = manager.connect_all()
-            results = future.result(timeout=180)
-            logger.info(f"MCP 连接结果: {results}")
+            results = future.result(timeout=30)
+            logger.info(f"MCP 连接结果 (同步): {results}")
             self._register_mcp_tools(manager)
             self._register_mcp_health_check(manager)
         except Exception as e:
@@ -345,8 +345,8 @@ class App:
         """后台线程中连接 MCP 并通知前端。"""
         try:
             future = manager.connect_all()
-            results = future.result(timeout=180)
-            logger.info(f"MCP 连接结果: {results}")
+            results = future.result(timeout=30)
+            logger.info(f"MCP 连接结果 (后台): {results}")
             self._register_mcp_tools(manager)
             self._register_mcp_health_check(manager)
 
@@ -532,6 +532,18 @@ class App:
         self.current_frontend.update_conversation_list(conversations)
 
     def run(self, frontend: BaseFrontend):
+        import signal
+
+        # 注册信号处理器：Ctrl+C / SIGTERM 强制退出
+        def _force_exit(signum, frame):
+            logger.warning(f"Received signal {signum}, forcing exit...")
+            self.stop()
+            import os as _os
+            _os._exit(0)
+
+        signal.signal(signal.SIGINT, _force_exit)
+        signal.signal(signal.SIGTERM, _force_exit)
+
         self.set_frontend(frontend)
 
         self.storage.migrate_from_json()
