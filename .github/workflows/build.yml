@@ -12,6 +12,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write  # 用于创建 Release 和上传附件
     strategy:
       matrix:
         python-version: ["3.12"]
