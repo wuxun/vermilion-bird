@@ -22,6 +22,7 @@ class MCPServerConfig(BaseModel):
     description: Optional[str] = Field(None, description="服务器描述")
     http_proxy: Optional[str] = Field(None, description="HTTP 代理地址")
     https_proxy: Optional[str] = Field(None, description="HTTPS 代理地址")
+    timeout: int = Field(default=60, description="连接超时时间(秒)，首次 npx 下载可能需要更长时间")
 
     class Config:
         use_enum_values = True
