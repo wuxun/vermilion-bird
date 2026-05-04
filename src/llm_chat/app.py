@@ -39,6 +39,9 @@ class App:
     """
 
     def __init__(self, config: Optional[Config] = None):
+        import time
+        _t0 = time.time()
+
         self.config = config or Config()
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None
@@ -48,16 +51,24 @@ class App:
 
         # 组件分层初始化（保持依赖顺序）
         self.tool_registry = self._init_tool_registry()
+        _t1 = time.time(); logger.info(f"⏱ _init_tool_registry: {_t1-_t0:.3f}s")
         self.storage = self._init_storage()
+        _t2 = time.time(); logger.info(f"⏱ _init_storage: {_t2-_t1:.3f}s")
         self.client = self._init_client()
+        _t3 = time.time(); logger.info(f"⏱ _init_client: {_t3-_t2:.3f}s")
         self.conversation_manager = self._init_conversation_manager()
+        _t4 = time.time(); logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.chat_core = self._init_chat_core()
+        _t5 = time.time(); logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
         self._init_prompt_skills()
+        _t6 = time.time(); logger.info(f"⏱ _init_prompt_skills: {_t6-_t5:.3f}s")
         self.service_manager = self._init_service_manager()
+        _t7 = time.time(); logger.info(f"⏱ _init_service_manager: {_t7-_t6:.3f}s")
         self._health_checker = self._init_health_checker()
-        # Scheduler 延迟到 _start_background_services 中初始化（加快窗口显示）
+        _t8 = time.time(); logger.info(f"⏱ _init_health_checker: {_t8-_t7:.3f}s")
+        # Scheduler 延迟到 _start_background_services 中初始化
 
-        logger.info("App initialization complete")
+        logger.info(f"⏱ App init total: {_t8-_t0:.3f}s")
 
     # ------------------------------------------------------------------
     # Factory methods (按依赖顺序)

@@ -148,21 +148,18 @@ a_gui = Analysis(
 
 pyz_gui = PYZ(a_gui.pure, a_gui.zipped_data, cipher=block_cipher)
 
+# ── GUI: onedir 模式（避免启动时自解压，-5s 启动时间） ──
 exe_gui = EXE(
     pyz_gui,
     a_gui.scripts,
-    a_gui.binaries,
-    a_gui.zipfiles,
-    a_gui.datas,
-    [],
+    exclude_binaries=True,          # 不内嵌二进制，放到 COLLECT 中
     name="vermilion-bird-gui",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,          # GUI 不显示终端
+    console=False,                  # GUI 不显示终端
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -171,8 +168,19 @@ exe_gui = EXE(
     icon=os.path.join(PROJECT_ROOT, "icon.icns"),
 )
 
-app = BUNDLE(
+coll_gui = COLLECT(
     exe_gui,
+    a_gui.binaries,
+    a_gui.zipfiles,
+    a_gui.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="vermilion-bird-gui",
+)
+
+app = BUNDLE(
+    coll_gui,
     name="Vermilion Bird.app",
     icon=os.path.join(PROJECT_ROOT, "icon.icns"),
     bundle_identifier="com.vermilion-bird.app",
