@@ -553,6 +553,13 @@ class Config(BaseSettings):
 
             enable_tools = config_data.get("enable_tools", True)
 
+            tools_data = config_data.get("tools", {})
+            tools_config = (
+                ToolsConfig(**tools_data)
+                if tools_data
+                else ToolsConfig()
+            )
+
             skills_data = config_data.get("skills", {})
             skills_config = cls._parse_skills(skills_data)
 
@@ -582,6 +589,7 @@ class Config(BaseSettings):
                 llm=llm_config,
                 mcp=mcp_config,
                 enable_tools=enable_tools,
+                tools=tools_config,
                 skills=skills_config,
                 feishu=feishu_config,
                 external_skill_dirs=external_skill_dirs,
@@ -688,6 +696,7 @@ class Config(BaseSettings):
             "feishu": self.feishu.model_dump(),
             "notification": self.notification.model_dump(),
             "skills": skills_dict,
+            "tools": self.tools.model_dump(),
             "external_skill_dirs": self.external_skill_dirs,
             "prompt_skill_dirs": self.prompt_skill_dirs,
             "memory": self.memory.model_dump(),
