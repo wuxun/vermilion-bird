@@ -293,6 +293,10 @@ mcp:
 #   mid_term:
 #     max_days: 30              # 保留最近 30 天
 #     compress_after_days: 7    # 每 7 天自动压缩 + LLM 主题聚类去重
+#   long_term:
+#     auto_evolve: true          # 每 7 天自动进化理解
+#     consolidate_min_facts: 8   # 累积 8 条事实后触发去重+重新分类
+#     consolidate_interval_secs: 600  # 整理最小间隔 (防频繁调 LLM)
 
 # ============================================================
 # 🤖 子 Agent 配置 (已有功能)

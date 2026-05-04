@@ -315,6 +315,12 @@ class MidTermMemoryConfig(BaseSettings):
 class LongTermMemoryConfig(BaseSettings):
     auto_evolve: bool = Field(default=True, description="是否自动进化记忆")
     evolve_interval_days: int = Field(default=7, description="记忆进化间隔天数")
+    consolidate_min_facts: int = Field(
+        default=8, description="累积多少条事实后触发长期记忆去重整理"
+    )
+    consolidate_interval_secs: int = Field(
+        default=600, description="长期记忆整理最小间隔秒数 (防频繁调用 LLM)"
+    )
 
     class Config:
         env_prefix = "MEMORY_LONG_TERM_"

@@ -41,6 +41,10 @@ class MemoryManager:
         self._last_extraction_time = datetime.now()
         self._last_compress_time = datetime.now()
         self._last_evolve_time = datetime.now()
+        self._last_consolidate_time = datetime.now()
+        self._long_term_fact_count = 0
+        self._long_term_consolidate_min_facts = 8      # 累积 8 条事实后触发整理
+        self._long_term_consolidate_interval_secs = 600 # 至少间隔 10 分钟
         self._extraction_interval = self.config.get("extraction_interval", 10)
         self._extraction_time_interval = self.config.get("extraction_time_interval", 3600)
         self._short_term_max_entries = self.config.get("short_term_max_entries", 50)
@@ -51,6 +55,12 @@ class MemoryManager:
         long_cfg = self.config.get("long_term", {})
         self._long_term_auto_evolve = long_cfg.get("auto_evolve", True)
         self._long_term_evolve_interval_days = long_cfg.get("evolve_interval_days", 7)
+        self._long_term_consolidate_min_facts = long_cfg.get(
+            "consolidate_min_facts", self._long_term_consolidate_min_facts
+        )
+        self._long_term_consolidate_interval_secs = long_cfg.get(
+            "consolidate_interval_secs", self._long_term_consolidate_interval_secs
+        )
         # Token 预算
         self._max_memory_tokens = self.config.get("max_memory_tokens", 2000)
     
@@ -117,8 +127,9 @@ class MemoryManager:
                 self.storage.add_user_fact(fact)
             else:
                 self.storage.add_inferred_fact(fact)
-        
-        logger.info(f"添加 {len(facts)} 条长期记忆")
+            self._long_term_fact_count += 1
+
+        logger.info(f"添加 {len(facts)} 条长期记忆 (累计 {self._long_term_fact_count})")
     
     def _update_section(self, content: str, section_header: str, new_content: str) -> str:
         """更新Markdown文件的特定章节"""
@@ -524,6 +535,9 @@ class MemoryManager:
         # 周期性维护：进化长期记忆（中期记忆有更新时更频繁检查）
         self._maybe_evolve_understanding(mid_term_extracted)
 
+        # 长期记忆整理：事实累积到阈值时触发去重+重新分类
+        self._maybe_consolidate_long_term()
+
     def _maybe_compress_mid_term(self):
         """按周期压缩过期中期记忆"""
         elapsed = (datetime.now() - self._last_compress_time).total_seconds()
@@ -548,11 +562,229 @@ class MemoryManager:
         if force or elapsed >= evolve_seconds:
             try:
                 self.evolve_understanding()
+                # 长期记忆进化时也顺带做一次整理
+                self._consolidate_long_term()
                 self._last_evolve_time = datetime.now()
-                logger.info(f"长期记忆进化完成")
+                logger.info(f"长期记忆进化+整理完成")
             except Exception as e:
                 logger.error(f"长期记忆进化失败: {e}")
-    
+
+    # ------------------------------------------------------------------
+    # 长期记忆整理：去重 + 重新分类
+    # ------------------------------------------------------------------
+
+    def _maybe_consolidate_long_term(self):
+        """检查是否需要整理长期记忆。
+
+        触发条件：
+        1. 累积事实 ≥ _long_term_consolidate_min_facts (默认 8)
+        2. 距上次整理 ≥ _long_term_consolidate_interval_secs (默认 10 分钟)
+        """
+        if self._long_term_fact_count < self._long_term_consolidate_min_facts:
+            return
+
+        elapsed = (datetime.now() - self._last_consolidate_time).total_seconds()
+        if elapsed < self._long_term_consolidate_interval_secs:
+            return
+
+        self._consolidate_long_term()
+
+    def _consolidate_long_term(self):
+        """整理长期记忆：LLM 去重 + 重新分类。
+
+        1. 扫描「用户主动告知」和「系统观察发现」所有事实
+        2. 用 LLM 去重合并语义相似条目
+        3. 将事实重新分配到正确的长期记忆章节
+        """
+        if not self._summarizer:
+            return
+
+        content = self.storage.load_long_term()
+        if not content:
+            return
+
+        import re
+
+        # 提取「用户主动告知」事实
+        user_told_match = re.search(
+            r'### 用户主动告知\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
+        # 提取「系统观察发现」事实
+        observed_match = re.search(
+            r'### 系统观察发现\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
+
+        user_facts_raw = user_told_match.group(1).strip() if user_told_match else ""
+        observed_facts_raw = observed_match.group(1).strip() if observed_match else ""
+
+        # 解析每个章节的条目
+        def parse_facts(text: str) -> list[str]:
+            items = re.findall(r'^- (.+)$', text, re.MULTILINE)
+            return [item.strip() for item in items if item.strip()]
+
+        user_facts = parse_facts(user_facts_raw)
+        observed_facts = parse_facts(observed_facts_raw)
+
+        total_facts = len(user_facts) + len(observed_facts)
+        if total_facts < 3:
+            logger.debug(f"长期记忆事实不足 {total_facts} 条，跳过整理")
+            return
+
+        logger.info(f"开始整理长期记忆: {len(user_facts)} 用户告知 + {len(observed_facts)} 系统观察")
+
+        all_facts_text = "\n".join(
+            [f"[用户告知] {f}" for f in user_facts]
+            + [f"[系统观察] {f}" for f in observed_facts]
+        )
+
+        prompt = f"""你是一个记忆整理助手。以下是用户的长期记忆事实列表，其中可能包含重复、过时或可合并的条目。
+
+当前事实 ({total_facts} 条):
+{all_facts_text}
+
+请完成以下任务：
+
+1. **去重合并**：将语义相同或高度相似的条目合并为一条精炼的事实。每条不超过 60 字。
+2. **重新分类**：将每条事实分配到以下最合适的类别：
+   - identity: 身份、年龄、性别、职业、角色等
+   - preference: 偏好、习惯、喜欢/不喜欢
+   - project: 项目信息、技术栈、架构决策
+   - plan: 未来计划、目标
+   - skill: 技能、能力描述
+   - fact: 其他客观事实
+3. **标注来源**：\"user_told\" 表示用户明确告知，\"observed\" 表示系统观察。
+
+输出格式 (JSON 数组):
+[
+  {{"category": "identity", "fact": "用户是 35 岁男性，IT 行业从业者", "source": "user_told"}},
+  {{"category": "preference", "fact": "用户偏好使用 Python 3.11 进行开发", "source": "user_told"}},
+  ...
+]
+
+只返回 JSON，不要其他内容。"""
+
+        try:
+            response = self._summarizer.generate(prompt, max_tokens=2000)
+            if not response:
+                return
+
+            import json
+            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
+            if json_match:
+                clusters = json.loads(json_match.group(1))
+            else:
+                clusters = json.loads(response.strip())
+
+            if not isinstance(clusters, list) or len(clusters) == 0:
+                return
+
+            # 按类别分组
+            categorized: dict[str, list[str]] = {}
+            observed: list[str] = []
+            for item in clusters:
+                cat = item.get("category", "fact")
+                fact = item.get("fact", "")
+                source = item.get("source", "user_told")
+                if not fact:
+                    continue
+
+                if source == "observed":
+                    observed.append(fact)
+                else:
+                    if cat not in categorized:
+                        categorized[cat] = []
+                    categorized[cat].append(fact)
+
+            # 重建长期记忆内容
+            self._rebuild_long_term(content, categorized, observed, total_facts)
+
+            # 重置计数器
+            self._long_term_fact_count = 0
+            self._last_consolidate_time = datetime.now()
+
+            logger.info(
+                f"长期记忆整理完成: {total_facts} → {sum(len(v) for v in categorized.values()) + len(observed)} 条 "
+                f"(类别: {list(categorized.keys())})"
+            )
+
+        except Exception as e:
+            logger.warning(f"长期记忆整理失败: {e}")
+
+    def _rebuild_long_term(
+        self,
+        content: str,
+        categorized: dict[str, list[str]],
+        observed: list[str],
+        original_count: int,
+    ):
+        """用整理后的事实重建长期记忆的「用户画像」和「重要事实」章节。"""
+        import re
+
+        # 构建分类后的事实块
+        label_map = {
+            "identity": "身份与背景",
+            "preference": "沟通偏好",
+            "project": "项目信息",
+            "plan": "计划与目标",
+            "skill": "技能能力",
+            "fact": "其他事实",
+        }
+
+        # 将归类的事实写入「用户画像」各子章节
+        profile_sections = []
+        for cat, label in label_map.items():
+            facts = categorized.get(cat, [])
+            if facts:
+                items = "\n".join(f"- {f}" for f in facts)
+                profile_sections.append(f"### {label}\n{items}")
+
+        profile_block = "\n\n".join(profile_sections) if profile_sections else "(待填写)"
+
+        # 系统观察事实
+        observed_block = (
+            "\n".join(f"- {f}" for f in observed)
+            if observed
+            else "(暂无系统观察)"
+        )
+
+        # 替换「用户画像」章节 (## 用户画像 到下一个 ##)
+        content = re.sub(
+            r'(## 用户画像\n).*?(?=\n##|\Z)',
+            r'\1' + profile_block,
+            content,
+            flags=re.DOTALL,
+        )
+
+        # 替换「用户主动告知」(清空——已归入画像)
+        content = re.sub(
+            r'(### 用户主动告知\n).*?(?=\n###|\n##|\Z)',
+            r'\1(已整理到用户画像)',
+            content,
+            flags=re.DOTALL,
+        )
+
+        # 替换「系统观察发现」
+        content = re.sub(
+            r'(### 系统观察发现\n).*?(?=\n###|\n##|\Z)',
+            r'\1' + observed_block,
+            content,
+            flags=re.DOTALL,
+        )
+
+        # 追加进化日志
+        today = datetime.now().strftime("%Y-%m-%d %H:%M")
+        log_entry = (
+            f"- {today}: 整理长期记忆，{original_count} 条事实经去重合并后重新分类"
+        )
+        if "## 进化日志" in content:
+            content = re.sub(
+                r'(## 进化日志\n)',
+                r'\1' + log_entry + "\n",
+                content,
+            )
+
+        self.storage.save_long_term(content)
+
     def _increment_conversation_count(self):
         """增加对话计数"""
         self._conversation_count += 1
