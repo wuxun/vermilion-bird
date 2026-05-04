@@ -63,6 +63,12 @@ class MCPManager:
 
     def shutdown(self):
         """关闭事件循环和线程（App.stop() 时调用）。"""
+        # 先断开所有 MCP 客户端，避免子进程残留导致 EPIPE
+        if self._clients:
+            try:
+                self.disconnect_all().result(timeout=5)
+            except Exception:
+                pass
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread and self._thread.is_alive():
