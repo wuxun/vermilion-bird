@@ -21,7 +21,7 @@ class StorageCore:
     """
 
     _instance: Optional["StorageCore"] = None
-    _db_path: str = ".vb/vermilion_bird.db"
+    _db_path: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:

@@ -260,7 +260,7 @@ class StorageConversationMixin:
     # Migration
     # ------------------------------------------------------------------
 
-    def migrate_from_json(self, json_dir: str = ".vb/history") -> int:
+    def migrate_from_json(self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")) -> int:
         migrated = 0
         if not os.path.exists(json_dir):
             return migrated

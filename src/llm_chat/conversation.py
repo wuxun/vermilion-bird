@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 from typing import List, Dict, Any, Optional
@@ -292,7 +293,7 @@ class ConversationManager:
     ) -> List[Dict[str, Any]]:
         return self.storage.search_messages(query, conversation_id, limit)
 
-    def migrate_from_json(self, json_dir: str = ".vb/history") -> int:
+    def migrate_from_json(self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")) -> int:
         return self.storage.migrate_from_json(json_dir)
 
     def evolve_memories(self):

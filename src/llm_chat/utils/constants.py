@@ -12,14 +12,17 @@ import os
 
 # -- 路径常量 ----------------------------------------------------------
 
-# 项目根目录下的数据目录
-PROJECT_DIR = os.path.join(os.getcwd() if os.getcwd().endswith("vermilion-bird") else ".", ".vb")
+# 数据目录 (与配置文件 ~/.vermilion-bird/config.yaml 同目录)
+DATA_DIR = os.path.expanduser("~/.vermilion-bird")
+
+# 项目根目录下的数据目录 (兼容旧路径)
+PROJECT_DIR = DATA_DIR
 
 # SQLite 数据库
-DB_PATH = os.path.join(".vb", "vermilion_bird.db")
+DB_PATH = os.path.join(DATA_DIR, "vermilion_bird.db")
 
 # JSON 历史记录（旧格式）
-HISTORY_DIR = os.path.join(".vb", "history")
+HISTORY_DIR = os.path.join(DATA_DIR, "history")
 
 # 记忆系统
 MEMORY_DIR = "~/.vermilion-bird/memory"

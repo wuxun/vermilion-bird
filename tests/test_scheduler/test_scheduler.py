@@ -86,8 +86,8 @@ class TestSchedulerServiceInit:
         mock_jobstore.assert_called_once()
         jobstore_call = mock_jobstore.call_args
         assert (
-            "sqlite:///.vb/vermilion_bird.db" in str(jobstore_call)
-            or jobstore_call[1].get("url") == "sqlite:///.vb/vermilion_bird.db"
+            "vermilion_bird.db" in str(jobstore_call)
+            or "vermilion_bird.db" in jobstore_call[1].get("url", "")
         )
 
     @patch("llm_chat.scheduler.scheduler.BackgroundScheduler")

@@ -138,7 +138,7 @@ class SpawnSubagentTool(BaseTool):
             return work_dir_arg
         if self.config and hasattr(self.config, "tools") and self.config.tools:
             return self.config.tools.work_dir
-        return ".vb/work"
+        return os.path.expanduser("~/.vermilion-bird/work")
 
     @observe("spawn_subagent")
     def execute(self, **kwargs) -> str:

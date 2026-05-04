@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ def make_agent_context(
     allowed_tools: Set[str],
     conversation_id: str,
     task: str = "",
-    work_dir: str = ".vb/work",
+    work_dir: str = os.path.expanduser("~/.vermilion-bird/work"),
     timeout: int = 300,
 ) -> AgentContext:
     """统一创建 AgentContext，默认 status='running' 并标记创建时间。

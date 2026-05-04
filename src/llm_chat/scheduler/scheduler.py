@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, List, Callable, Any, Dict
@@ -115,7 +116,7 @@ class SchedulerService:
 
         jobstores = {
             "default": SQLAlchemyJobStore(
-                url="sqlite:///.vb/vermilion_bird.db",
+                url="sqlite:///" + os.path.expanduser("~/.vermilion-bird/vermilion_bird.db"),
                 tablename="apscheduler_jobs",
             )
         }

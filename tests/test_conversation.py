@@ -6,15 +6,17 @@ from llm_chat.client import LLMClient
 from llm_chat.config import Config
 
 
+HISTORY_DIR = os.path.expanduser("~/.vermilion-bird/history")
+
 # 测试前清理历史记录目录
 def setup_module():
-    if os.path.exists(".vb/history"):
-        shutil.rmtree(".vb/history")
+    if os.path.exists(HISTORY_DIR):
+        shutil.rmtree(HISTORY_DIR)
 
 
 def teardown_module():
-    if os.path.exists(".vb/history"):
-        shutil.rmtree(".vb/history")
+    if os.path.exists(HISTORY_DIR):
+        shutil.rmtree(HISTORY_DIR)
 
 
 def test_send_message():
