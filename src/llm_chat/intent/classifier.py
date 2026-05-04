@@ -27,7 +27,7 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     (re.compile(r"^/read\s+(.+)", re.IGNORECASE), Intent.FILE_OP, "文件读取"),
     (re.compile(r"^/write\s+(.+)", re.IGNORECASE), Intent.FILE_OP, "文件写入"),
     (re.compile(r"^/code\s+(.+)", re.IGNORECASE), Intent.CODE, "代码"),
-    (re.compile(r"^/memory$", re.IGNORECASE), Intent.MEMORY, "记忆"),
+    (re.compile(r"^/memory\b", re.IGNORECASE), Intent.MEMORY, "记忆"),
     (re.compile(r"^/schedule\b", re.IGNORECASE), Intent.SCHEDULE, "定时任务"),
     (re.compile(r"^/summary?\b", re.IGNORECASE), Intent.SUMMARIZE, "摘要"),
     # 清空对话 — 直接返回
@@ -37,7 +37,7 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     # 切换风格
     (re.compile(r"^/style\s+(\w+)", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 记住事实到长期记忆
-    (re.compile(r"^/(?:remember|记忆|记住|memory)\s+(.+)", re.IGNORECASE), Intent.SHORTCUT, ""),
+    (re.compile(r"^/(?:remember|记住|记忆)\s+(.+)", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 帮助
     (re.compile(r"^/(?:help|帮助|\\?)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
 ]
