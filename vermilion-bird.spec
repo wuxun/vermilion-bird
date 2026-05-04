@@ -17,6 +17,8 @@ block_cipher = None
 
 # ── 公共依赖分析 ──
 common_hiddenimports = [
+    "tiktoken_ext",                  # 命名空间包，需手动收集
+    "tiktoken_ext.openai_public",
     "llm_chat.protocols.openai",
     "llm_chat.protocols.anthropic",
     "llm_chat.protocols.gemini",
@@ -79,6 +81,7 @@ common_hiddenimports = [
     "llm_chat.utils.secure_storage",
     "llm_chat.utils.observability",
     "llm_chat.utils.retry",
+    "tiktoken_ext.openai_public",  # 确保 tiktoken 编码文件可发现
 ]
 common_excludes = [
     "matplotlib", "scipy", "numpy", "pandas", "PIL",
@@ -94,12 +97,13 @@ a_cli = Analysis(
     hiddenimports=common_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(PROJECT_ROOT, "hooks", "runtime-tiktoken.py")],
     excludes=common_excludes,
     noarchive=False,
     module_collection_mode={
         "PyQt6": "pyz",
         "lark_oapi": "pyz",
+        "tiktoken_ext": "pyz",   # 命名空间包
     },
 )
 
@@ -137,12 +141,13 @@ a_gui = Analysis(
     hiddenimports=common_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(PROJECT_ROOT, "hooks", "runtime-tiktoken.py")],
     excludes=common_excludes,
     noarchive=False,
     module_collection_mode={
         "PyQt6": "pyz",
         "lark_oapi": "pyz",
+        "tiktoken_ext": "pyz",   # 命名空间包
     },
 )
 
