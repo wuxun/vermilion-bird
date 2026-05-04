@@ -114,7 +114,6 @@ class ContextManager:
             messages,
             target_level,
             self.max_context_tokens,
-            conversation_id=conversation_id,
         )
 
         # 写入缓存
@@ -165,7 +164,6 @@ class ContextManager:
         """
         result = self.compressor.manual_compact(
             messages=messages,
-            conversation_id=conversation_id,
         )
         # 写入缓存
         if self.enable_cache and self.cache:
@@ -271,9 +269,18 @@ class ContextManager:
         context_config = config.get("context", {})
         llm_config = config.get("llm", {})
 
-        max_tokens = context_config.get(
-            "max_model_tokens", llm_config.get("max_context_tokens", 4096)
-        )
+        from llm_chat.utils.token_counter import get_context_limit
+
+        max_tokens = context_config.get("max_model_tokens") or llm_config.get("max_context_tokens")
+        if max_tokens is None:
+            # 从模型名自动检测上下文上限
+            model_name = llm_config.get("model", "")
+            max_tokens = get_context_limit(model_name) if model_name else 4096
+        else:
+            # 配置值不应超过模型实际上限
+            model_name = llm_config.get("model", "")
+            if model_name:
+                max_tokens = min(int(max_tokens), get_context_limit(model_name))
         reserve_tokens = context_config.get("reserve_tokens", 1024)
         enable_cache = context_config.get("enable_cache", True)
         auto_prune_cache = context_config.get("auto_prune_cache", True)

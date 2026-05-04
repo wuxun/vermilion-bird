@@ -33,14 +33,12 @@ class ContextCompressor:
         messages: List[ContextMessage],
         level: CompressionLevel,
         max_tokens: Optional[int] = None,
-        conversation_id: Optional[str] = None,
     ) -> CompressionResult:
         """
         压缩上下文到指定级别
         :param messages: 原始上下文消息列表
         :param level: 压缩级别
         :param max_tokens: 最大token限制
-        :param conversation_id: 会话ID，用于保存转录本
         :return: 压缩结果
         """
         original_tokens = sum(count_tokens(msg.content) for msg in messages)
@@ -54,10 +52,10 @@ class ContextCompressor:
                 logger.warning("AUTO压缩级别需要max_tokens参数，回退到MICRO级别")
                 return self.micro_compact(messages, original_tokens)
             return self.auto_compact(
-                messages, max_tokens, original_tokens, conversation_id
+                messages, max_tokens, original_tokens
             )
         elif level == CompressionLevel.MANUAL:
-            return self.manual_compact(messages, original_tokens, conversation_id)
+            return self.manual_compact(messages, original_tokens)
         else:
             return self._compress_none(messages, original_tokens)
 
@@ -155,12 +153,11 @@ class ContextCompressor:
         messages: List[ContextMessage],
         max_tokens: int,
         original_tokens: Optional[int] = None,
-        conversation_id: Optional[str] = None,
     ) -> CompressionResult:
         """
         Layer 2: 自动压缩
-        当token超过max_tokens*threshold时，保存完整转录本到磁盘，然后生成摘要
-        保留最近K轮对话不变，更早的内容替换为摘要
+        当token超过max_tokens*threshold时，生成历史摘要。
+        保留最近K轮对话不变，更早的内容替换为 LLM 摘要。
         """
         if original_tokens is None:
             original_tokens = sum(count_tokens(msg.content) for msg in messages)
@@ -199,6 +196,23 @@ class ContextCompressor:
         compressed.extend(recent_messages)
 
         compressed_tokens = sum(count_tokens(msg.content) for msg in compressed)
+
+        # 兜底：如果摘要太长仍然超限，截断摘要
+        if compressed_tokens > max_tokens:
+            overhead = compressed_tokens - max_tokens
+            summary_tokens = count_tokens(summary)
+            if summary_tokens > overhead + 50:
+                keep_tokens = max(50, summary_tokens - overhead - 50)
+                truncated = self._truncate_text_by_tokens(summary, keep_tokens)
+                compressed[0] = ContextMessage(
+                    role="system",
+                    content=f"## 历史对话摘要\n{truncated}",
+                    metadata={"summary": True, "original_messages": len(older_messages), "truncated": True},
+                    timestamp=datetime.now().timestamp(),
+                )
+                compressed_tokens = sum(count_tokens(msg.content) for msg in compressed)
+                logger.warning(f"[AUTO_COMPACT] 摘要过长已截断: {summary_tokens}→{keep_tokens} tokens")
+
         saved_tokens = original_tokens - compressed_tokens
         ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0
 
@@ -220,7 +234,6 @@ class ContextCompressor:
         self,
         messages: List[ContextMessage],
         original_tokens: Optional[int] = None,
-        conversation_id: Optional[str] = None,
     ) -> CompressionResult:
         """
         Layer 3: 手动压缩
@@ -363,10 +376,26 @@ class ContextCompressor:
         return "\n".join(summary_parts)
 
     def _truncate_text(self, text: str, max_length: int) -> str:
-        """截断文本到指定长度"""
+        """截断文本到指定字符长度"""
         if len(text) <= max_length:
             return text
         return text[:max_length] + "..."
+
+    @staticmethod
+    def _truncate_text_by_tokens(text: str, max_tokens: int) -> str:
+        """按 token 预算截断文本，保留完整行"""
+        if not text or max_tokens <= 0:
+            return ""
+        lines = text.split('\n')
+        result = []
+        current = 0
+        for line in lines:
+            lt = count_tokens(line)
+            if current + lt > max_tokens:
+                break
+            result.append(line)
+            current += lt
+        return '\n'.join(result) if result else text[:max_tokens * 4]
 
     def auto_select_level(
         self, messages: List[ContextMessage], max_tokens: int
