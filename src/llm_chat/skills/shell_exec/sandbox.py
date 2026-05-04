@@ -48,6 +48,7 @@ class SandboxExecutor:
         self._mode: str = "none"  # docker | bwrap | subprocess
         self._container_id: Optional[str] = None
         self._started = False
+        self._start_lock = threading.Lock()  # 防止并发 start() 竞态
         self._heartbeat_running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
 
@@ -56,9 +57,18 @@ class SandboxExecutor:
     # ------------------------------------------------------------------
 
     def start(self):
-        """启动沙箱，自动选择最佳可用方案。"""
-        if self._started:
-            return
+        """启动沙箱，自动选择最佳可用方案。线程安全。
+
+        首次调用实际启动，后续调用直接返回（幂等）。
+        """
+        with self._start_lock:
+            if self._started:
+                return
+        # 释放锁后再执行实际启动（避免持有锁时做耗时操作）
+        self._start_impl()
+
+    def _start_impl(self):
+        """实际启动逻辑，不持有锁。"""
 
         os.makedirs(self._work_dir, exist_ok=True)
 
@@ -69,8 +79,9 @@ class SandboxExecutor:
         if self._check_docker():
             try:
                 self._start_docker()
-                self._mode = "docker"
-                self._started = True
+                with self._start_lock:
+                    self._mode = "docker"
+                    self._started = True
                 logger.info("沙箱已启动: docker (持久化容器)")
                 return
             except Exception as e:
@@ -78,14 +89,16 @@ class SandboxExecutor:
 
         # 2. 尝试 bwrap
         if self._check_bwrap():
-            self._mode = "bwrap"
-            self._started = True
+            with self._start_lock:
+                self._mode = "bwrap"
+                self._started = True
             logger.info("沙箱已启动: bwrap (Linux namespace)")
             return
 
         # 3. 回退到白名单模式
-        self._mode = "subprocess"
-        self._started = True
+        with self._start_lock:
+            self._mode = "subprocess"
+            self._started = True
         logger.warning("沙箱不可用，回退到白名单模式 (无真正隔离)")
 
     def stop(self):

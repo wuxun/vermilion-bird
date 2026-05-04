@@ -588,10 +588,22 @@ class App:
         if self.config.enable_tools:
             if self.config.mcp.servers:
                 self.enable_tools()
+        # 异步启动 Docker 沙箱（不阻塞界面）
+        self._start_docker_sandbox_async()
         self.service_manager.start_all()
         if self.current_frontend:
             self.current_frontend.display_info("服务就绪")
         logger.info("后台服务初始化完成")
+
+    def _start_docker_sandbox_async(self):
+        """后台线程中异步启动 Docker 沙箱。"""
+        try:
+            skill_manager = self.get_skill_manager()
+            shell_skill = skill_manager.get_skill("shell_exec")
+            if shell_skill and hasattr(shell_skill, "start_sandbox_async"):
+                shell_skill.start_sandbox_async()
+        except Exception as e:
+            logger.warning(f"异步启动 Docker 沙箱失败: {e}")
 
     def stop(self):
         # 使用服务管理器停止所有服务

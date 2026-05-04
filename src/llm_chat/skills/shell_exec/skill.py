@@ -243,3 +243,16 @@ class ShellExecSkill(BaseSkill):
             f"workdir={self._allowed_workdir}, max_output={self._max_output_length}, "
             f"sandbox={self._sandbox.mode if self._sandbox else 'disabled'}"
         )
+
+    def start_sandbox_async(self):
+        """后台线程中异步启动沙箱（Docker 容器创建），不阻塞主线程。
+
+        由 App._start_background_services 在窗口显示后调用。
+        """
+        if not self._sandbox or self._sandbox._started:
+            return
+        import threading
+        t = threading.Thread(target=self._sandbox.start, daemon=True,
+                             name="sandbox-start")
+        t.start()
+        logger.info("沙箱异步启动中 (Docker 容器创建)...")
