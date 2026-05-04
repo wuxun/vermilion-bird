@@ -282,9 +282,8 @@ class ConversationManager:
         return self.storage.list_conversations(limit, offset)
 
     def delete_conversation(self, conversation_id: str) -> bool:
+        # 用户主动删除 = 数据无意义，不归档/不总结
         if conversation_id in self._conversations:
-            conv = self._conversations[conversation_id]
-            conv.end_session()
             del self._conversations[conversation_id]
         return self.storage.delete_conversation(conversation_id)
 
