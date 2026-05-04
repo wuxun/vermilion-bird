@@ -213,7 +213,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._on_switch_conversation = on_switch
         self._on_list_conversation = on_list
 
-    def start(self):
+    def start(self, post_init: Optional[Callable] = None):
         self._app = QApplication(sys.argv)
         self._app.setStyle("Fusion")
 
@@ -253,6 +253,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self.display_info("Press Enter to send, Shift+Enter for new line")
 
         self._main_window.show()
+
+        # 窗口显示后异步执行后台初始化（MCP 连接 / Scheduler 启动等）
+        if post_init is not None:
+            QTimer.singleShot(0, post_init)
+
         # If there are preloaded messages (set_current_conversation called before start),
         # render them now that the UI is constructed.
         try:

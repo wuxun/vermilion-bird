@@ -96,6 +96,14 @@ class ShellExecTool(BaseTool):
         # ── 沙箱模式: 有真正隔离，跳过白名单 ──
         if self._sandbox and self._sandbox.is_isolated:
             try:
+                # 延迟启动: 容器创建推迟到首次执行
+                if not self._sandbox._started:
+                    logger.info("延迟启动沙箱...")
+                    self._sandbox.start()
+                    logger.info(
+                        f"ShellExec 沙箱已启动: mode={self._sandbox.mode}, "
+                        f"isolated={self._sandbox.is_isolated}"
+                    )
                 os.makedirs(self._allowed_workdir, exist_ok=True)
                 logger.info(
                     f"ShellExecTool [sandbox:{self._sandbox.mode}]: {command}"
@@ -214,7 +222,7 @@ class ShellExecSkill(BaseSkill):
         self._max_output_length = config.get("max_output_length", 10000)
         self._tool = None
 
-        # 初始化沙箱 (仅在显式配置时启用)
+        # 初始化沙箱 (仅在显式配置时启用，延迟 start() 到首次 execute)
         sandbox_enabled = config.get("sandbox_enabled", False)
         if sandbox_enabled:
             from .sandbox import SandboxExecutor
@@ -227,11 +235,8 @@ class ShellExecSkill(BaseSkill):
                 timeout=config.get("sandbox_timeout", 60),
                 max_memory_mb=config.get("sandbox_max_memory_mb", 256),
             )
-            self._sandbox.start()
-            logger.info(
-                f"ShellExec 沙箱已启动: mode={self._sandbox.mode}, "
-                f"isolated={self._sandbox.is_isolated}"
-            )
+            # 延迟启动: 容器创建 (~3s) 推迟到首次 execute()
+            logger.debug("ShellExec 沙箱已创建（延迟启动）")
 
         logger.info(
             f"ShellExecSkill loaded: whitelist={self._whitelist}, "

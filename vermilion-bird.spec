@@ -71,7 +71,6 @@ common_hiddenimports = [
     "llm_chat.intent.classifier",
     "llm_chat.client._base",
     "llm_chat.client._chat",
-    "llm_chat.client._stream",
     "llm_chat.client._stream_tools",
     "llm_chat.client._tools",
     "llm_chat.client._generate",
@@ -80,7 +79,6 @@ common_hiddenimports = [
     "llm_chat.utils.secure_storage",
     "llm_chat.utils.observability",
     "llm_chat.utils.retry",
-    "pkg_resources",
 ]
 common_excludes = [
     "matplotlib", "scipy", "numpy", "pandas", "PIL",

@@ -55,7 +55,7 @@ class App:
         self._init_prompt_skills()
         self.service_manager = self._init_service_manager()
         self._health_checker = self._init_health_checker()
-        self._init_scheduler()
+        # Scheduler 延迟到 _start_background_services 中初始化（加快窗口显示）
 
         logger.info("App initialization complete")
 
@@ -546,6 +546,7 @@ class App:
 
         self.set_frontend(frontend)
 
+        # ── 快速初始化（在窗口显示前完成） ──
         self.storage.migrate_from_json()
 
         conversations = self.conversation_manager.list_conversations()
@@ -557,21 +558,29 @@ class App:
             # 无对话时创建默认对话
             self._on_new_conversation()
 
-        if self.config.enable_tools:
-            if self.config.mcp.servers:
-                self.enable_tools()
-
-        # 使用服务管理器启动所有服务
-        self.service_manager.start_all()
-
+        # ── 先显示窗口，后台初始化（MCP / Scheduler）延后执行 ──
         try:
-            frontend.start()
+            frontend.start(post_init=self._start_background_services)
         except KeyboardInterrupt:
             self.stop()
         except Exception as e:
             if self.current_frontend:
                 self.current_frontend.display_error(str(e))
             raise
+
+    def _start_background_services(self):
+        """窗口显示后异步执行的后台初始化。"""
+        logger.info("开始后台服务初始化...")
+        # Scheduler 初始化（含 APScheduler 启动，~2s）
+        if self.scheduler is None:
+            self._init_scheduler()
+        if self.config.enable_tools:
+            if self.config.mcp.servers:
+                self.enable_tools()
+        self.service_manager.start_all()
+        if self.current_frontend:
+            self.current_frontend.display_info("服务就绪")
+        logger.info("后台服务初始化完成")
 
     def stop(self):
         # 使用服务管理器停止所有服务

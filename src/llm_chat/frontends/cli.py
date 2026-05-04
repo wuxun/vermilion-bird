@@ -22,8 +22,11 @@ class CLIFrontend(BaseFrontend):
     def set_conversation(self, conversation):
         self._conversation = conversation
 
-    def start(self):
+    def start(self, post_init: Optional[Callable] = None):
         self._running = True
+        # CLI 前端无事件循环，直接同步执行后台初始化
+        if post_init is not None:
+            post_init()
 
         print("Vermilion Bird - 大模型对话工具")
         print("输入 'exit' 退出，输入 'clear' 清空对话历史")

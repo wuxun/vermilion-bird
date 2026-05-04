@@ -77,7 +77,13 @@ class BaseFrontend(ABC):
         self._on_list_conversations_callback = on_list
 
     @abstractmethod
-    def start(self):
+    def start(self, post_init: Optional[Callable] = None):
+        """启动前端。
+
+        Args:
+            post_init: GUI 前端在窗口显示后异步执行的初始化函数
+                       (CLI 前端忽略此参数)
+        """
         pass
 
     @abstractmethod
