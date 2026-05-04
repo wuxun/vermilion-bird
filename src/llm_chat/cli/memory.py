@@ -15,6 +15,21 @@ def memory():
 
 
 @memory.command()
+@click.argument("fact")
+def add(fact):
+    """添加一条事实到长期记忆 (用户主动告知)
+
+    示例:
+        vermilion-bird memory add "我最常用的 Python 版本是 3.11"
+        vermilion-bird memory add "项目 X 使用 PostgreSQL 作为主数据库"
+    """
+    storage = MemoryStorage()
+    # 直接写入长期记忆的「用户主动告知」章节
+    storage.add_user_fact(fact)
+    click.echo(f"已记住 ✓: {fact}")
+
+
+@memory.command()
 def status():
     """查看记忆状态"""
     storage = MemoryStorage()

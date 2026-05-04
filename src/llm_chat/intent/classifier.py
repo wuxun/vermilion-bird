@@ -36,6 +36,8 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     (re.compile(r"^/new\b", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 切换风格
     (re.compile(r"^/style\s+(\w+)", re.IGNORECASE), Intent.SHORTCUT, ""),
+    # 记住事实到长期记忆
+    (re.compile(r"^/(?:remember|记住|记忆)\s+(.+)", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 帮助
     (re.compile(r"^/(?:help|帮助|\\?)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
 ]
@@ -170,6 +172,7 @@ _HELP_TEXT = """🐦 **Vermilion Bird 快捷指令**
 | `/search <关键词>` | 搜索网页 |
 | `/file <路径>` | 读取/操作文件 |
 | `/code <描述>` | 写代码 |
+| `/记住 <内容>` | 存储到长期记忆 |
 | `/memory` | 查看/管理记忆 |
 | `/schedule` | 管理定时任务 |
 | `/summary` | 总结对话 |
@@ -266,6 +269,15 @@ class IntentClassifier:
                             confidence=1.0,
                             skip_llm=True,
                             override_message=f"__style__:{style_name}",
+                        )
+                    # /remember /记住 → 存储到长期记忆
+                    elif "remember" in pattern.pattern or "记住" in pattern.pattern or ("记忆" in pattern.pattern and m.lastindex):
+                        content = m.group(1).strip() if m.lastindex else ""
+                        return RoutingDecision(
+                            intent=Intent.SHORTCUT,
+                            confidence=1.0,
+                            skip_llm=True,
+                            override_message=f"__remember__:{content}",
                         )
                     # /clear /reset /help → 直接回复
                     elif "clear" in pattern.pattern or "reset" in pattern.pattern or "清空" in pattern.pattern or "重置" in pattern.pattern:

@@ -107,6 +107,22 @@ class ChatCore:
                 logger.info(f"[INTENT] 风格切换: {style_name}")
                 return response
 
+            # /remember 特殊处理：直接存储到长期记忆
+            if decision.override_message and decision.override_message.startswith("__remember__:"):
+                content = decision.override_message.split(":", 1)[1]
+                if content:
+                    memory_manager = getattr(conv, "_memory_manager", None)
+                    if memory_manager:
+                        memory_manager.consolidate_to_long_term([content], is_user_told=True)
+                        response = f"已记住 ✓: {content}"
+                    else:
+                        response = f"已记录（无记忆管理器）: {content}"
+                    logger.info(f"[INTENT] 记住事实: {content[:80]}...")
+                else:
+                    response = "请提供要记住的内容，例如：/记住 我最常用的 Python 版本是 3.11"
+                conv.add_assistant_message(response)
+                return response
+
             # /new 特殊处理：创建新会话
             if decision.override_message == "__new_conversation__":
                 # 从消息中提取标题 (如 /new 项目讨论 → 项目讨论)
