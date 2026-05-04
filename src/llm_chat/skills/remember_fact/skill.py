@@ -1,13 +1,7 @@
-"""remember_fact 技能 — 长期记忆读写删改。
+"""remember_fact 技能 — 长期记忆读写。
 
-提供全套工具，让 LLM 能主动管理长期记忆：
-- read_facts: 查询已有事实
-- remember_fact: 写入新事实
-- update_fact: 修改已有事实
-- delete_facts: 删除事实
-- consolidate_facts: 合并多条事实（删除 + 新增合并版）
-
-删改操作直接操作 long_term.md 文件，不经过 MemoryStorage 的特定方法。
+提供 remember_fact（写入）和 read_facts（读取）两个工具。
+删改/去重/合并由 MemoryManager 后台自动进化完成。
 """
 
 import logging
@@ -28,8 +22,6 @@ CATEGORY_LABELS = {
     "other": "其他",
 }
 
-# ————— 辅助函数 —————
-
 
 def _get_storage():
     from llm_chat.memory import MemoryStorage
@@ -47,11 +39,12 @@ def _parse_user_facts(content: str) -> List[str]:
     return [l.strip() for l in text.split("\n") if l.strip().startswith("- ")]
 
 
-# ————— 工具类 —————
-
-
 class RememberFactTool(BaseTool):
-    """将一条重要事实/偏好/信息存入长期记忆「用户主动告知」章节。"""
+    """> **写入**：将一条重要事实存储到长期记忆。
+
+    当用户明确说出值得长期记住的信息时使用。
+    后台系统会自动去重、合并、整理，无需手动管理。
+    """
 
     @property
     def name(self) -> str:
@@ -63,6 +56,7 @@ class RememberFactTool(BaseTool):
             "将一条重要事实/偏好/计划存储到长期记忆。"
             "当用户明确说出值得长期记住的信息时使用此工具。"
             "这些信息将持久保存并在后续对话中自动注入到系统提示上下文。"
+            "后台系统会定期自动去重和整理，无需手动管理。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -79,8 +73,7 @@ class RememberFactTool(BaseTool):
                 "category": {
                     "type": "string",
                     "description": (
-                        "事实分类，帮助记忆系统组织信息。可选值："
-                        "identity(身份背景), preference(偏好), project(项目信息), "
+                        "事实分类：identity(身份背景), preference(偏好), project(项目), "
                         "plan(计划), skill(技能), other(其他)"
                     ),
                     "enum": list(CATEGORY_LABELS.keys()),
@@ -106,7 +99,10 @@ class RememberFactTool(BaseTool):
 
 
 class ReadFactsTool(BaseTool):
-    """读取长期记忆中已存储的用户事实。"""
+    """> **读取**：查询长期记忆中已存储的用户事实。
+
+    用于回答"你记得我吗"这类问题，或在写入前检查是否已存在。
+    """
 
     @property
     def name(self) -> str:
@@ -116,48 +112,37 @@ class ReadFactsTool(BaseTool):
     def description(self) -> str:
         return (
             "读取长期记忆中已存储的所有用户事实。"
-            "在调用 remember_fact 之前应先调用此工具检查是否已存在相同事实，避免重复。"
-            "也可用于检查记忆状态或回答用户'你记得我吗'这类问题。"
+            "可用于回答用户'你记得我吗'这类问题，"
+            "或在调用 remember_fact 之前检查是否已存在相同事实。"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "category": {
-                    "type": "string",
-                    "description": "按分类筛选。留空返回全部。",
-                    "enum": ["identity", "preference", "project",
-                             "plan", "skill", "other"],
-                    "default": "",
-                },
                 "keyword": {
                     "type": "string",
                     "description": (
-                        "按关键词搜索（不区分大小写）。例如：'python'、'项目'。留空则不过滤。"
+                        "按关键词搜索（不区分大小写）。留空返回全部。"
                     ),
                     "default": "",
                 },
             },
         }
 
-    def execute(self, category: str = "", keyword: str = "") -> str:
+    def execute(self, keyword: str = "") -> str:
         try:
             storage = _get_storage()
             lines = _parse_user_facts(storage.load_long_term())
             if not lines:
                 return "暂无用户主动告知的事实。"
 
-            if category:
-                label = CATEGORY_LABELS.get(category, category)
-                lines = [l for l in lines if f"[{label}]" in l]
-
             if keyword:
                 kw = keyword.lower()
                 lines = [l for l in lines if kw in l.lower()]
 
             if not lines:
-                return f"未匹配到事实。"
+                return f"未匹配到包含「{keyword}」的事实。"
 
             result = [f"共 {len(lines)} 条事实："]
             for i, line in enumerate(lines, 1):
@@ -170,216 +155,8 @@ class ReadFactsTool(BaseTool):
             return f"❌ 读取事实失败: {str(e)}"
 
 
-class UpdateFactTool(BaseTool):
-    """修改一条已存储的用户事实。"""
-
-    @property
-    def name(self) -> str:
-        return "update_fact"
-
-    @property
-    def description(self) -> str:
-        return (
-            "修改一条已存在的用户事实。先用 read_facts 查看已有事实，"
-            "通过原内容中的关键词定位要修改的条目，然后用新内容替换。"
-        )
-
-    def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "old_substring": {
-                    "type": "string",
-                    "description": (
-                        "要修改的事实中的关键词或子串（不区分大小写），"
-                        "用于定位要修改的条目。"
-                    ),
-                },
-                "new_fact": {
-                    "type": "string",
-                    "description": "替换后的新事实内容（不含分类前缀，系统会自动添加）。",
-                },
-                "category": {
-                    "type": "string",
-                    "description": "事实分类。不传则保持原分类。",
-                    "enum": ["identity", "preference", "project",
-                             "plan", "skill", "other"],
-                    "default": "",
-                },
-            },
-            "required": ["old_substring", "new_fact"],
-        }
-
-    def execute(self, old_substring: str, new_fact: str, category: str = "") -> str:
-        try:
-            from llm_chat.memory import MemoryStorage
-            storage = MemoryStorage()
-
-            content = storage.load_long_term()
-            lines = _parse_user_facts(content)
-            if not lines:
-                return "暂无事实，无需修改。"
-
-            kw = old_substring.lower()
-            found = False
-            for i, line in enumerate(lines):
-                if kw in line.lower():
-                    if category:
-                        label = CATEGORY_LABELS.get(category, category)
-                        lines[i] = f"- [{label}] {new_fact}"
-                    else:
-                        prefix_match = re.match(r"- (\[[^\]]+\]\s*)?", line)
-                        prefix = prefix_match.group(0) if prefix_match else "- "
-                        lines[i] = f"{prefix}{new_fact}"
-                    found = True
-                    break
-
-            if not found:
-                return f"未找到包含「{old_substring}」的事实，请先用 read_facts 确认。"
-
-            storage.replace_user_facts(lines)
-            return f"已更新 ✓"
-
-        except Exception as e:
-            logger.error(f"更新事实失败: {e}")
-            return f"❌ 更新事实失败: {str(e)}"
-
-
-class DeleteFactsTool(BaseTool):
-    """删除一条或多条用户事实。"""
-
-    @property
-    def name(self) -> str:
-        return "delete_facts"
-
-    @property
-    def description(self) -> str:
-        return (
-            "删除一条或多条用户事实。先用 read_facts 查看已有事实，"
-            "然后通过关键词定位要删除的条目。"
-            "注意：关键词匹配不区分大小写，匹配到的所有条目都会被删除！"
-        )
-
-    def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "keywords": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "关键词列表，包含任意关键词的事实都会被删除（不区分大小写）。"
-                        "每个关键词应足够精确，避免误删。"
-                    ),
-                },
-            },
-            "required": ["keywords"],
-        }
-
-    def execute(self, keywords: List[str]) -> str:
-        try:
-            from llm_chat.memory import MemoryStorage
-            storage = MemoryStorage()
-
-            content = storage.load_long_term()
-            lines = _parse_user_facts(content)
-            if not lines:
-                return "暂无事实，无需删除。"
-
-            kept = []
-            removed = 0
-            for line in lines:
-                should_remove = any(kw.lower() in line.lower() for kw in keywords)
-                if should_remove:
-                    removed += 1
-                else:
-                    kept.append(line)
-
-            if removed == 0:
-                return "未找到匹配的事实，请先用 read_facts 确认。"
-
-            storage.replace_user_facts(kept)
-            return f"已删除 {removed} 条事实 ✓"
-
-        except Exception as e:
-            logger.error(f"删除事实失败: {e}")
-            return f"❌ 删除事实失败: {str(e)}"
-
-
-class ConsolidateFactsTool(BaseTool):
-    """合并多条事实为一条，同时删除原条目。"""
-
-    @property
-    def name(self) -> str:
-        return "consolidate_facts"
-
-    @property
-    def description(self) -> str:
-        return (
-            "合并多条相似或相关的事实。先用 read_facts 查看，"
-            "然后用关键词定位要合并的条目，系统会删除这些条目，"
-            "并写入一条合并后的事实。用于减少重复、精简记忆。"
-        )
-
-    def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "delete_keywords": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "要删除的旧事实的关键词列表，匹配的所有条目都会被删除。"
-                    ),
-                },
-                "consolidated_fact": {
-                    "type": "string",
-                    "description": "合并后的事实，应包含原始所有条目的关键信息。",
-                },
-                "category": {
-                    "type": "string",
-                    "description": "合并后事实的分类。",
-                    "enum": ["identity", "preference", "project",
-                             "plan", "skill", "other"],
-                    "default": "preference",
-                },
-            },
-            "required": ["delete_keywords", "consolidated_fact"],
-        }
-
-    def execute(self, delete_keywords: List[str], consolidated_fact: str,
-                category: str = "preference") -> str:
-        try:
-            from llm_chat.memory import MemoryStorage
-            storage = MemoryStorage()
-
-            content = storage.load_long_term()
-            lines = _parse_user_facts(content)
-            if not lines:
-                return "暂无事实。"
-
-            kept = []
-            removed = 0
-            for line in lines:
-                should_remove = any(kw.lower() in line.lower() for kw in delete_keywords)
-                if should_remove:
-                    removed += 1
-                else:
-                    kept.append(line)
-
-            label = CATEGORY_LABELS.get(category, category)
-            kept.append(f"- [{label}] {consolidated_fact}")
-
-            storage.replace_user_facts(kept)
-            return f"已合并 ✓ 删除 {removed} 条，新增合并版本 [{label}]: {consolidated_fact[:80]}"
-
-        except Exception as e:
-            logger.error(f"合并事实失败: {e}")
-            return f"❌ 合并事实失败: {str(e)}"
-
-
 class RememberFactSkill(BaseSkill):
-    """长期记忆技能 — 提供读写删改全套工具。"""
+    """长期记忆技能 — 读写用户事实。后台自动进化管理。"""
 
     @property
     def name(self) -> str:
@@ -387,20 +164,11 @@ class RememberFactSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return (
-            "长期记忆管理：LLM 可读写删改用户事实，"
-            "进行去重、合并、整理等操作以维持记忆精简。"
-        )
+        return "长期记忆管理：LLM 可写入和查询用户事实。"
 
     @property
     def version(self) -> str:
-        return "1.2.0"
+        return "1.0.0"
 
     def get_tools(self) -> List[BaseTool]:
-        return [
-            RememberFactTool(),
-            ReadFactsTool(),
-            UpdateFactTool(),
-            DeleteFactsTool(),
-            ConsolidateFactsTool(),
-        ]
+        return [RememberFactTool(), ReadFactsTool()]

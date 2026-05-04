@@ -152,37 +152,6 @@ class MemoryStorage:
     
     def add_user_fact(self, fact: str):
         """添加用户主动告知的事实（线程安全）"""
-        self.insert_user_facts([fact])
-
-    def insert_user_facts(self, facts: List[str]):
-        """批量插入用户事实（线程安全）。facts 是完整的事实行（含 - 前缀和分类标签）。"""
-        with self._lock:
-            content = self.load_long_term()
-            
-            user_facts_match = re.search(r'### 用户主动告知\n', content)
-            if user_facts_match:
-                insert_pos = user_facts_match.end()
-                new_entries = "\n" + "\n".join(f"- {f}" if not f.startswith("- ") else f for f in facts) + "\n"
-                content = content[:insert_pos] + new_entries + content[insert_pos:]
-                self.save_long_term(content)
-                logger.info(f"插入 {len(facts)} 条用户事实")
-
-    def replace_user_facts(self, facts: List[str]) -> int:
-        """替换所有用户事实。facts 是完整的事实行（含 - 前缀）。返回替换前的条数。"""
-        with self._lock:
-            content = self.load_long_term()
-            
-            pattern = r'(### 用户主动告知\n)(.*?)(?=\n###|\n##|\Z)'
-            match = re.search(pattern, content, re.DOTALL)
-            if not match:
-                return 0
-
-            old_lines = [l for l in match.group(2).strip().split("\n") if l.strip().startswith("- ")]
-            new_section = match.group(1) + "\n".join(facts) + "\n"
-            content = re.sub(pattern, new_section, content, count=1, flags=re.DOTALL)
-            self.save_long_term(content)
-            logger.info(f"替换用户事实: {len(old_lines)} → {len(facts)}")
-            return len(old_lines)
         with self._lock:
             content = self.load_long_term()
             
