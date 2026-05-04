@@ -252,6 +252,8 @@ mcp:
 #     sandbox_enabled: true              # 启用沙箱
 #     sandbox_timeout: 60                # 超时 (秒)
 #     sandbox_max_memory_mb: 256         # 内存上限
+#   remember_fact:
+#     enabled: true                       # 长期记忆主动存储
 #     allowed_workdir: "./work"
 #     max_output_length: 10000
 #

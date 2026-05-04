@@ -368,6 +368,7 @@ class SkillsConfig(BaseSettings):
     )
     scheduler: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
     shell_exec: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
+    remember_fact: SkillConfig = Field(default_factory=lambda: SkillConfig(enabled=True))
 
     class Config:
         extra = "allow"
