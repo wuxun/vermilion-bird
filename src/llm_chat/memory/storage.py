@@ -3,6 +3,7 @@ import shutil
 import logging
 import tempfile
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 class MemoryStorage:
     """Markdown格式记忆存储管理器"""
+    
+    _lock = threading.Lock()
     
     def __init__(self, memory_dir: str = "~/.vermilion-bird/memory"):
         self.memory_dir = Path(memory_dir).expanduser()
@@ -148,40 +151,43 @@ class MemoryStorage:
         return False
     
     def add_user_fact(self, fact: str):
-        """添加用户主动告知的事实"""
-        content = self.load_long_term()
-        
-        user_facts_match = re.search(r'### 用户主动告知\n', content)
-        if user_facts_match:
-            insert_pos = user_facts_match.end()
-            new_entry = f"\n- {fact}\n"
-            content = content[:insert_pos] + new_entry + content[insert_pos:]
-            self.save_long_term(content)
-            logger.info(f"添加用户事实: {fact[:50]}...")
+        """添加用户主动告知的事实（线程安全）"""
+        with self._lock:
+            content = self.load_long_term()
+            
+            user_facts_match = re.search(r'### 用户主动告知\n', content)
+            if user_facts_match:
+                insert_pos = user_facts_match.end()
+                new_entry = f"\n- {fact}\n"
+                content = content[:insert_pos] + new_entry + content[insert_pos:]
+                self.save_long_term(content)
+                logger.info(f"添加用户事实: {fact[:50]}...")
     
     def add_inferred_fact(self, fact: str):
-        """添加系统推断的事实"""
-        content = self.load_long_term()
-        
-        inferred_match = re.search(r'### 系统推断\n', content)
-        if inferred_match:
-            insert_pos = inferred_match.end()
-            new_entry = f"\n- {fact}\n"
-            content = content[:insert_pos] + new_entry + content[insert_pos:]
-            self.save_long_term(content)
-            logger.info(f"添加推断事实: {fact[:50]}...")
+        """添加系统推断的事实（线程安全）"""
+        with self._lock:
+            content = self.load_long_term()
+            
+            inferred_match = re.search(r'### 系统推断\n', content)
+            if inferred_match:
+                insert_pos = inferred_match.end()
+                new_entry = f"\n- {fact}\n"
+                content = content[:insert_pos] + new_entry + content[insert_pos:]
+                self.save_long_term(content)
+                logger.info(f"添加推断事实: {fact[:50]}...")
     
     def add_evolution_log(self, date: str, log: str):
-        """添加进化日志"""
-        content = self.load_long_term()
-        
-        evolution_match = re.search(r'## 进化日志\n', content)
-        if evolution_match:
-            insert_pos = evolution_match.end()
-            new_entry = f"\n### {date}\n{log}\n"
-            content = content[:insert_pos] + new_entry + content[insert_pos:]
-            self.save_long_term(content)
-            logger.info(f"添加进化日志: {date}")
+        """添加进化日志（线程安全）"""
+        with self._lock:
+            content = self.load_long_term()
+            
+            evolution_match = re.search(r'## 进化日志\n', content)
+            if evolution_match:
+                insert_pos = evolution_match.end()
+                new_entry = f"\n### {date}\n{log}\n"
+                content = content[:insert_pos] + new_entry + content[insert_pos:]
+                self.save_long_term(content)
+                logger.info(f"添加进化日志: {date}")
     
     def update_timestamp(self, memory_type: str = "all"):
         """更新记忆文件的时间戳"""
