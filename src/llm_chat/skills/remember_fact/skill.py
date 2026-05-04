@@ -1,11 +1,13 @@
 """remember_fact 技能 — 长期记忆读写删改。
 
-提供读写删改全套工具，让 LLM 能主动管理长期记忆：
+提供全套工具，让 LLM 能主动管理长期记忆：
 - read_facts: 查询已有事实
 - remember_fact: 写入新事实
 - update_fact: 修改已有事实
 - delete_facts: 删除事实
 - consolidate_facts: 合并多条事实（删除 + 新增合并版）
+
+删改操作直接操作 long_term.md 文件，不经过 MemoryStorage 的特定方法。
 """
 
 import logging
@@ -26,10 +28,26 @@ CATEGORY_LABELS = {
     "other": "其他",
 }
 
+# ————— 辅助函数 —————
+
 
 def _get_storage():
     from llm_chat.memory import MemoryStorage
     return MemoryStorage()
+
+
+def _parse_user_facts(content: str) -> List[str]:
+    """从 long_term.md 内容中提取所有用户事实行。"""
+    match = re.search(
+        r'### 用户主动告知\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+    )
+    if not match:
+        return []
+    text = match.group(1).strip()
+    return [l.strip() for l in text.split("\n") if l.strip().startswith("- ")]
+
+
+# ————— 工具类 —————
 
 
 class RememberFactTool(BaseTool):
@@ -126,19 +144,9 @@ class ReadFactsTool(BaseTool):
     def execute(self, category: str = "", keyword: str = "") -> str:
         try:
             storage = _get_storage()
-            content = storage.load_long_term()
-
-            ua_match = re.search(
-                r'### 用户主动告知\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
-            )
-            if not ua_match:
+            lines = _parse_user_facts(storage.load_long_term())
+            if not lines:
                 return "暂无用户主动告知的事实。"
-
-            facts_text = ua_match.group(1).strip()
-            if not facts_text:
-                return "暂无用户主动告知的事实。"
-
-            lines = [l.strip() for l in facts_text.split("\n") if l.strip().startswith("- ")]
 
             if category:
                 label = CATEGORY_LABELS.get(category, category)
@@ -149,19 +157,13 @@ class ReadFactsTool(BaseTool):
                 lines = [l for l in lines if kw in l.lower()]
 
             if not lines:
-                filter_desc = []
-                if category:
-                    filter_desc.append(f"分类={category}")
-                if keyword:
-                    filter_desc.append(f"关键词={keyword}")
-                desc = " (" + ", ".join(filter_desc) + ")" if filter_desc else ""
-                return f"未匹配到事实{desc}。"
+                return f"未匹配到事实。"
 
-            result_parts = [f"共 {len(lines)} 条事实："]
+            result = [f"共 {len(lines)} 条事实："]
             for i, line in enumerate(lines, 1):
-                result_parts.append(f"{i}. {line[2:]}")
+                result.append(f"{i}. {line[2:]}")
 
-            return "\n".join(result_parts)
+            return "\n".join(result)
 
         except Exception as e:
             logger.error(f"读取事实失败: {e}")
@@ -210,16 +212,33 @@ class UpdateFactTool(BaseTool):
 
     def execute(self, old_substring: str, new_fact: str, category: str = "") -> str:
         try:
-            storage = _get_storage()
-            if category:
-                label = CATEGORY_LABELS.get(category, category)
-                new_fact = f"[{label}] {new_fact}"
+            from llm_chat.memory import MemoryStorage
+            storage = MemoryStorage()
 
-            success = storage.update_user_fact(old_substring, new_fact)
-            if success:
-                return f"已更新 ✓ {new_fact[:80]}"
-            else:
+            content = storage.load_long_term()
+            lines = _parse_user_facts(content)
+            if not lines:
+                return "暂无事实，无需修改。"
+
+            kw = old_substring.lower()
+            found = False
+            for i, line in enumerate(lines):
+                if kw in line.lower():
+                    if category:
+                        label = CATEGORY_LABELS.get(category, category)
+                        lines[i] = f"- [{label}] {new_fact}"
+                    else:
+                        prefix_match = re.match(r"- (\[[^\]]+\]\s*)?", line)
+                        prefix = prefix_match.group(0) if prefix_match else "- "
+                        lines[i] = f"{prefix}{new_fact}"
+                    found = True
+                    break
+
+            if not found:
                 return f"未找到包含「{old_substring}」的事实，请先用 read_facts 确认。"
+
+            storage.replace_user_facts(lines)
+            return f"已更新 ✓"
 
         except Exception as e:
             logger.error(f"更新事实失败: {e}")
@@ -259,15 +278,28 @@ class DeleteFactsTool(BaseTool):
 
     def execute(self, keywords: List[str]) -> str:
         try:
-            storage = _get_storage()
-            if not keywords:
-                return "请提供至少一个关键词。"
+            from llm_chat.memory import MemoryStorage
+            storage = MemoryStorage()
 
-            count = storage.delete_user_facts(keywords)
-            if count > 0:
-                return f"已删除 {count} 条事实 ✓"
-            else:
+            content = storage.load_long_term()
+            lines = _parse_user_facts(content)
+            if not lines:
+                return "暂无事实，无需删除。"
+
+            kept = []
+            removed = 0
+            for line in lines:
+                should_remove = any(kw.lower() in line.lower() for kw in keywords)
+                if should_remove:
+                    removed += 1
+                else:
+                    kept.append(line)
+
+            if removed == 0:
                 return "未找到匹配的事实，请先用 read_facts 确认。"
+
+            storage.replace_user_facts(kept)
+            return f"已删除 {removed} 条事实 ✓"
 
         except Exception as e:
             logger.error(f"删除事实失败: {e}")
@@ -318,19 +350,28 @@ class ConsolidateFactsTool(BaseTool):
     def execute(self, delete_keywords: List[str], consolidated_fact: str,
                 category: str = "preference") -> str:
         try:
-            storage = _get_storage()
-            if not delete_keywords or not consolidated_fact:
-                return "请提供关键词列表和合并后的事实。"
+            from llm_chat.memory import MemoryStorage
+            storage = MemoryStorage()
 
-            # 删除旧条目
-            deleted = storage.delete_user_facts(delete_keywords)
+            content = storage.load_long_term()
+            lines = _parse_user_facts(content)
+            if not lines:
+                return "暂无事实。"
 
-            # 写入合并后的事实
+            kept = []
+            removed = 0
+            for line in lines:
+                should_remove = any(kw.lower() in line.lower() for kw in delete_keywords)
+                if should_remove:
+                    removed += 1
+                else:
+                    kept.append(line)
+
             label = CATEGORY_LABELS.get(category, category)
-            tagged_fact = f"[{label}] {consolidated_fact}"
-            storage.add_user_fact(tagged_fact)
+            kept.append(f"- [{label}] {consolidated_fact}")
 
-            return f"已合并 ✓ 删除了 {deleted} 条旧事实，新增合并版本 [{label}]: {consolidated_fact[:80]}"
+            storage.replace_user_facts(kept)
+            return f"已合并 ✓ 删除 {removed} 条，新增合并版本 [{label}]: {consolidated_fact[:80]}"
 
         except Exception as e:
             logger.error(f"合并事实失败: {e}")

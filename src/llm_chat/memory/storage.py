@@ -150,25 +150,39 @@ class MemoryStorage:
             return True
         return False
     
-    def _get_user_facts_section(self, content: str) -> tuple:
-        """解析长期记忆中的「用户主动告知」章节，返回 (section_start, section_end, lines)"""
-        ua_match = re.search(
-            r'(### 用户主动告知\n)(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
-        )
-        if not ua_match:
-            return None, None, []
-        section_start = ua_match.start(1)
-        section_end = ua_match.end(2)
-        facts_text = ua_match.group(2).strip()
-        lines = []
-        for line in facts_text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("- "):
-                lines.append(stripped)
-        return section_start, section_end, lines
-
     def add_user_fact(self, fact: str):
         """添加用户主动告知的事实（线程安全）"""
+        self.insert_user_facts([fact])
+
+    def insert_user_facts(self, facts: List[str]):
+        """批量插入用户事实（线程安全）。facts 是完整的事实行（含 - 前缀和分类标签）。"""
+        with self._lock:
+            content = self.load_long_term()
+            
+            user_facts_match = re.search(r'### 用户主动告知\n', content)
+            if user_facts_match:
+                insert_pos = user_facts_match.end()
+                new_entries = "\n" + "\n".join(f"- {f}" if not f.startswith("- ") else f for f in facts) + "\n"
+                content = content[:insert_pos] + new_entries + content[insert_pos:]
+                self.save_long_term(content)
+                logger.info(f"插入 {len(facts)} 条用户事实")
+
+    def replace_user_facts(self, facts: List[str]) -> int:
+        """替换所有用户事实。facts 是完整的事实行（含 - 前缀）。返回替换前的条数。"""
+        with self._lock:
+            content = self.load_long_term()
+            
+            pattern = r'(### 用户主动告知\n)(.*?)(?=\n###|\n##|\Z)'
+            match = re.search(pattern, content, re.DOTALL)
+            if not match:
+                return 0
+
+            old_lines = [l for l in match.group(2).strip().split("\n") if l.strip().startswith("- ")]
+            new_section = match.group(1) + "\n".join(facts) + "\n"
+            content = re.sub(pattern, new_section, content, count=1, flags=re.DOTALL)
+            self.save_long_term(content)
+            logger.info(f"替换用户事实: {len(old_lines)} → {len(facts)}")
+            return len(old_lines)
         with self._lock:
             content = self.load_long_term()
             
@@ -192,70 +206,6 @@ class MemoryStorage:
                 content = content[:insert_pos] + new_entry + content[insert_pos:]
                 self.save_long_term(content)
                 logger.info(f"添加推断事实: {fact[:50]}...")
-
-    def delete_user_facts(self, facts: List[str]) -> int:
-        """删除指定的用户事实。facts 为要删除的事实内容（子串匹配，不区分大小写）。
-        返回删除的条数。"""
-        with self._lock:
-            content = self.load_long_term()
-            start, end, lines = self._get_user_facts_section(content)
-            if not lines:
-                return 0
-
-            # 构建删除前的原始行列表（含格式）
-            raw_lines = content[start:end].split("\n")
-            # 过滤出要保留的行
-            kept = []
-            removed_count = 0
-            for line in raw_lines:
-                stripped = line.strip()
-                if stripped.startswith("- "):
-                    should_remove = any(
-                        kw.lower() in stripped.lower() for kw in facts
-                    )
-                    if should_remove:
-                        removed_count += 1
-                        continue
-                kept.append(line)
-
-            if removed_count == 0:
-                return 0
-
-            new_section = "\n".join(kept)
-            new_content = content[:start] + new_section + content[end:]
-            self.save_long_term(new_content)
-            logger.info(f"删除 {removed_count} 条用户事实")
-            return removed_count
-
-    def update_user_fact(self, old_substring: str, new_fact: str) -> bool:
-        """更新用户事实：将包含 old_substring 的第一条事实替换为 new_fact。
-        返回是否找到并替换。"""
-        with self._lock:
-            content = self.load_long_term()
-            start, end, lines = self._get_user_facts_section(content)
-            if not lines:
-                return False
-
-            raw_lines = content[start:end].split("\n")
-            kw = old_substring.lower()
-            found = False
-            new_raw_lines = []
-            for line in raw_lines:
-                stripped = line.strip()
-                if not found and stripped.startswith("- ") and kw in stripped.lower():
-                    new_raw_lines.append(f"- {new_fact}")
-                    found = True
-                else:
-                    new_raw_lines.append(line)
-
-            if not found:
-                return False
-
-            new_section = "\n".join(new_raw_lines)
-            new_content = content[:start] + new_section + content[end:]
-            self.save_long_term(new_content)
-            logger.info(f"更新用户事实: {old_substring[:40]}... → {new_fact[:40]}...")
-            return True
     
     def add_evolution_log(self, date: str, log: str):
         """添加进化日志（线程安全）"""
