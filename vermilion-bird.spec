@@ -187,8 +187,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "Vermilion Bird",
         "CFBundleName": "Vermilion Bird",
-        "CFBundleVersion": "0.1.0",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "0.0.1",
+        "CFBundleShortVersionString": "0.0.1",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
     },
