@@ -76,13 +76,7 @@ class FeishuServer:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._logger = logging.getLogger(__name__)
-        if not self._logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            handler.setFormatter(formatter)
-            self._logger.addHandler(handler)
+        # 不添加独立 Handler，继承根日志配置（文件 + 终端统一输出）
         self._logger.setLevel(logging.INFO)
 
         self._client: Optional[ws.Client] = None

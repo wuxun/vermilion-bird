@@ -466,6 +466,14 @@ class Config(BaseSettings):
         ),
     )
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    log_file: str = Field(
+        default="~/.vermilion-bird/app.log",
+        description="日志文件路径，可被 CLI --log-file 覆盖",
+    )
+    log_level: str = Field(
+        default="INFO",
+        description="日志级别: DEBUG, INFO, WARNING, ERROR",
+    )
 
     class Config:
         env_prefix = ""
@@ -586,6 +594,10 @@ class Config(BaseSettings):
                 else SchedulerConfig()
             )
 
+            # 日志配置
+            log_file = config_data.get("log_file", "~/.vermilion-bird/app.log")
+            log_level = config_data.get("log_level", "INFO")
+
             config_instance = cls(
                 llm=llm_config,
                 mcp=mcp_config,
@@ -597,6 +609,8 @@ class Config(BaseSettings):
                 memory=memory_config,
                 context=context_config,
                 scheduler=scheduler_config,
+                log_file=log_file,
+                log_level=log_level,
             )
             config_instance.validate_feishu_config()
             return config_instance
@@ -703,6 +717,8 @@ class Config(BaseSettings):
             "memory": self.memory.model_dump(),
             "context": self.context.model_dump(),
             "scheduler": self.scheduler.model_dump(),
+            "log_file": self.log_file,
+            "log_level": self.log_level,
         }
 
         with open(config_path, "w", encoding="utf-8") as f:

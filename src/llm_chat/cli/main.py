@@ -1,5 +1,6 @@
 import click
 import logging
+import os
 import sys
 import uuid
 from datetime import datetime
@@ -19,7 +20,12 @@ def setup_logging(level=logging.INFO, log_file: str = None):
     handlers = [logging.StreamHandler(sys.stdout)]
 
     if log_file:
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        # 自动创建日志文件所在目录
+        log_path = os.path.abspath(os.path.expanduser(log_file))
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
 
     logging.basicConfig(
         level=level,
@@ -79,9 +85,14 @@ def chat(
     log_level,
 ):
     """启动对话"""
-    setup_logging(getattr(logging, log_level), log_file)
-
     config = Config.from_yaml()
+
+    # CLI --log-file 覆盖 config 中的默认值
+    if log_file is None:
+        log_file = config.log_file
+    if log_level is None:
+        log_level = "INFO"
+    setup_logging(getattr(logging, log_level), log_file)
 
     if base_url:
         config.llm.base_url = base_url
@@ -128,14 +139,18 @@ def chat(
 )
 def feishu(config_path, log_file, log_level):
     """启动 Feishu 服务（非阻塞，后台运行）"""
-    setup_logging(getattr(logging, log_level), log_file)
-
-    # Load Feishu configuration
     try:
         config = Config.from_yaml(config_path)
     except Exception as e:
         click.echo(f"加载 Feishu 配置失败: {e}")
         return
+
+    # CLI --log-file 覆盖 config 中的默认值
+    if log_file is None:
+        log_file = config.log_file
+    if log_level is None:
+        log_level = "INFO"
+    setup_logging(getattr(logging, log_level), log_file)
 
     feishu_cfg = getattr(config, "feishu", None)
     if not feishu_cfg or not feishu_cfg.enabled:
@@ -287,9 +302,8 @@ def keyring_list():
 @click.option("--conversation-id", default=None, help="限定对话 ID")
 def search(query, limit, conversation_id):
     """全文搜索历史对话"""
-    setup_logging(logging.INFO)
-
     config = Config.from_yaml()
+    setup_logging(logging.INFO, log_file=config.log_file)
     app = App(config)
 
     results = app.conversation_manager.search_messages(

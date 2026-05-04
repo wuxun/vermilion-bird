@@ -1,3 +1,7 @@
+# 日志配置（可选，不配则默认输出到 ~/.vermilion-bird/app.log）
+log_file: "~/.vermilion-bird/app.log"
+log_level: "INFO"
+
 llm:
   base_url: "https://api.openai.com/v1"
   model: "gpt-3.5-turbo"
