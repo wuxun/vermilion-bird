@@ -101,8 +101,8 @@ class LLMConfig(BaseSettings):
         default=None, description="温度参数 (0-2)，控制输出随机性"
     )
     max_tokens: Optional[int] = Field(default=None, description="最大输出token数")
-    max_context_tokens: int = Field(
-        default=4096, description="模型最大上下文窗口大小(token)"
+    max_context_tokens: Optional[int] = Field(
+        default=None, description="模型最大上下文窗口大小(token)，不设则自动检测"
     )
     top_p: Optional[float] = Field(default=None, description="Top-p 采样参数")
     reasoning_effort: Optional[str] = Field(
