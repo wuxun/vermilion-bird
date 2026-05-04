@@ -1,10 +1,7 @@
-import os
 import re
-import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from datetime import datetime
-from pathlib import Path
 
 from llm_chat.utils.token_counter import count_tokens
 from .types import CompressionLevel, ContextMessage, CompressionResult
@@ -22,17 +19,14 @@ class ContextCompressor:
     def __init__(
         self,
         llm_client=None,
-        transcript_dir: str = "~/.vermilion-bird/transcripts",
         keep_recent_tool_results: int = 2,
         keep_recent_dialog_rounds: int = 3,
         auto_compact_threshold: float = 0.8,
     ):
         self.llm_client = llm_client
-        self.transcript_dir = Path(transcript_dir).expanduser()
         self.keep_recent_tool_results = keep_recent_tool_results
         self.keep_recent_dialog_rounds = keep_recent_dialog_rounds
         self.auto_compact_threshold = auto_compact_threshold
-        self.transcript_dir.mkdir(parents=True, exist_ok=True)
 
     def compress(
         self,
@@ -187,20 +181,6 @@ class ContextCompressor:
             f"[AUTO_COMPACT] 触发自动压缩: 微压缩后token={micro_result.compressed_token_count} > 阈值={int(threshold)}"
         )
 
-        # 保存完整转录本到磁盘
-        transcript_path = self._save_full_transcript(messages, conversation_id)
-
-        # 保留最近K轮对话
-        recent_messages = self._get_recent_dialog_rounds(
-            micro_result.messages, self.keep_recent_dialog_rounds
-        )
-        older_messages = [
-            msg for msg in micro_result.messages if msg not in recent_messages
-        ]
-
-        if not older_messages:
-            return micro_result
-
         # 生成历史摘要
         summary = self._generate_dialog_summary(older_messages)
 
@@ -208,11 +188,10 @@ class ContextCompressor:
         compressed = [
             ContextMessage(
                 role="system",
-                content=f"## 历史对话摘要\n{summary}\n\n完整对话记录已保存至: {transcript_path}",
+                content=f"## 历史对话摘要\n{summary}",
                 metadata={
                     "summary": True,
                     "original_messages": len(older_messages),
-                    "transcript_path": str(transcript_path),
                 },
                 timestamp=datetime.now().timestamp(),
             )
@@ -224,7 +203,8 @@ class ContextCompressor:
         ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0
 
         logger.info(
-            f"[AUTO_COMPACT] 自动压缩完成: 压缩后token={compressed_tokens}, 节省={saved_tokens}({int((1 - ratio) * 100)}%), 完整转录本已保存到={str(transcript_path)}"
+            f"[AUTO_COMPACT] 自动压缩完成: 压缩后token={compressed_tokens}, "
+            f"节省={saved_tokens}({int((1 - ratio) * 100)}%)"
         )
 
         return CompressionResult(
@@ -234,7 +214,6 @@ class ContextCompressor:
             compressed_token_count=compressed_tokens,
             compression_ratio=ratio,
             saved_tokens=saved_tokens,
-            full_transcript_path=str(transcript_path),
         )
 
     def manual_compact(
@@ -245,8 +224,7 @@ class ContextCompressor:
     ) -> CompressionResult:
         """
         Layer 3: 手动压缩
-        主动触发的全量压缩，保存完整转录本，生成全局摘要
-        仅保留最近1轮对话
+        主动触发的全量压缩，生成全局摘要，仅保留最近1轮对话
         """
         if original_tokens is None:
             original_tokens = sum(count_tokens(msg.content) for msg in messages)
@@ -254,16 +232,6 @@ class ContextCompressor:
         logger.info(
             f"[MANUAL_COMPACT] 手动压缩触发: 会话ID={conversation_id}, 原始消息数={len(messages)}, 原始token={original_tokens}"
         )
-
-        # 保存完整转录本
-        transcript_path = self._save_full_transcript(messages, conversation_id)
-
-        # 保留最近1轮对话
-        recent_messages = self._get_recent_dialog_rounds(messages, 1)
-        all_older_messages = [msg for msg in messages if msg not in recent_messages]
-
-        if not all_older_messages:
-            return self._compress_none(messages, original_tokens)
 
         # 生成全局摘要
         global_summary = self._generate_dialog_summary(
@@ -273,11 +241,10 @@ class ContextCompressor:
         compressed = [
             ContextMessage(
                 role="system",
-                content=f"## 全局对话摘要\n{global_summary}\n\n完整对话记录已保存至: {transcript_path}",
+                content=f"## 全局对话摘要\n{global_summary}",
                 metadata={
                     "global_summary": True,
                     "original_messages": len(all_older_messages),
-                    "transcript_path": str(transcript_path),
                 },
                 timestamp=datetime.now().timestamp(),
             )
@@ -289,7 +256,8 @@ class ContextCompressor:
         ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0
 
         logger.info(
-            f"[MANUAL_COMPACT] 手动压缩完成: 压缩后token={compressed_tokens}, 节省={saved_tokens}({int((1 - ratio) * 100)}%), 完整转录本已保存到={str(transcript_path)}"
+            f"[MANUAL_COMPACT] 手动压缩完成: 压缩后token={compressed_tokens}, "
+            f"节省={saved_tokens}({int((1 - ratio) * 100)}%)"
         )
 
         return CompressionResult(
@@ -299,33 +267,7 @@ class ContextCompressor:
             compressed_token_count=compressed_tokens,
             compression_ratio=ratio,
             saved_tokens=saved_tokens,
-            full_transcript_path=str(transcript_path),
         )
-
-    def _save_full_transcript(
-        self, messages: List[ContextMessage], conversation_id: Optional[str] = None
-    ) -> Path:
-        """保存完整转录本到磁盘"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if conversation_id:
-            filename = f"transcript_{conversation_id}_{timestamp}.json"
-        else:
-            filename = f"transcript_unknown_{timestamp}.json"
-
-        file_path = self.transcript_dir / filename
-
-        transcript_data = {
-            "conversation_id": conversation_id,
-            "timestamp": timestamp,
-            "message_count": len(messages),
-            "messages": [msg.to_dict() for msg in messages],
-        }
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"完整转录本已保存到: {file_path}")
-        return file_path
 
     def _get_recent_dialog_rounds(
         self, messages: List[ContextMessage], round_count: int

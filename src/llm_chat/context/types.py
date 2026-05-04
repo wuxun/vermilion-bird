@@ -49,7 +49,6 @@ class CompressionResult:
     compressed_token_count: int
     compression_ratio: float  # 压缩后/压缩前
     saved_tokens: int  # 节省的token数量
-    full_transcript_path: Optional[str] = None  # 完整记录保存路径，仅AUTO/MANUAL级别有
 
 
 @dataclass

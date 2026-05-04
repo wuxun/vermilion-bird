@@ -26,7 +26,6 @@ class ContextManager:
         cache_db_path: Optional[str] = None,
         enable_cache: bool = True,
         auto_prune_cache: bool = True,
-        transcript_dir: str = "~/.vermilion-bird/transcripts",
         keep_recent_tool_results: int = 2,
         keep_recent_dialog_rounds: int = 3,
         auto_compact_threshold: float = 0.8,
@@ -41,7 +40,6 @@ class ContextManager:
 
         self.compressor = ContextCompressor(
             llm_client=llm_client,
-            transcript_dir=transcript_dir,
             keep_recent_tool_results=keep_recent_tool_results,
             keep_recent_dialog_rounds=keep_recent_dialog_rounds,
             auto_compact_threshold=auto_compact_threshold,
@@ -279,9 +277,6 @@ class ContextManager:
         reserve_tokens = context_config.get("reserve_tokens", 1024)
         enable_cache = context_config.get("enable_cache", True)
         auto_prune_cache = context_config.get("auto_prune_cache", True)
-        transcript_dir = context_config.get(
-            "transcript_dir", "~/.vermilion-bird/transcripts"
-        )
         keep_recent_tool_results = context_config.get("keep_recent_tool_results", 2)
         keep_recent_dialog_rounds = context_config.get("keep_recent_dialog_rounds", 3)
         auto_compact_threshold = context_config.get("auto_compact_threshold", 0.8)
@@ -292,7 +287,6 @@ class ContextManager:
             reserve_tokens=reserve_tokens,
             enable_cache=enable_cache,
             auto_prune_cache=auto_prune_cache,
-            transcript_dir=transcript_dir,
             keep_recent_tool_results=keep_recent_tool_results,
             keep_recent_dialog_rounds=keep_recent_dialog_rounds,
             auto_compact_threshold=auto_compact_threshold,

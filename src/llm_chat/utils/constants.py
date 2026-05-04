@@ -3,7 +3,7 @@
 
 导入方式:
     from llm_chat.utils.constants import (
-        PROJECT_DIR, DB_PATH, MEMORY_DIR, TRANSCRIPT_DIR, HISTORY_DIR,
+        PROJECT_DIR, DB_PATH, MEMORY_DIR, HISTORY_DIR,
     )
 """
 
@@ -31,8 +31,8 @@ MEMORY_MID_TERM = os.path.join(MEMORY_DIR, "mid_term.md")
 MEMORY_LONG_TERM = os.path.join(MEMORY_DIR, "long_term.md")
 MEMORY_SOUL = os.path.join(MEMORY_DIR, "soul.md")
 
-# 上下文转录本
-TRANSCRIPT_DIR = "~/.vermilion-bird/transcripts"
+# 上下文转录本 (已废弃 - SQLite 已存完整对话)
+# TRANSCRIPT_DIR = "~/.vermilion-bird/transcripts"
 
 # -- 默认参数 ----------------------------------------------------------
 

@@ -189,9 +189,6 @@ class ContextConfig(BaseSettings):
     )
     enable_cache: bool = Field(default=True, description="是否启用上下文缓存")
     auto_prune_cache: bool = Field(default=True, description="是否自动清理过期缓存")
-    transcript_dir: str = Field(
-        default="~/.vermilion-bird/transcripts", description="完整转录本保存目录"
-    )
     keep_recent_tool_results: int = Field(
         default=2, description="微压缩时保留最近的工具结果数量"
     )
