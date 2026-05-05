@@ -33,8 +33,7 @@ class WebSearchTool(BaseTool):
     def description(self) -> str:
         if self._fallback:
             return (
-                "备用网络搜索工具。仅在首选的 MCP 搜索工具（如 tavily_search）"
-                "不可用、出错或返回空结果时才使用此工具。"
+                "网络搜索工具（备用）。仅在其他搜索方式不可用时使用。"
             )
         return "搜索互联网获取实时信息。当用户询问时事新闻、最新信息、或需要查询网络内容时使用此工具。"
 
