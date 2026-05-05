@@ -46,11 +46,14 @@ def _set_agent_id(agent_id: Optional[str]):
 
 
 class _AgentIdFilter(logging.Filter):
-    """注入线程级 agent_id 到日志消息。"""
+    """注入线程级 agent_id 到日志消息。幂等，防止多个 handler 重复前缀。"""
     def filter(self, record):
         aid = getattr(_agent_id_local, "agent_id", None)
         if aid:
-            record.msg = f"[sub:{aid[:8]}] {record.msg}"
+            prefix = f"[sub:{aid[:8]}] "
+            # 防止多个 handler 重复添加前缀
+            if not str(record.msg).startswith(prefix):
+                record.msg = prefix + str(record.msg)
         return True
 
 
