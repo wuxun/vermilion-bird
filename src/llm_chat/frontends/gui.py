@@ -1645,19 +1645,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             title=option_text[:80]
         )
 
-        # 持久化一个初始占位消息
-        conv.add_user_message("开始新对话")
-        conv.add_assistant_message(f"好的，我们来聊聊「{selected.label}」。")
-
-        # 加载消息到 GUI
-        from llm_chat.storage import Storage
-        storage = Storage()
-        msgs = storage.get_messages(conv.conversation_id)
-        formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
-        self.set_current_conversation(conv.conversation_id, formatted)
+        # 切换到新会话（消息由 _start_streaming 追加）
+        self.set_current_conversation(conv.conversation_id, [])
         self.request_conversation_list_refresh()
 
-        # 构造首条消息：卡片上下文 + 用户选择
+        # 首条消息：卡片上下文 + 用户选择，触发 LLM 响应
         opener = _build_card_selection_message(card, selected)
         self._start_streaming(opener)
 
