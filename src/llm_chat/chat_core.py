@@ -653,13 +653,16 @@ class ChatCore:
         由 send_message 和 send_message_stream 在 LLM 调用完成后调用。
         """
         if on_card is None:
+            logger.info("[card] on_card is None, skip extraction")
             return
         from llm_chat.decision.submit_tool import get_pending_card
         card = get_pending_card()
         if card:
             card.conversation_id = conversation_id
             on_card(card)
-            logger.info(f"决策卡片已提取: {card.id} -> {card.title}")
+            logger.info(f"[card] 决策卡片已提取: {card.id} -> {card.title}")
+        else:
+            logger.info("[card] get_pending_card returned None")
 
     def _extract_memory_async(self, conv, user_message: str, assistant_response: str):
         """异步提取记忆到记忆系统。"""

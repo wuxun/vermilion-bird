@@ -33,6 +33,10 @@ def get_pending_card() -> Optional["DecisionCard"]:
     with _card_lock:
         card = _pending_card
         _pending_card = None
+    logger.info(
+        "[card] get_pending_card: %s",
+        card.id if card else "None"
+    )
     return card
 
 
@@ -167,6 +171,7 @@ class SubmitDecisionCardTool(BaseTool):
             with _card_lock:
                 global _pending_card
                 _pending_card = card
+            logger.info("[card] store _pending_card: %s", card.id)
             logger.info(
                 f"[提交卡片] {card.id}: {title} ({len(options)} 个选项)"
             )
