@@ -5,6 +5,7 @@ import time
 import uuid
 import json
 import logging
+import threading
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 
 from llm_chat.tools.base import BaseTool
@@ -34,7 +35,33 @@ __all__ = [
     "GetWorkflowStatusTool",
 ]
 
+# ── 线程级子 Agent 日志前缀 ──────────────────────────────────────────
 
+_agent_id_local = threading.local()
+
+
+def _set_agent_id(agent_id: Optional[str]):
+    """设置当前线程的 agent_id，所有日志自动带 [sub:xxx] 前缀。"""
+    _agent_id_local.agent_id = agent_id
+
+
+class _AgentIdFilter(logging.Filter):
+    """注入线程级 agent_id 到日志记录。"""
+    def filter(self, record):
+        aid = getattr(_agent_id_local, "agent_id", None)
+        if aid:
+            record.agent_tag = f"[sub:{aid[:8]}] "
+        else:
+            record.agent_tag = ""
+        return True
+
+
+# 安装到所有 logger
+_root_filter = _AgentIdFilter()
+logging.getLogger().addFilter(_root_filter)
+
+
+# ── 辅助函数 ─────────────────────────────────────────────────────────
 def _truncate_args(args: dict, max_len: int = 200) -> str:
     """截断工具参数用于 GUI 展示。"""
     if not args:
@@ -144,6 +171,9 @@ class SpawnSubagentTool(BaseTool):
     def execute(self, **kwargs) -> str:
         task = kwargs.get("task", "")
         allowed_tools = kwargs.get("allowed_tools", []) or []
+        # 默认工具：分析类子 Agent 至少需要搜索和抓取能力
+        if not allowed_tools:
+            allowed_tools = ["web_search", "web_fetch"]
         timeout = kwargs.get("timeout", 300)
         model_config = kwargs.get("model_config")
         complexity = kwargs.get("complexity")
@@ -301,6 +331,24 @@ class SpawnSubagentTool(BaseTool):
         model_config: Optional[Dict[str, Any]] = None,
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
+        # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
+        _set_agent_id(agent_id)
+        try:
+            return self._execute_async_inner(
+                agent_id, task, allowed_tools, timeout, context, model_config
+            )
+        finally:
+            _set_agent_id(None)
+
+    def _execute_async_inner(
+        self,
+        agent_id: str,
+        task: str,
+        allowed_tools: List[str],
+        timeout: int,
+        context: AgentContext,
+        model_config: Optional[Dict[str, Any]] = None,
+    ) -> str:
         client = None
         # 僵死检测：用实际 timeout 刷新 deadline（make_agent_context 已设默认值，
         # 此处在子 agent 真正启动后覆盖为精确值）
