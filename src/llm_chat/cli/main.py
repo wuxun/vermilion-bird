@@ -169,11 +169,19 @@ def feishu(config_path, log_file, log_level):
     # 启用工具（包括 MCP）
     if config.enable_tools and config.mcp.servers:
         app.enable_tools()
+
+    # 初始化调度器（如果启用）
+    if config.scheduler.enabled:
+        app._init_scheduler()
+        app._register_proactive_chat_task()
+
     adapter = FeishuAdapter(
         app=app,
         app_id=feishu_cfg.app_id,
         app_secret=feishu_cfg.app_secret,
     )
+    # 保存到 app 上，供 ProactiveAgent 等组件使用
+    app._feishu_adapter = adapter
 
     # 使用服务管理器启动所有服务
     logging.info("Starting all services...")

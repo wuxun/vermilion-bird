@@ -399,13 +399,25 @@ class FeishuAdapter:
             try:
                 # 委托给 ChatCore 统一处理（记忆注入 + 上下文压缩 + LLM 调用 + 记忆提取）
                 chat_core = self.app.get_chat_core()
+                card_for_feishu = None
+                chat_id = (message.metadata or {}).get("chat_id", "")
+
+                def on_card(card):
+                    nonlocal card_for_feishu
+                    card_for_feishu = card
+
                 response = chat_core.send_message(
                     conversation_id=conversation_id,
                     message=message.content,
-                    on_card=lambda card: logger.info(
-                        f"飞书卡片 (不渲染): {card.id} -> {card.title}"
-                    ),
+                    on_card=on_card,
                 )
+
+                # 如果有决策卡片，在回复后追加一条结构化文本消息
+                if card_for_feishu and chat_id:
+                    try:
+                        self._send_card_text_to_chat(card_for_feishu, chat_id)
+                    except Exception as e:
+                        logger.warning(f"发送卡片文本到飞书失败: {e}")
 
                 logger.info(
                     f"LLM 响应生成完成: conversation_id={conversation_id}, response_length={len(response)}"
@@ -420,6 +432,31 @@ class FeishuAdapter:
             except Exception as e:
                 logger.error(f"处理 LLM 消息时发生错误: {e}", exc_info=True)
                 return f"处理消息时发生错误: {str(e)}"
+
+    def _send_card_text_to_chat(self, card: Any, chat_id: str):
+        """将决策卡片以结构化文本形式发送到飞书聊天。"""
+        lines = [f"🗳 {card.title}"]
+        if card.context:
+            lines.append(f"  {card.context}")
+        lines.append("")
+        for opt in card.options:
+            rec = "✅" if opt.id == card.recommendation else "  "
+            lines.append(f"{rec} {opt.id}. {opt.label} ({int(opt.confidence*100)}%)")
+            if opt.description or opt.expected_effect:
+                detail = opt.description or ""
+                if opt.expected_effect:
+                    detail += f" → {opt.expected_effect}" if detail else opt.expected_effect
+                lines.append(f"     {detail}")
+            if opt.risk:
+                lines.append(f"     风险: {opt.risk}")
+        if card.sources:
+            lines.append(f"\n来源: {', '.join(card.sources)}")
+
+        self.send_message(
+            receive_id=chat_id,
+            msg_type="text",
+            content={"text": "\n".join(lines)},
+        )
 
     @retry(
         max_retries=3,

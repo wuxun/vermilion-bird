@@ -179,25 +179,20 @@ class ListScheduledTasksTool(BaseTool):
             tasks = self._scheduler.get_all_tasks()
 
             if filter_status == "active":
-                tasks = [t for t in tasks if t.status == "active"]
+                tasks = [t for t in tasks if t.enabled]
             elif filter_status == "paused":
-                tasks = [t for t in tasks if t.status == "paused"]
+                tasks = [t for t in tasks if not t.enabled]
 
             if not tasks:
                 return "暂无定时任务"
 
             result = "📋 定时任务列表:\n"
             for i, task in enumerate(tasks, 1):
-                status_icon = "✅" if task.status == "active" else "⏸️"
-                next_run = (
-                    task.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
-                    if task.next_run_time
-                    else "未安排"
-                )
+                status_icon = "✅" if task.enabled else "⏸️"
+                status_text = "启用" if task.enabled else "暂停"
                 result += f"\n{i}. {status_icon} {task.name} (ID: {task.id[:8]}...)\n"
                 result += f"   类型: {task.task_type.value}\n"
-                result += f"   下次执行: {next_run}\n"
-                result += f"   状态: {task.status}\n"
+                result += f"   状态: {status_text}\n"
 
             return result
 
