@@ -87,8 +87,8 @@ class SpawnSubagentTool(BaseTool):
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "子agent超时时间（秒），默认60",
-                    "default": 60,
+                    "description": "子agent超时时间（秒），默认300（5分钟）",
+                    "default": 300,
                 },
                 "work_dir": {
                     "type": "string",
@@ -144,7 +144,7 @@ class SpawnSubagentTool(BaseTool):
     def execute(self, **kwargs) -> str:
         task = kwargs.get("task", "")
         allowed_tools = kwargs.get("allowed_tools", []) or []
-        timeout = kwargs.get("timeout", 60)
+        timeout = kwargs.get("timeout", 300)
         model_config = kwargs.get("model_config")
         complexity = kwargs.get("complexity")
         work_dir_arg = kwargs.get("work_dir")
