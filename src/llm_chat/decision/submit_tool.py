@@ -21,28 +21,14 @@ logger = logging.getLogger(__name__)
 # 锁保护共享变量（不用 thread-local，因为 ToolExecutor 在不同线程运行工具）
 _card_lock = threading.Lock()
 _pending_card: Optional["DecisionCard"] = None
-_store_count = 0  # 诊断：记录写入次数
-_get_count = 0    # 诊断：记录读取次数
-import sys as _sys
-_sys.stderr.write(f"[CARD-MODULE] loaded, _pending_card={_pending_card}\n")
-_sys.stderr.flush()
 
 
 def get_pending_card() -> Optional["DecisionCard"]:
     """获取并清除待推送的决策卡片。"""
-    global _pending_card, _get_count
-    _get_count += 1
+    global _pending_card
     with _card_lock:
         card = _pending_card
         _pending_card = None
-    import sys
-    print(f"[CARD-GET #{_get_count}] {card.id if card else 'None'} thread={threading.current_thread().name}", file=sys.stderr, flush=True)
-    logger.info(
-        "[card] get #%d: %s (thread=%s)",
-        _get_count,
-        card.id if card else "None",
-        threading.current_thread().name,
-    )
     return card
 
 
@@ -140,7 +126,7 @@ class SubmitDecisionCardTool(BaseTool):
         sources: list = None,
         **kwargs,
     ) -> str:
-        """验证并存储决策卡片到 thread-local。
+        """验证并存储决策卡片到共享变量。
 
         Args:
             title: 卡片标题
@@ -175,13 +161,8 @@ class SubmitDecisionCardTool(BaseTool):
             )
 
             with _card_lock:
-                global _pending_card, _store_count
+                global _pending_card
                 _pending_card = card
-                _store_count += 1
-                store_n = _store_count
-            import sys
-            print(f"[CARD-STORE #{store_n}] {card.id} thread={threading.current_thread().name}", file=sys.stderr, flush=True)
-            logger.info("[card] store #%d: %s (thread=%s)", store_n, card.id, threading.current_thread().name)
             logger.info(
                 f"[提交卡片] {card.id}: {title} ({len(options)} 个选项)"
             )

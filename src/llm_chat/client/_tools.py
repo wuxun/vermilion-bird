@@ -130,9 +130,6 @@ class LLMClientToolsMixin:
                             )
                             with st._card_lock:
                                 st._pending_card = card
-                                st._store_count += 1
-                            import sys
-                            print(f"[CARD-FROM-ARGS-SYNC #{st._store_count}] {card.id}", file=sys.stderr, flush=True)
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
 

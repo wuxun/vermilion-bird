@@ -182,9 +182,8 @@ class LLMClientStreamToolsMixin:
                     try:
                         args = json.loads(tc["function"]["arguments"])
                         if args.get("title") and args.get("options"):
-                            from llm_chat.decision.submit_tool import _card_lock
-                            import llm_chat.decision.submit_tool as st
                             from llm_chat.decision.schema import DecisionCard, DecisionOption
+                            import llm_chat.decision.submit_tool as st
                             opts = [DecisionOption(
                                 id=o.get("id", ""),
                                 label=o.get("label", ""),
@@ -202,9 +201,6 @@ class LLMClientStreamToolsMixin:
                             )
                             with st._card_lock:
                                 st._pending_card = card
-                                st._store_count += 1
-                            import sys
-                            print(f"[CARD-FROM-ARGS #{st._store_count}] {card.id}", file=sys.stderr, flush=True)
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败: {e}")
 
