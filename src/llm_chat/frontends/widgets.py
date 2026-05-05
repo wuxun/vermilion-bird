@@ -40,9 +40,14 @@ if PYQT_AVAILABLE:
         """会话列表操作信号通道。"""
         conversations_updated = pyqtSignal()
 
+    class ProactiveMessageSignals(QObject):
+        """主动消息信号通道（后台线程 → GUI 主线程）。"""
+        opener_ready = pyqtSignal(str)
+
 else:
     StreamSignals = object  # fallback
     ConversationListSignals = object
+    ProactiveMessageSignals = object
 
 
 # -- widgets ------------------------------------------------------------

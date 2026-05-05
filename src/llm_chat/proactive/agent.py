@@ -263,58 +263,20 @@ class ProactiveAgent:
             logger.warning(f"飞书推送失败: {e}")
 
     def _push_to_gui(self, message: str):
-        """新建对话并写入开场白，然后切换到该对话。"""
+        """通过信号发射开场白，由 GUI 主线程处理创建对话。"""
         try:
             frontend = getattr(self._app, "current_frontend", None)
             if not frontend or frontend.name != "gui":
                 return
 
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._create_proactive_conversation(message))
+            # 通过 pyqtSignal 跨线程安全通知 GUI 主线程
+            signals = getattr(frontend, "_proactive_signals", None)
+            if signals:
+                signals.opener_ready.emit(message)
+            else:
+                logger.warning("GUI 未初始化 proactive_signals")
         except Exception as e:
             logger.warning(f"GUI 推送失败: {e}")
-
-    def _create_proactive_conversation(self, message: str):
-        """在主线程中创建对话并切换。"""
-        try:
-            app = self._app
-            today = datetime.now().strftime("%Y-%m-%d")
-
-            # 创建新对话
-            conv = app.conversation_manager.create_conversation(
-                title=f"💡 每日话题 {today}"
-            )
-            conv.add_assistant_message(message)
-
-            # 获取消息列表
-            from llm_chat.storage import Storage
-            storage = Storage()
-            msgs = storage.get_messages(conv.conversation_id)
-            formatted = []
-            for m in msgs:
-                formatted.append({
-                    "role": m["role"],
-                    "content": m["content"],
-                })
-
-            # 切换到新对话
-            if app.current_frontend:
-                app.current_frontend.set_current_conversation(
-                    conv.conversation_id, formatted
-                )
-                # 通知前端刷新列表
-                app.current_frontend.request_conversation_list_refresh()
-
-                # macOS dock 闪烁
-                from PyQt6.QtWidgets import QApplication
-                qapp = QApplication.instance()
-                if qapp:
-                    qapp.alert(None, 0)
-
-            logger.info(f"已创建主动对话: {conv.conversation_id}")
-
-        except Exception as e:
-            logger.error(f"创建主动对话失败: {e}")
 
     def get_last_opener(self) -> Optional[str]:
         return self._last_opener

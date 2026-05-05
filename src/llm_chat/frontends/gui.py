@@ -15,6 +15,7 @@ from llm_chat.frontends.widgets import (
     CollapsibleToolCall,
     StreamSignals,
     ConversationListSignals,
+    ProactiveMessageSignals,
 )
 from llm_chat.frontends.model_config import ModelConfigMixin
 
@@ -135,6 +136,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
         self._conv_list_signals: Optional[ConversationListSignals] = None
+        self._proactive_signals: Optional[ProactiveMessageSignals] = None
         self._current_stream_text: str = ""
         self._streaming_label: Optional[QLabel] = None
         self._streaming_browser: Optional[QTextBrowser] = None
@@ -228,6 +230,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._conv_list_signals = ConversationListSignals()
         self._conv_list_signals.conversations_updated.connect(
             self._refresh_conversation_list
+        )
+
+        self._proactive_signals = ProactiveMessageSignals()
+        self._proactive_signals.opener_ready.connect(
+            self._on_proactive_opener
         )
 
         self._main_window = QMainWindow()
@@ -1183,6 +1190,37 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._scroll_to_bottom()
         result_len = len(result) if result else 0
         logger.info(f"工具调用完成: {tool_name}, result_length={result_len}")
+
+    def _on_proactive_opener(self, opener: str):
+        """处理主动消息（在主线程执行）。"""
+        try:
+            from datetime import datetime
+
+            app = self._app_instance
+            if not app:
+                return
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            conv = app.conversation_manager.create_conversation(
+                title=f"\U0001f4a1 每日话题 {today}"
+            )
+            conv.add_assistant_message(opener)
+
+            from llm_chat.storage import Storage
+            storage = Storage()
+            msgs = storage.get_messages(conv.conversation_id)
+            formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
+
+            self.set_current_conversation(conv.conversation_id, formatted)
+            self.request_conversation_list_refresh()
+
+            qapp = QApplication.instance()
+            if qapp:
+                qapp.alert(None, 0)
+
+            logger.info(f"已创建主动对话: {conv.conversation_id}")
+        except Exception as e:
+            logger.error(f"创建主动对话失败: {e}")
 
     def _on_context_updated(self, used_tokens: int, limit: int):
         """ChatCore 回调 — 流式过程中实时更新上下文状态。"""
