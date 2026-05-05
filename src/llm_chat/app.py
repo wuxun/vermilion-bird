@@ -585,6 +585,7 @@ class App:
         # Scheduler 初始化（含 APScheduler 启动，~2s）
         if self.scheduler is None:
             self._init_scheduler()
+            self._register_proactive_chat_task()
         if self.config.enable_tools:
             if self.config.mcp.servers:
                 self.enable_tools()
@@ -594,6 +595,58 @@ class App:
         if self.current_frontend:
             self.current_frontend.display_info("服务就绪")
         logger.info("后台服务初始化完成")
+
+    def _register_proactive_chat_task(self):
+        """注册每日主动聊天任务。"""
+        if not self.scheduler or not self.config.scheduler.enabled:
+            return
+        if not self.config.scheduler.proactive_enabled:
+            logger.info("主动聊天已禁用")
+            return
+        try:
+            from llm_chat.scheduler.models import Task, TaskType
+            from datetime import datetime
+            import uuid
+
+            # 检查是否已存在
+            existing = self._get_tasks_by_type("PROACTIVE_CHAT")
+            if existing:
+                logger.info("主动聊天任务已存在，跳过注册")
+                return
+
+            hour = self.config.scheduler.proactive_hour
+            minute = self.config.scheduler.proactive_minute
+
+            task = Task(
+                id=f"proactive-daily-{uuid.uuid4().hex[:8]}",
+                name="每日主动聊天",
+                task_type=TaskType.PROACTIVE_CHAT,
+                trigger_config={
+                    "type": "cron",
+                    "hour": hour,
+                    "minute": minute,
+                    "timezone": "Asia/Shanghai",
+                },
+                params={},
+                enabled=True,
+                max_retries=1,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                notify_enabled=False,
+            )
+            self.scheduler.add_task(task)
+            logger.info(f"已注册每日主动聊天任务 (每天 {hour:02d}:{minute:02d}): {task.id}")
+        except Exception as e:
+            logger.error(f"注册主动聊天任务失败: {e}")
+
+    def _get_tasks_by_type(self, task_type: str) -> list:
+        """按类型查询任务列表。"""
+        try:
+            from llm_chat.scheduler.models import TaskType
+            all_tasks = self.storage.load_all_tasks()
+            return [t for t in all_tasks if t.task_type.value == task_type]
+        except Exception:
+            return []
 
     def _start_docker_sandbox_async(self):
         """后台线程中异步启动 Docker 沙箱。"""

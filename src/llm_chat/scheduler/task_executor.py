@@ -53,6 +53,8 @@ class TaskExecutor:
                     result = self._execute_skill(task)
                 elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
                     result = self._execute_maintenance(task)
+                elif task.task_type == TaskType.PROACTIVE_CHAT:
+                    result = self._execute_proactive_chat(task)
                 else:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 
@@ -278,4 +280,18 @@ class TaskExecutor:
             logger.info("Understanding evolution completed")
         except Exception as e:
             logger.error(f"Understanding evolution failed: {e}")
+            raise
+
+    def _execute_proactive_chat(self, task: Task) -> str:
+        """执行主动聊天：基于记忆生成开场白并推送。"""
+        try:
+            from llm_chat.proactive.agent import ProactiveAgent
+            agent = ProactiveAgent(self.app, self.app.config)
+            opener = agent.generate_and_push()
+            if opener:
+                return f"主动消息已推送: {opener[:100]}..."
+            else:
+                return "主动聊天跳过（无足够记忆信息）"
+        except Exception as e:
+            logger.error(f"主动聊天执行失败: {e}")
             raise

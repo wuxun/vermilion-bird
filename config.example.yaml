@@ -276,6 +276,9 @@ mcp:
 #   enabled: true
 #   webhook_enabled: true             # 开启 HTTP webhook 服务
 #   webhook_port: 9100
+#   proactive_enabled: true           # 每日主动聊天（AI 自主选题推送）
+#   proactive_hour: 10                # 触发时间（小时）
+#   proactive_minute: 0               # 触发时间（分钟）
 #
 # 创建 webhook 任务:
 #   vermilion-bird schedule create \

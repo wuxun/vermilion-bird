@@ -12,6 +12,7 @@ class TaskType(str, Enum):
     SKILL_EXECUTION = "SKILL_EXECUTION"
     SYSTEM_MAINTENANCE = "SYSTEM_MAINTENANCE"
     WEBHOOK = "WEBHOOK"  # 事件驱动：HTTP webhook 触发
+    PROACTIVE_CHAT = "PROACTIVE_CHAT"  # 自主主动聊天：AI 基于记忆生成话题并推送给用户
 
 
 class TaskStatus(str, Enum):
