@@ -236,7 +236,7 @@ class ChatCore:
         # 9. 异步记忆提取
         self._extract_memory_async(conv, message, response)
 
-        # 9. 记录 token 消耗
+        # 10. 记录 token 消耗
         self._record_tokens(
             message=processed_message,
             history=processed_history,
@@ -414,16 +414,16 @@ class ChatCore:
                 if on_chunk:
                     on_chunk(chunk)
 
-        # 7. 持久化助手回复
-        conv.add_assistant_message(full_text)
-
-        # 8. 提取 tool call 提交的决策卡片
+        # 7. 提取 tool call 提交的决策卡片
         self._extract_pending_card(conversation_id, on_card)
+
+        # 8. 持久化助手回复
+        conv.add_assistant_message(full_text)
 
         # 9. 异步记忆提取
         self._extract_memory_async(conv, message, full_text)
 
-        # 9. 记录 token 消耗
+        # 10. 记录 token 消耗
         self._record_tokens(
             message=processed_message,
             history=processed_history,

@@ -24,6 +24,22 @@ from llm_chat.frontends.model_config import ModelConfigMixin
 
 logger = logging.getLogger(__name__)
 
+
+def _build_card_selection_message(card: "DecisionCard", selected) -> str:
+    """构建用户选择卡片选项后的 LLM 输入消息。
+
+    包含卡片背景和选项细节，确保 LLM 在后续对话中保留上下文。
+    """
+    parts = [f"我选择了「{selected.label}」"]
+    if selected.description:
+        parts.append(f"\n说明：{selected.description}")
+    if selected.expected_effect:
+        parts.append(f"\n预期效果：{selected.expected_effect}")
+    if card.context and card.context not in selected.description:
+        parts.append(f"\n\n背景：{card.context}")
+    parts.append("\n\n请基于这个方向继续。")
+    return "".join(parts)
+
 try:
     import markdown
 
@@ -1613,43 +1629,39 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _continue_chat_from_card(self, card: DecisionCard, selected):
         """从卡片选择继续对话：将选项作为用户消息发送给 LLM。"""
-        follow_up = f"我选择了「{selected.label}」"
-        if selected.description:
-            follow_up += f"（{selected.description}）"
-        follow_up += "，请基于这个方向继续。"
+        follow_up = _build_card_selection_message(card, selected)
         self._start_streaming(follow_up)
 
     def _create_conversation_from_card(
         self, card: DecisionCard, selected
     ):
-        """从卡片选项创建新对话（默认行为）。"""
+        """从卡片选项创建新对话并立即触发 LLM 响应。"""
         app = self._app_instance
         if not app:
             return
 
-        option_text = f"🗣 {card.title} — {selected.label}"
+        option_text = f"{card.title} — {selected.label}"
         conv = app.conversation_manager.create_conversation(
-            title=option_text
+            title=option_text[:80]
         )
 
-        opener_parts = [f"你选择了: {selected.label}"]
-        if selected.description:
-            opener_parts.append(f"\n{selected.description}")
-        if selected.expected_effect:
-            opener_parts.append(f"\n预期: {selected.expected_effect}")
-        opener_parts.append(f"\n\n我们来聊聊这个话题吧！")
-        opener = "".join(opener_parts)
-        conv.add_assistant_message(opener)
+        # 持久化一个初始占位消息
+        conv.add_user_message("开始新对话")
+        conv.add_assistant_message(f"好的，我们来聊聊「{selected.label}」。")
 
+        # 加载消息到 GUI
         from llm_chat.storage import Storage
         storage = Storage()
         msgs = storage.get_messages(conv.conversation_id)
         formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
-
         self.set_current_conversation(conv.conversation_id, formatted)
         self.request_conversation_list_refresh()
 
-        logger.info(f"已从卡片创建对话: {conv.conversation_id}")
+        # 构造首条消息：卡片上下文 + 用户选择
+        opener = _build_card_selection_message(card, selected)
+        self._start_streaming(opener)
+
+        logger.info(f"已从卡片创建对话并触发 LLM: {conv.conversation_id}")
 
     def _handle_card_dismissed(self, card_id: str):
         """卡片按钮回调：用户忽略了卡片。"""
