@@ -57,6 +57,7 @@ class _AgentIdFilter(logging.Filter):
 # 安装到所有 logger
 _root_filter = _AgentIdFilter()
 logging.getLogger().addFilter(_root_filter)
+logger.debug("_AgentIdFilter installed on root logger")
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────────────

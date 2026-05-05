@@ -119,9 +119,10 @@ class LLMClientBase:
         """
         self._tool_registry.clear()
 
-        # 注册系统级工具（在 clear 之后，避免被 wipe）
-        from llm_chat.decision.submit_tool import SubmitDecisionCardTool
-        self._tool_registry.register(SubmitDecisionCardTool())
+        # 注册系统级工具（仅在父 LLMClient，子 agent 不注册卡片工具）
+        if skills_filter is None:
+            from llm_chat.decision.submit_tool import SubmitDecisionCardTool
+            self._tool_registry.register(SubmitDecisionCardTool())
 
         for skill_name, skill_class in get_builtin_skills().items():
             if skills_filter is not None and skill_name not in skills_filter:
