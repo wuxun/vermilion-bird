@@ -212,6 +212,11 @@ class DecisionCardWidget(QFrame):
             src.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
             layout.addWidget(src)
 
+        # 如果卡片已决策，重建时恢复选中状态
+        if self._card.status == CardStatus.DECIDED and self._card.selected_option_id:
+            self._last_decided = self._card.selected_option_id
+            self._set_decided_state(self._last_decided)
+
     def _build_options_list(self, layout: QVBoxLayout):
         """用左右布局展示选项：左侧 A/B/C 序号，右侧标题+描述+详情。"""
         if not self._card.options:
@@ -402,6 +407,8 @@ class DecisionCardWidget(QFrame):
             self._card.decide(option_id)
         except ValueError:
             pass  # 非 PENDING 状态也可能触发（换一个）
+        # ensure selected_option_id is set (decide already does this)
+        self._card.selected_option_id = option_id
         self._last_decided = option_id
         self._set_decided_state(option_id)
 
@@ -450,6 +457,7 @@ class DecisionCardWidget(QFrame):
         self._last_decided = None
         self._card.status = CardStatus.PENDING
         self._card.decided_at = None
+        self._card.selected_option_id = None
         for oid, btn in self._option_buttons.items():
             btn.setEnabled(True)
             is_rec = oid == self._card.recommendation

@@ -97,6 +97,9 @@ class DecisionCard(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     decided_at: Optional[datetime] = Field(default=None)
     dismissed_at: Optional[datetime] = Field(default=None)
+    selected_option_id: Optional[str] = Field(
+        default=None, description="用户最终选择的选项 ID（持久化用于 widget 重建）"
+    )
 
     def decide(self, option_id: str) -> DecisionOption:
         """用户做出决策。
@@ -124,6 +127,7 @@ class DecisionCard(BaseModel):
 
         self.status = CardStatus.DECIDED
         self.decided_at = datetime.now()
+        self.selected_option_id = option_id
         return selected
 
     def dismiss(self):
