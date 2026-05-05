@@ -17,6 +17,9 @@ from llm_chat.frontends.widgets import (
     ConversationListSignals,
     ProactiveMessageSignals,
 )
+
+from llm_chat.decision.card_panel import DecisionCardWidget, CardSignals
+from llm_chat.decision.schema import DecisionCard
 from llm_chat.frontends.model_config import ModelConfigMixin
 
 logger = logging.getLogger(__name__)
@@ -137,6 +140,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._stream_signals: Optional[StreamSignals] = None
         self._conv_list_signals: Optional[ConversationListSignals] = None
         self._proactive_signals: Optional[ProactiveMessageSignals] = None
+        self._card_signals: Optional[CardSignals] = None
         self._current_stream_text: str = ""
         self._streaming_label: Optional[QLabel] = None
         self._streaming_browser: Optional[QTextBrowser] = None
@@ -236,6 +240,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._proactive_signals.opener_ready.connect(
             self._on_proactive_opener
         )
+
+        self._card_signals = CardSignals()
+        self._card_signals.card_created.connect(self._on_card_received)
+        self._card_signals.card_decided.connect(self._on_card_decided)
 
         self._main_window = QMainWindow()
         self._main_window.setWindowTitle(self._title)
@@ -1490,6 +1498,78 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #6B4423;"
         )
         self._add_widget_to_chat(info_label)
+        self._scroll_to_bottom()
+
+    def display_card(self, card: DecisionCard):
+        """渲染一张决策卡片到聊天流。"""
+        if self._chat_layout is None:
+            return
+
+        card_widget = DecisionCardWidget(
+            card=card,
+            on_decide=self._handle_card_decided,
+            on_dismiss=self._handle_card_dismissed,
+        )
+        self._add_widget_to_chat(card_widget)
+
+        # 分隔线
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(
+            "background-color: #D4A574; max-height: 1px; margin: 10px 0;"
+        )
+        self._add_widget_to_chat(separator)
+
+        self._scroll_to_bottom()
+
+    def _on_card_received(self, card: DecisionCard):
+        """跨线程信号：收到新卡片。"""
+        self.display_card(card)
+        logger.info(f"卡片已显示: {card.id} -> {card.title}")
+
+    def _on_card_decided(self, card_id: str, option_id: str):
+        """跨线程信号：卡片已决策。"""
+        # 将决策记录存入日志
+        try:
+            from llm_chat.decision.log import DecisionLogStore
+            store = DecisionLogStore()
+            store.record_from_card(card_id, option_id)
+        except Exception as e:
+            logger.warning(f"决策日志记录失败: {e}")
+
+    def _handle_card_decided(self, card_id: str, option_id: str):
+        """卡片按钮回调：用户做了决策。"""
+        logger.info(f"卡片决策: {card_id} -> {option_id}")
+
+        # 通知 CardSignals（如果有外部监听）
+        if self._card_signals:
+            self._card_signals.card_decided.emit(card_id, option_id)
+
+        # 在聊天流追加一条确认
+        info = QLabel(
+            f"<span style='color: #4CAF50; font-weight: bold;'>"
+            f"✅ 已选择选项 {option_id}</span>"
+        )
+        info.setStyleSheet(
+            "padding: 4px 8px; margin: 2px 0;"
+        )
+        self._add_widget_to_chat(info)
+        self._scroll_to_bottom()
+
+    def _handle_card_dismissed(self, card_id: str):
+        """卡片按钮回调：用户忽略了卡片。"""
+        logger.info(f"卡片忽略: {card_id}")
+        if self._card_signals:
+            self._card_signals.card_dismissed.emit(card_id)
+
+        info = QLabel(
+            f"<span style='color: #8B7355; font-style: italic;'>"
+            f"⏳ 卡片已暂缓</span>"
+        )
+        info.setStyleSheet(
+            "padding: 4px 8px; margin: 2px 0;"
+        )
+        self._add_widget_to_chat(info)
         self._scroll_to_bottom()
 
     @property
