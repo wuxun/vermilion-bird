@@ -29,7 +29,7 @@ def setup_logging(level=logging.INFO, log_file: str = None):
 
     logging.basicConfig(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(agent_tag)s%(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=handlers,
     )
 

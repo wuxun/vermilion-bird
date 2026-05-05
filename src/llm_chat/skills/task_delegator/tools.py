@@ -46,13 +46,11 @@ def _set_agent_id(agent_id: Optional[str]):
 
 
 class _AgentIdFilter(logging.Filter):
-    """注入线程级 agent_id 到日志记录。"""
+    """注入线程级 agent_id 到日志消息。"""
     def filter(self, record):
         aid = getattr(_agent_id_local, "agent_id", None)
         if aid:
-            record.agent_tag = f"[sub:{aid[:8]}] "
-        else:
-            record.agent_tag = ""
+            record.msg = f"[sub:{aid[:8]}] {record.msg}"
         return True
 
 
