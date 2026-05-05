@@ -65,6 +65,7 @@ common_hiddenimports = [
     "llm_chat.skills.task_delegator.workflow",
     "llm_chat.skills.prompt_skill",
     "llm_chat.scheduler.scheduler",
+    "ddgs",
     "llm_chat.scheduler.task_executor",
     "llm_chat.scheduler.notification",
     "llm_chat.scheduler.webhook",
