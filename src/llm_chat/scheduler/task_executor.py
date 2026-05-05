@@ -283,15 +283,16 @@ class TaskExecutor:
             raise
 
     def _execute_proactive_chat(self, task: Task) -> str:
-        """执行主动聊天：基于记忆生成开场白并推送。"""
+        """执行主动聊天：生成话题建议卡片并推送。"""
         try:
             from llm_chat.proactive.agent import ProactiveAgent
             agent = ProactiveAgent(self.app, self.app.config)
-            opener = agent.generate_and_push()
-            if opener:
-                return f"主动消息已推送: {opener[:100]}..."
+            agent.generate_and_push()
+            card = agent.last_card
+            if card:
+                return f"话题卡片已推送: {card.title} ({len(card.options)} 个选项)"
             else:
-                return "主动聊天跳过（无足够记忆信息）"
+                return "主动聊天跳过（无足够信息）"
         except Exception as e:
             logger.error(f"主动聊天执行失败: {e}")
             raise

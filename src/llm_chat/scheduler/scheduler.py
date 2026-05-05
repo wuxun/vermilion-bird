@@ -562,10 +562,11 @@ class SchedulerService:
         try:
             from llm_chat.proactive.agent import ProactiveAgent
             agent = ProactiveAgent(self._app, self._app.config)
-            opener = agent.generate_and_push()
-            if opener:
-                logger.info(f"主动消息已推送: {opener[:100]}...")
-                return f"主动聊天已推送: {opener[:200]}"
+            agent.generate_and_push()
+            card = agent.last_card
+            if card:
+                logger.info(f"主动话题卡片已推送: {card.title}")
+                return f"话题卡片已推送: {card.title} ({len(card.options)} 个选项)"
             else:
                 return "主动聊天跳过（无足够信息）"
         except Exception as e:
