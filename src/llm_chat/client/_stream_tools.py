@@ -175,6 +175,39 @@ class LLMClientStreamToolsMixin:
             )
             logger.info(f"工具执行结果数量: {len(tool_results)}")
 
+            # 从 submit_decision_card 的调用参数直接构建卡片
+            # （不依赖 tool execute，避免被 MCP 同名工具覆盖）
+            for tc in tool_calls:
+                if tc["function"]["name"] == "submit_decision_card":
+                    try:
+                        args = json.loads(tc["function"]["arguments"])
+                        if args.get("title") and args.get("options"):
+                            from llm_chat.decision.submit_tool import _card_lock
+                            import llm_chat.decision.submit_tool as st
+                            from llm_chat.decision.schema import DecisionCard, DecisionOption
+                            opts = [DecisionOption(
+                                id=o.get("id", ""),
+                                label=o.get("label", ""),
+                                description=o.get("description"),
+                                expected_effect=o.get("expected_effect"),
+                                risk=o.get("risk"),
+                                confidence=float(o.get("confidence", 0.5)),
+                            ) for o in args["options"]]
+                            card = DecisionCard(
+                                title=args["title"],
+                                context=args.get("context") or None,
+                                options=opts,
+                                recommendation=args.get("recommendation") or None,
+                                sources=args.get("sources", []),
+                            )
+                            with st._card_lock:
+                                st._pending_card = card
+                                st._store_count += 1
+                            import sys
+                            print(f"[CARD-FROM-ARGS #{st._store_count}] {card.id}", file=sys.stderr, flush=True)
+                    except Exception as e:
+                        logger.warning(f"从 submit_decision_card 参数构建卡片失败: {e}")
+
             for result in tool_results:
                 logger.info(
                     f"处理工具结果: tool_call_id={result.get('tool_call_id')}, "

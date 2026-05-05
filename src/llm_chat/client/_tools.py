@@ -106,6 +106,36 @@ class LLMClientToolsMixin:
                     f"参数: {json.dumps(tool_call.arguments, ensure_ascii=False)[:100]}..."
                 )
 
+                # 从 submit_decision_card 参数直接构建卡片
+                if tool_call.name == "submit_decision_card":
+                    try:
+                        args_dict = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                        if args_dict.get("title") and args_dict.get("options"):
+                            from llm_chat.decision.schema import DecisionCard, DecisionOption
+                            import llm_chat.decision.submit_tool as st
+                            opts = [DecisionOption(
+                                id=o.get("id", ""),
+                                label=o.get("label", ""),
+                                description=o.get("description"),
+                                expected_effect=o.get("expected_effect"),
+                                risk=o.get("risk"),
+                                confidence=float(o.get("confidence", 0.5)),
+                            ) for o in args_dict["options"]]
+                            card = DecisionCard(
+                                title=args_dict["title"],
+                                context=args_dict.get("context") or None,
+                                options=opts,
+                                recommendation=args_dict.get("recommendation") or None,
+                                sources=args_dict.get("sources", []),
+                            )
+                            with st._card_lock:
+                                st._pending_card = card
+                                st._store_count += 1
+                            import sys
+                            print(f"[CARD-FROM-ARGS-SYNC #{st._store_count}] {card.id}", file=sys.stderr, flush=True)
+                    except Exception as e:
+                        logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
+
                 tool_result = None
                 # 使用 ToolExecutor 统一执行（含重试+超时），与流式路径一致
                 tool_call_id = tool_call.id if hasattr(tool_call, 'id') else f"tc_{tool_call.name}"
