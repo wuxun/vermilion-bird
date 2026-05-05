@@ -21,20 +21,21 @@ logger = logging.getLogger(__name__)
 # 锁保护共享变量（不用 thread-local，因为 ToolExecutor 在不同线程运行工具）
 _card_lock = threading.Lock()
 _pending_card: Optional["DecisionCard"] = None
+_store_count = 0  # 诊断：记录写入次数
+_get_count = 0    # 诊断：记录读取次数
+logger.info("[card] module loaded, _pending_card=%s, _store_count=%d", _pending_card, _store_count)
 
 
 def get_pending_card() -> Optional["DecisionCard"]:
-    """获取并清除待推送的决策卡片。
-
-    由 ChatCore 在 LLM 调用完成后调用。跨线程安全（SubmitDecisionCardTool
-    在 ThreadPoolExecutor 线程中执行，ChatCore 在 worker 线程中读取）。
-    """
-    global _pending_card
+    """获取并清除待推送的决策卡片。"""
+    global _pending_card, _get_count
+    _get_count += 1
     with _card_lock:
         card = _pending_card
         _pending_card = None
     logger.info(
-        "[card] get: %s (thread=%s)",
+        "[card] get #%d: %s (thread=%s)",
+        _get_count,
         card.id if card else "None",
         threading.current_thread().name,
     )
@@ -170,9 +171,10 @@ class SubmitDecisionCardTool(BaseTool):
             )
 
             with _card_lock:
-                global _pending_card
+                global _pending_card, _store_count
                 _pending_card = card
-            logger.info("[card] store: %s (thread=%s)", card.id, threading.current_thread().name)
+                _store_count += 1
+            logger.info("[card] store #%d: %s (thread=%s)", _store_count, card.id, threading.current_thread().name)
             logger.info(
                 f"[提交卡片] {card.id}: {title} ({len(options)} 个选项)"
             )
