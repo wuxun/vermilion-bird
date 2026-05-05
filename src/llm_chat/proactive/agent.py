@@ -230,7 +230,11 @@ class ProactiveAgent:
         prompt = "\n".join(sections)
 
         try:
-            response = self._app.client.generate(prompt, max_tokens=300)
+            response = self._app.client.chat(
+                message=prompt,
+                max_tokens=300,
+                temperature=0.8,
+            )
             opener = response.strip().strip('"').strip("'").strip('"')
             if len(opener) < 10:
                 logger.warning(f"开场白过短: {opener}")
