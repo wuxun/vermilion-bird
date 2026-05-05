@@ -228,18 +228,53 @@ class SpawnSubagentTool(BaseTool):
 
         wait = kwargs.get("wait", False)
         if wait:
-            try:
-                result = future.result(timeout=timeout + 30)
-                return json.dumps(
-                    {"agent_id": agent_id, "status": "completed", "result": result},
-                    ensure_ascii=False, indent=2,
-                )
-            except Exception as e:
-                self.registry.cancel(agent_id)
-                return json.dumps(
-                    {"agent_id": agent_id, "status": "failed", "error": str(e)},
-                    ensure_ascii=False, indent=2,
-                )
+            # 心跳等待：不设硬超时，定期检查子 agent 是否仍在运行
+            check_interval = 5  # 每秒检查一次
+            safety_cap = timeout + 600  # 安全上限：timeout + 10min
+            waited = 0.0
+
+            while waited < safety_cap:
+                try:
+                    result = future.result(timeout=check_interval)
+                    return json.dumps(
+                        {"agent_id": agent_id, "status": "completed", "result": result},
+                        ensure_ascii=False, indent=2,
+                    )
+                except TimeoutError:
+                    waited += check_interval
+                    # 心跳检查：agent 是否还活着
+                    ctx = self.registry.get(agent_id)
+                    if ctx is None:
+                        return json.dumps(
+                            {"agent_id": agent_id, "status": "failed",
+                             "error": f"Agent disappeared after {waited:.0f}s"},
+                            ensure_ascii=False, indent=2,
+                        )
+                    if ctx.status not in ("running", "spawned"):
+                        return json.dumps(
+                            {"agent_id": agent_id, "status": ctx.status,
+                             "result": ctx.result or ""},
+                            ensure_ascii=False, indent=2,
+                        )
+                    # agent 仍在运行，继续等待
+                    logger.debug(
+                        f"Subagent {agent_id} still running after {waited:.0f}s"
+                    )
+                    continue
+                except Exception as e:
+                    self.registry.cancel(agent_id)
+                    return json.dumps(
+                        {"agent_id": agent_id, "status": "failed", "error": str(e)},
+                        ensure_ascii=False, indent=2,
+                    )
+
+            # 安全上限触发（极罕见：agent 运行超过 timeout+10min）
+            self.registry.cancel(agent_id)
+            return json.dumps(
+                {"agent_id": agent_id, "status": "timeout",
+                 "error": f"Safety cap reached after {safety_cap}s"},
+                ensure_ascii=False, indent=2,
+            )
 
         return json.dumps(
             {

@@ -438,19 +438,49 @@ class DecisionCardWidget(QFrame):
         """了解更多 → 触发 L2 对话 (由上层 GUI 处理)。"""
         if self._on_more_info:
             self._on_more_info()
-        else:
-            from PyQt6.QtWidgets import QMessageBox
-            details = []
-            for opt in self._card.options:
-                parts = [f"<b>{opt.label}:</b>"]
-                if opt.description:
-                    parts.append(opt.description)
-                if opt.expected_effect:
-                    parts.append(f"✨ {opt.expected_effect}")
-                if opt.risk:
-                    parts.append(f"⚠️ {opt.risk}")
-                details.append("<br>".join(parts))
-            QMessageBox.information(self, "选项详情", "<br><br>".join(details))
+            return
+
+        # Fallback: 大弹窗展示全部选项详情
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"选项详情 — {self._card.title}")
+        dlg.setMinimumSize(600, 450)
+        dlg.resize(700, 500)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 12, 16, 12)
+
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setStyleSheet("font-size: 13px; border: none; background: #FFFCF7;")
+
+        html_parts = [f"<h2 style='color:#B8312F;'>{self._card.title}</h2>"]
+        if self._card.context:
+            html_parts.append(
+                f"<p style='color:#666;'>{self._card.context}</p>"
+            )
+        html_parts.append("<hr>")
+
+        for opt in self._card.options:
+            is_rec = opt.id == self._card.recommendation
+            badge = " ✅ 推荐" if is_rec else ""
+            html_parts.append(
+                f"<h3 style='color:{_COLORS['accent'] if is_rec else _COLORS['text']};'>"
+                f"{opt.id}. {opt.label}{badge}</h3>"
+            )
+            if opt.description:
+                html_parts.append(f"<p><b>说明：</b>{opt.description}</p>")
+            if opt.expected_effect:
+                html_parts.append(f"<p>✨ <b>预期效果：</b>{opt.expected_effect}</p>")
+            if opt.risk:
+                html_parts.append(f"<p>⚠️ <b>风险：</b>{opt.risk}</p>")
+            html_parts.append(
+                f"<p><b>置信度：</b>{int(opt.confidence * 100)}%</p>"
+            )
+            html_parts.append("<br>")
+
+        text.setHtml("".join(html_parts))
+        layout.addWidget(text)
+        dlg.exec()
 
     def _on_reselect_clicked(self):
         """重新选择：恢复所有按钮为可点击状态。"""
