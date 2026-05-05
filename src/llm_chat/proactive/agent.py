@@ -169,7 +169,14 @@ class ProactiveAgent:
         """使用 DuckDuckGo 搜索，返回摘要文本。"""
         try:
             from ddgs import DDGS
-            ddgs = DDGS(timeout=10)
+
+            # 读取配置中的代理设置
+            proxy = self._config.llm.http_proxy
+            ddgs_kwargs = {"timeout": 10}
+            if proxy:
+                ddgs_kwargs["proxy"] = proxy
+
+            ddgs = DDGS(**ddgs_kwargs)
             items = list(ddgs.text(query, max_results=max_results))
             if not items:
                 return None
