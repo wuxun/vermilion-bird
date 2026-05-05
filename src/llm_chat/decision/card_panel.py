@@ -215,35 +215,42 @@ class DecisionCardWidget(QFrame):
             self._set_decided_state(None)
 
     def _build_options_list(self, layout: QVBoxLayout):
-        """用 QFrame 卡片列表展示选项，支持文字自动换行。"""
+        """用左右布局展示选项：左侧 A/B/C 序号，右侧标题+描述+详情。"""
         if not self._card.options:
             return
+
+        option_ids = [o.id for o in self._card.options]
 
         for opt in self._card.options:
             is_rec = opt.id == self._card.recommendation
 
-            # 选项容器
-            opt_frame = QFrame()
-            opt_frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {'#FFFDE7' if is_rec else 'white'};
-                    border: 1px solid {_COLORS['recommend_border'] if is_rec else _COLORS['border'] + '88'};
-                    border-left: 4px solid {_COLORS['recommend_border'] if is_rec else _COLORS['border']};
-                    border-radius: 4px;
-                    padding: 8px;
-                }}
-            """)
-            opt_layout = QVBoxLayout(opt_frame)
-            opt_layout.setContentsMargins(8, 6, 8, 6)
-            opt_layout.setSpacing(2)
+            # 整个选项的水平布局（序号 | 内容）
+            option_row = QHBoxLayout()
+            option_row.setSpacing(10)
 
-            # 第一行：推荐标记 + 标签 + 置信度
+            # ── 左侧：A/B/C 序号 ──
+            idx_label = QLabel(opt.id)
+            idx_font = QFont()
+            idx_font.setPointSize(16)
+            idx_font.setBold(True)
+            idx_label.setFont(idx_font)
+            idx_label.setFixedWidth(30)
+            idx_label.setAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+            )
+            idx_label.setStyleSheet(f"""
+                color: {_COLORS['accent'] if is_rec else _COLORS['border']};
+                margin-top: 4px;
+            """)
+            option_row.addWidget(idx_label)
+
+            # ── 右侧：内容区 ──
+            content_col = QVBoxLayout()
+            content_col.setSpacing(3)
+
+            # 行 1: 标题 + 推荐标记 + 置信度
             header_row = QHBoxLayout()
             header_row.setSpacing(6)
-
-            rec_label = QLabel("⭐" if is_rec else "  ")
-            rec_label.setFixedWidth(18)
-            header_row.addWidget(rec_label)
 
             name = QLabel(opt.label)
             name.setStyleSheet(f"""
@@ -253,39 +260,53 @@ class DecisionCardWidget(QFrame):
             name.setWordWrap(True)
             header_row.addWidget(name, 1)
 
+            if is_rec:
+                rec_tag = QLabel("推荐")
+                rec_tag.setStyleSheet(f"""
+                    background-color: {_COLORS['recommend_border']};
+                    color: white;
+                    border-radius: 3px;
+                    padding: 1px 6px;
+                    font-size: 9px;
+                    font-weight: bold;
+                """)
+                header_row.addWidget(rec_tag)
+
             conf_label = QLabel(f"{int(opt.confidence * 100)}%")
             conf_label.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
             header_row.addWidget(conf_label)
 
-            opt_layout.addLayout(header_row)
+            content_col.addLayout(header_row)
 
-            # 第二行：描述
+            # 行 2: 描述（description + expected_effect 合并）
+            desc_parts = []
             if opt.description:
-                desc = QLabel(opt.description)
+                desc_parts.append(opt.description)
+            if opt.expected_effect and opt.description not in (opt.expected_effect, ""):
+                desc_parts.append(f"✨ {opt.expected_effect}")
+            if desc_parts:
+                desc = QLabel("  ".join(desc_parts))
                 desc.setStyleSheet(f"color: {_COLORS['text']}; font-size: 11px;")
                 desc.setWordWrap(True)
-                opt_layout.addWidget(desc)
+                content_col.addWidget(desc)
 
-            # 第三行：预期效果 + 风险
-            detail_text = ""
-            if opt.expected_effect:
-                detail_text += f"✨ {opt.expected_effect}"
+            # 行 3: 风险 + 置信度进度条
+            detail_row = QHBoxLayout()
+            detail_row.setSpacing(8)
+
             if opt.risk:
-                if detail_text:
-                    detail_text += "  |  "
-                detail_text += f"⚠️ {opt.risk}"
-            if detail_text:
-                detail = QLabel(detail_text)
-                detail.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
-                detail.setWordWrap(True)
-                opt_layout.addWidget(detail)
+                risk = QLabel(f"⚠️ {opt.risk}")
+                risk.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
+                risk.setWordWrap(True)
+                detail_row.addWidget(risk, 1)
 
-            # 置信度进度条
+            # 置信度进度条（紧凑型）
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(int(opt.confidence * 100))
             bar.setTextVisible(False)
-            bar.setFixedHeight(6)
+            bar.setFixedHeight(5)
+            bar.setFixedWidth(80)
             bar.setStyleSheet(f"""
                 QProgressBar {{
                     background-color: {_COLORS['progress_bg']};
@@ -297,9 +318,22 @@ class DecisionCardWidget(QFrame):
                     border-radius: 3px;
                 }}
             """)
-            opt_layout.addWidget(bar)
+            detail_row.addWidget(bar)
 
-            layout.addWidget(opt_frame)
+            content_col.addLayout(detail_row)
+
+            # 分隔线（最后一项不画）
+            option_row.addLayout(content_col, 1)
+            layout.addLayout(option_row)
+
+            if opt.id != option_ids[-1]:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setStyleSheet(
+                    f"background-color: {_COLORS['border']}44;"
+                    f"max-height: 1px; margin: 2px 0;"
+                )
+                layout.addWidget(sep)
 
     def _build_button_row(self, layout: QVBoxLayout):
         """构建选项按钮行。"""
