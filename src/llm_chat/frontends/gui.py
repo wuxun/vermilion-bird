@@ -1501,18 +1501,24 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._scroll_to_bottom()
 
     def display_card(self, card: DecisionCard):
-        """渲染一张决策卡片到聊天流。"""
+        """渲染一张决策卡片到聊天流。通过闭包捕获 card 对象。"""
         if self._chat_layout is None:
             return
 
+        # on_decide 闭包捕获 card，后续可创建对话
+        def on_decide(card_id: str, option_id: str):
+            self._handle_card_decided(card, option_id)
+
+        def on_dismiss(card_id: str):
+            self._handle_card_dismissed(card_id)
+
         card_widget = DecisionCardWidget(
             card=card,
-            on_decide=self._handle_card_decided,
-            on_dismiss=self._handle_card_dismissed,
+            on_decide=on_decide,
+            on_dismiss=on_dismiss,
         )
         self._add_widget_to_chat(card_widget)
 
-        # 分隔线
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet(
@@ -1529,32 +1535,77 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _on_card_decided(self, card_id: str, option_id: str):
         """跨线程信号：卡片已决策。"""
-        # 将决策记录存入日志
         try:
             from llm_chat.decision.log import DecisionLogStore
             store = DecisionLogStore()
-            store.record_from_card(card_id, option_id)
+            store.record(card_id=card_id, card_type="decision", title=f"card:{card_id}", selected_option_id=option_id)
         except Exception as e:
             logger.warning(f"决策日志记录失败: {e}")
 
-    def _handle_card_decided(self, card_id: str, option_id: str):
-        """卡片按钮回调：用户做了决策。"""
-        logger.info(f"卡片决策: {card_id} -> {option_id}")
+    def _handle_card_decided(self, card: DecisionCard, option_id: str):
+        """卡片按钮回调：用户做了决策 → 创建对话并切换。"""
+        logger.info(f"卡片决策: {card.id} -> {option_id}")
+        selected = next((o for o in card.options if o.id == option_id), None)
+        if not selected:
+            logger.warning(f"选项 {option_id} 不在卡片选项中")
+            return
 
-        # 通知 CardSignals（如果有外部监听）
+        # 通知 CardSignals
         if self._card_signals:
-            self._card_signals.card_decided.emit(card_id, option_id)
+            self._card_signals.card_decided.emit(card.id, option_id)
 
-        # 在聊天流追加一条确认
-        info = QLabel(
-            f"<span style='color: #4CAF50; font-weight: bold;'>"
-            f"✅ 已选择选项 {option_id}</span>"
-        )
-        info.setStyleSheet(
-            "padding: 4px 8px; margin: 2px 0;"
-        )
-        self._add_widget_to_chat(info)
-        self._scroll_to_bottom()
+        # 记录决策日志
+        try:
+            from llm_chat.decision.log import DecisionLogStore
+            store = DecisionLogStore()
+            store.record(
+                card_id=card.id,
+                card_type=card.card_type.value,
+                title=card.title,
+                selected_option_id=option_id,
+                selected_option_label=selected.label,
+                recommendation=card.recommendation,
+                context_snapshot=card.context,
+            )
+        except Exception as e:
+            logger.warning(f"决策日志记录失败: {e}")
+
+        # 创建新对话 + 写入开场白
+        try:
+            from datetime import datetime
+            app = self._app_instance
+            if not app:
+                return
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            option_text = f"🗣 {card.title} — {selected.label}"
+            conv = app.conversation_manager.create_conversation(
+                title=option_text
+            )
+
+            # 生成开场白文本
+            opener_parts = [f"你选择了: {selected.label}"]
+            if selected.description:
+                opener_parts.append(f"\n{selected.description}")
+            if selected.expected_effect:
+                opener_parts.append(f"\n预期: {selected.expected_effect}")
+            opener_parts.append(f"\n\n我们来聊聊这个话题吧！")
+            opener = "".join(opener_parts)
+            conv.add_assistant_message(opener)
+
+            # 获取消息列表
+            from llm_chat.storage import Storage
+            storage = Storage()
+            msgs = storage.get_messages(conv.conversation_id)
+            formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
+
+            # 切换到新对话
+            self.set_current_conversation(conv.conversation_id, formatted)
+            self.request_conversation_list_refresh()
+
+            logger.info(f"已从卡片创建对话: {conv.conversation_id}")
+        except Exception as e:
+            logger.error(f"从卡片创建对话失败: {e}")
 
     def _handle_card_dismissed(self, card_id: str):
         """卡片按钮回调：用户忽略了卡片。"""

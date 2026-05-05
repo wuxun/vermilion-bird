@@ -80,7 +80,6 @@ if PYQT_AVAILABLE:
         card_dismissed = pyqtSignal(str)  # card_id
 
 else:
-    # Fallback: 纯 Python 模拟（用于测试/CLI）
     class CardSignals(QObject):
         card_created = None
         card_decided = None
@@ -89,27 +88,26 @@ else:
 
 # ── 样式 ─────────────────────────────────────────────────────────────
 
-_CARD_STYLE = """
-QFrame#{name} {{
-    background-color: {bg};
-    border: 1px solid {border};
+_CARD_STYLE = f"""
+QFrame#__card__ {{
+    background-color: {_COLORS['bg']};
+    border: 1px solid {_COLORS['border']};
     border-radius: 8px;
     margin: 4px 0px;
     padding: 8px;
 }}
-QFrame#{name}:hover {{
-    border-color: {accent};
+QFrame#__card__:hover {{
+    border-color: {_COLORS['accent']};
 }}
-""".format(**_COLORS, name="__card__")
+"""
 
 
 def _make_button(text: str, primary: bool = False) -> "QPushButton":
     """创建卡片选项按钮。"""
     if not PYQT_AVAILABLE:
         return None
-    btn = QPushButton(text)
     if primary:
-        btn.setStyleSheet(f"""
+        style = f"""
             QPushButton {{
                 background-color: {_COLORS['accent']};
                 color: white;
@@ -125,9 +123,9 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
                 background-color: #ccc;
                 color: #999;
             }}
-        """)
+        """
     else:
-        btn.setStyleSheet(f"""
+        style = f"""
             QPushButton {{
                 background-color: white;
                 color: {_COLORS['text']};
@@ -145,7 +143,9 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
                 color: #ccc;
                 border-color: #e0e0e0;
             }}
-        """)
+        """
+    btn = QPushButton(text)
+    btn.setStyleSheet(style)
     return btn
 
 
@@ -153,13 +153,7 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
 
 
 class DecisionCardWidget(QFrame):
-    """单张决策卡片的 QFrame 渲染。
-
-    包含:
-    - 标题 + 背景摘要
-    - 选项对比表格（置信度进度条）
-    - 按钮行（选 A / 选 B / 了解更多 / 忽略）
-    """
+    """单张决策卡片的 QFrame 渲染。"""
 
     def __init__(
         self,
@@ -173,10 +167,7 @@ class DecisionCardWidget(QFrame):
         self._on_decide = on_decide
         self._on_dismiss = on_dismiss
         self._option_buttons: Dict[str, QPushButton] = {}
-
         self._build_ui()
-
-    # ── 构建 UI ─────────────────────────────────────────────────────
 
     def _build_ui(self):
         if not PYQT_AVAILABLE:
@@ -189,17 +180,17 @@ class DecisionCardWidget(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        # 标题
+        # ── 标题 ──
         title_label = QLabel(f"\U0001f3af {self._card.title}")
-        title_font = QFont()
-        title_font.setPointSize(12)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
+        tf = QFont()
+        tf.setPointSize(12)
+        tf.setBold(True)
+        title_label.setFont(tf)
         title_label.setStyleSheet(f"color: {_COLORS['title']};")
         title_label.setWordWrap(True)
         layout.addWidget(title_label)
 
-        # 背景摘要
+        # ── 背景摘要 ──
         if self._card.context:
             ctx = QLabel(self._card.context)
             ctx.setStyleSheet(f"color: {_COLORS['text']}; font-size: 11px;")
@@ -207,121 +198,108 @@ class DecisionCardWidget(QFrame):
             ctx.setContentsMargins(0, 0, 0, 4)
             layout.addWidget(ctx)
 
-        # 选项对比表格
-        self._build_options_table(layout)
+        # ── 选项列表（非表格，用 QFrame 卡片布局） ──
+        self._build_options_list(layout)
 
-        # 按钮行
+        # ── 按钮行 ──
         self._build_button_row(layout)
 
-        # 来源
+        # ── 来源 ──
         if self._card.sources:
             src = QLabel(f"来源: {', '.join(self._card.sources)}")
             src.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
             layout.addWidget(src)
 
-        # 如果已决策，禁用按钮
+        # 如果卡片已决策，禁用按钮
         if self._card.status != CardStatus.PENDING:
-            self._set_decided_state(self._card.selected_option_id if hasattr(self._card, 'selected_option_id') else None)
+            self._set_decided_state(None)
 
-    def _build_options_table(self, layout: QVBoxLayout):
-        """构建选项对比表格。"""
+    def _build_options_list(self, layout: QVBoxLayout):
+        """用 QFrame 卡片列表展示选项，支持文字自动换行。"""
         if not self._card.options:
             return
 
-        # 使用 QTableWidget 做对比表格
-        table = QTableWidget(len(self._card.options), 4)
-        table.setHorizontalHeaderLabels(["", "选项", "预期效果", "风险"])
-        table.verticalHeader().setVisible(False)
-        table.setShowGrid(False)
-        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-
-        header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        table.setColumnWidth(0, 24)
-
-        table.setStyleSheet(f"""
-            QTableWidget {{
-                border: none;
-                background-color: transparent;
-                font-size: 11px;
-            }}
-            QTableWidget::item {{
-                padding: 4px 6px;
-                border-bottom: 1px solid {_COLORS['border']}44;
-                color: {_COLORS['text']};
-            }}
-            QHeaderView::section {{
-                background-color: {_COLORS['bg']};
-                color: {_COLORS['muted']};
-                border: none;
-                font-weight: bold;
-                font-size: 10px;
-                padding: 4px 6px;
-            }}
-        """)
-
-        for row, opt in enumerate(self._card.options):
-            # 推荐标记
+        for opt in self._card.options:
             is_rec = opt.id == self._card.recommendation
-            rec_label = QLabel("⭐" if is_rec else "")
-            rec_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            table.setCellWidget(row, 0, rec_label)
 
-            # 选项名 + 置信度进度条
-            opt_widget = QWidget()
-            opt_layout = QVBoxLayout(opt_widget)
-            opt_layout.setContentsMargins(0, 0, 0, 4)
+            # 选项容器
+            opt_frame = QFrame()
+            opt_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {'#FFFDE7' if is_rec else 'white'};
+                    border: 1px solid {_COLORS['recommend_border'] if is_rec else _COLORS['border'] + '88'};
+                    border-left: 4px solid {_COLORS['recommend_border'] if is_rec else _COLORS['border']};
+                    border-radius: 4px;
+                    padding: 8px;
+                }}
+            """)
+            opt_layout = QVBoxLayout(opt_frame)
+            opt_layout.setContentsMargins(8, 6, 8, 6)
             opt_layout.setSpacing(2)
 
-            opt_name = QLabel(opt.label)
-            opt_name.setStyleSheet("font-weight: bold; color: {}".format(
-                _COLORS['accent'] if is_rec else _COLORS['text']
-            ))
-            opt_layout.addWidget(opt_name)
+            # 第一行：推荐标记 + 标签 + 置信度
+            header_row = QHBoxLayout()
+            header_row.setSpacing(6)
+
+            rec_label = QLabel("⭐" if is_rec else "  ")
+            rec_label.setFixedWidth(18)
+            header_row.addWidget(rec_label)
+
+            name = QLabel(opt.label)
+            name.setStyleSheet(f"""
+                font-weight: bold; font-size: 12px;
+                color: {_COLORS['accent'] if is_rec else _COLORS['text']};
+            """)
+            name.setWordWrap(True)
+            header_row.addWidget(name, 1)
+
+            conf_label = QLabel(f"{int(opt.confidence * 100)}%")
+            conf_label.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
+            header_row.addWidget(conf_label)
+
+            opt_layout.addLayout(header_row)
+
+            # 第二行：描述
+            if opt.description:
+                desc = QLabel(opt.description)
+                desc.setStyleSheet(f"color: {_COLORS['text']}; font-size: 11px;")
+                desc.setWordWrap(True)
+                opt_layout.addWidget(desc)
+
+            # 第三行：预期效果 + 风险
+            detail_text = ""
+            if opt.expected_effect:
+                detail_text += f"✨ {opt.expected_effect}"
+            if opt.risk:
+                if detail_text:
+                    detail_text += "  |  "
+                detail_text += f"⚠️ {opt.risk}"
+            if detail_text:
+                detail = QLabel(detail_text)
+                detail.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
+                detail.setWordWrap(True)
+                opt_layout.addWidget(detail)
 
             # 置信度进度条
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(int(opt.confidence * 100))
-            bar.setTextVisible(True)
-            bar.setFixedHeight(14)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(6)
             bar.setStyleSheet(f"""
                 QProgressBar {{
                     background-color: {_COLORS['progress_bg']};
                     border: none;
                     border-radius: 3px;
-                    text-align: center;
-                    font-size: 9px;
-                    color: {_COLORS['text']};
                 }}
                 QProgressBar::chunk {{
-                    background-color: {_COLORS['progress_fill']};
+                    background-color: {_COLORS['recommend_border'] if is_rec else _COLORS['progress_fill']};
                     border-radius: 3px;
                 }}
             """)
             opt_layout.addWidget(bar)
 
-            table.setCellWidget(row, 1, opt_widget)
-
-            # 预期效果
-            effect = QLabel(opt.expected_effect or "")
-            effect.setWordWrap(True)
-            table.setCellWidget(row, 2, effect)
-
-            # 风险
-            risk = QLabel(opt.risk or "")
-            risk.setWordWrap(True)
-            table.setCellWidget(row, 3, risk)
-
-        # 行高自动
-        for row in range(len(self._card.options)):
-            table.setRowHeight(row, 60)
-
-        table.setFixedHeight(min(len(self._card.options) * 64 + 30, 200))
-        layout.addWidget(table)
+            layout.addWidget(opt_frame)
 
     def _build_button_row(self, layout: QVBoxLayout):
         """构建选项按钮行。"""
@@ -332,13 +310,15 @@ class DecisionCardWidget(QFrame):
             is_rec = opt.id == self._card.recommendation
             text = f"{'✅ ' if is_rec else ''}选 {opt.id}"
             btn = _make_button(text, primary=is_rec)
-            btn.clicked.connect(lambda checked, oid=opt.id: self._on_decide_clicked(oid))
+            btn.clicked.connect(
+                lambda checked, oid=opt.id: self._on_decide_clicked(oid)
+            )
             self._option_buttons[opt.id] = btn
             btn_layout.addWidget(btn)
 
         btn_layout.addStretch()
 
-        # 了解更多按钮（扩展选项描述）
+        # 了解更多
         if any(o.description for o in self._card.options):
             more_btn = QPushButton("了解更多")
             more_btn.setStyleSheet(f"""
@@ -356,7 +336,7 @@ class DecisionCardWidget(QFrame):
             more_btn.clicked.connect(self._on_more_clicked)
             btn_layout.addWidget(more_btn)
 
-        # 忽略按钮
+        # 忽略
         dismiss_btn = QPushButton("稍后")
         dismiss_btn.setStyleSheet(f"""
             QPushButton {{
@@ -385,7 +365,6 @@ class DecisionCardWidget(QFrame):
     # ── 事件处理 ─────────────────────────────────────────────────────
 
     def _on_decide_clicked(self, option_id: str):
-        """用户点击了选项按钮。"""
         try:
             self._card.decide(option_id)
         except ValueError as e:
@@ -398,7 +377,6 @@ class DecisionCardWidget(QFrame):
             self._on_decide(self._card.id, option_id)
 
     def _on_dismiss_clicked(self):
-        """用户点击了忽略。"""
         try:
             self._card.dismiss()
         except ValueError as e:
@@ -410,32 +388,25 @@ class DecisionCardWidget(QFrame):
         if self._dismiss_btn:
             self._dismiss_btn.setEnabled(False)
 
-        # 变灰
-        self.setStyleSheet(_CARD_STYLE.replace(_COLORS['bg'], "#f5f5f5"))
+        self.setStyleSheet(_CARD_STYLE.replace(_COLORS["bg"], "#f5f5f5"))
 
         if self._on_dismiss:
             self._on_dismiss(self._card.id)
 
     def _on_more_clicked(self):
-        """展开选项的详细描述。"""
-        # 简单实现：弹出一个 info label
         details = []
         for opt in self._card.options:
             if opt.description:
                 details.append(f"<b>{opt.label}:</b> {opt.description}")
         if details:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "选项详情",
-                "\n\n".join(details),
-            )
+
+            QMessageBox.information(self, "选项详情", "\n\n".join(details))
 
     def _set_decided_state(self, option_id: Optional[str]):
-        """决策后禁用按钮并高亮选中项。"""
         for oid, btn in self._option_buttons.items():
             btn.setEnabled(False)
             if oid == option_id:
-                # 高亮选中按钮：绿色边框
                 btn.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {_COLORS['recommend_bg']};
@@ -448,8 +419,6 @@ class DecisionCardWidget(QFrame):
                 """)
         if self._dismiss_btn:
             self._dismiss_btn.setEnabled(False)
-
-    # ── 访问器 ───────────────────────────────────────────────────────
 
     @property
     def card(self) -> DecisionCard:

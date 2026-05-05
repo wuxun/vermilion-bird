@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -50,12 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_decision_log_created_at ON decision_log(created_a
 
 
 class DecisionLogStore:
-    """决策日志存储。
-
-    事务模型:
-    - 每次 record() 使用独立连接，不依赖外部事务
-    - record_from_card() 从 DecisionCard 实例创建记录
-    """
+    """决策日志存储。"""
 
     def __init__(self):
         self._storage = None
@@ -69,12 +63,8 @@ class DecisionLogStore:
     def ensure_table(self):
         """确保 decision_log 表存在（幂等）。"""
         storage = self._get_storage()
-        conn = storage._get_connection()
-        try:
+        with storage._get_connection() as conn:
             conn.executescript(CREATE_TABLE_SQL + CREATE_INDEX_SQL)
-            conn.commit()
-        finally:
-            conn.close()
 
     def record(
         self,
@@ -106,8 +96,7 @@ class DecisionLogStore:
         )
 
         storage = self._get_storage()
-        conn = storage._get_connection()
-        try:
+        with storage._get_connection() as conn:
             conn.execute(
                 """INSERT INTO decision_log
                 (id, card_id, card_type, title,
@@ -129,28 +118,30 @@ class DecisionLogStore:
                     record.decided_at or datetime.now(),
                 ),
             )
-            conn.commit()
-        finally:
-            conn.close()
 
         logger.info(
             f"决策已记录: card={card_id} -> {selected_option_id} ({selected_option_label})"
         )
         return record.id
 
-    def record_from_card(self, card_id: str, option_id: str) -> str:
+    def record_from_card(self, card: "DecisionCard", option_id: str) -> str:
         """从已决策的卡片创建日志记录。
 
-        需确保卡片已调用 decide() 后才调用此方法。
+        Args:
+            card: 已决策的 DecisionCard 实例。
+            option_id: 被选择的选项 ID。
         """
-        # 通过 card_id 无法直接获取 DecisionCard 对象，
-        # 所以这里需要调用方确保提前记录必要信息。
-        # 简单实现：只记录 ID，不读取卡片详情。
+        selected = next(
+            (o for o in card.options if o.id == option_id), None
+        )
         return self.record(
-            card_id=card_id,
-            card_type="decision",
-            title=f"card:{card_id}",
+            card_id=card.id,
+            card_type=card.card_type.value,
+            title=card.title,
             selected_option_id=option_id,
+            selected_option_label=selected.label if selected else None,
+            recommendation=card.recommendation,
+            conversation_id=card.conversation_id,
         )
 
     def get_history(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -158,8 +149,7 @@ class DecisionLogStore:
         self.ensure_table()
 
         storage = self._get_storage()
-        conn = storage._get_connection()
-        try:
+        with storage._get_connection() as conn:
             rows = conn.execute(
                 """SELECT * FROM decision_log
                 ORDER BY created_at DESC
@@ -167,16 +157,13 @@ class DecisionLogStore:
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
-        finally:
-            conn.close()
 
     def get_statistics(self) -> Dict[str, Any]:
         """获取决策统计。"""
         self.ensure_table()
 
         storage = self._get_storage()
-        conn = storage._get_connection()
-        try:
+        with storage._get_connection() as conn:
             total = conn.execute(
                 "SELECT COUNT(*) FROM decision_log"
             ).fetchone()[0]
@@ -199,5 +186,3 @@ class DecisionLogStore:
                 "accepted": accepted,
                 "acceptance_rate": round(accepted / total, 3) if total > 0 else 0,
             }
-        finally:
-            conn.close()
