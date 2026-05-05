@@ -1,372 +1,225 @@
 # Decision-First Implementation Plan & 追踪文档
 
-> 版本：v0.2 · 日期：2026-05-05  
-> 状态：**Phase 1 执行中 — 代码审查卡片端到端**  
-> 关联文档：[decision-first-product-vision.md](./decision-first-product-vision.md)
+> 版本：v1.0 · 日期：2026-05-05  
+> 状态：**Phase 1 完成 ✅**  
+> 关联文档：[decision-first-product-vision.md](./decision-first-product-vision.md) |
+[decision-first-design.md](./decision-first-design.md)
 
 ---
 
 ## 总览
 
-本文档是 Decision-First AI 交互范式的**可执行计划**和**追踪记录**。
-产品愿景文档定义了"做什么"，本文档定义"怎么做、谁做、何时做、做到什么程度"。
+Decision-First AI 交互范式 Phase 1 已实现。核心成果：
+
+- **卡片提交**：LLM 通过 `submit_decision_card` tool call 提交结构化卡片，不再依赖文本正则解析
+- **并行 Agent**：LLM 自主通过 `spawn_subagent(wait=true)` 并行启动子 Agent，无需硬编码管道
+- **GUI 卡片**：`DecisionCardWidget` 渲染，延迟追加确保卡片在 AI 文本之后
+- **飞书卡片**：文本命令识别（A/选A），共享 action 执行器
+- **决策日志**：SQLite 持久化，含 `execution_result` 追溯
 
 ---
 
-## 一、设计决策追踪（D1-D4）— 已全部定稿
+## 一、设计决策（D1-D4）— 全部定稿
 
-### D1: 卡片渲染位置 → ✅ 已决策
-
-**结论**：PyQt6 原生 QFrame 渲染，混入聊天流。`DecisionCardWidget` 已实现。
-
-### D2: Agent 编排 → ✅ 已决策
-
-**结论**：Phase 1 单 LLM 直出卡片 + 审查管道并行 LLM 调用。Phase 2 再上 AgentOrchestrator DAG。
-
-### D3: 卡片 JSON Schema → ✅ 已决策
-
-**结论**：`decision/schema.py` 已定义完整 Pydantic 模型。**唯一缺口**：`DecisionOption` 缺 `action` 字段（G5）。
-
-### D4: 卡片推送时机 → ✅ 已决策
-
-**结论**：立即推送 (`CardSignals`) + 定时推送 (`ProactiveAgent`)。Phase 3 再加汇总推送。
+| # | 决策 | 结论 | 实现 |
+|---|------|------|------|
+| D1 | 卡片渲染位置 | PyQt6 原生 QFrame，混入聊天流 | `DecisionCardWidget` (card_panel.py) |
+| D2 | Agent 编排 | System prompt 驱动，LLM 自主拆分维度 + spawn_subagent | `_DECISION_CARD_PROMPT` (chat_core.py:33) |
+| D3 | 卡片 JSON Schema | Pydantic 模型 + `action` 字段 | `DecisionCard` + `DecisionOption.action` (schema.py) |
+| D4 | 卡片推送时机 | 立即推送 (CardSignals) + 定时推送 (ProactiveAgent) | 不变 |
 
 ---
 
-### D2: Agent 编排 → ✅ 已决策
+## 二、实际改造范围
 
-**结论**：Phase 1 单 LLM 直出卡片 + 审查管道并行 LLM 调用。Phase 2 再上 AgentOrchestrator DAG。
+### 新增文件 (3)
 
----
+| 文件 | 职责 |
+|------|------|
+| `decision/submit_tool.py` | `SubmitDecisionCardTool` — tool call 提交卡片，thread-local 传递到 ChatCore |
+| `decision/action_executor.py` | `execute_card_action()` — GUI 和飞书共用的 action 执行逻辑 |
+| `docs/decision-first-implementation-plan.md` | 本文档 |
 
-### D3: 卡片 JSON Schema → ✅ 已决策
+### 修改文件 (7)
 
-**结论**：`decision/schema.py` 已定义完整 Pydantic 模型。**唯一缺口**：`DecisionOption` 缺 `action` 字段（G5）。
-
----
-
-### D4: 卡片推送时机 → ✅ 已决策
-
-**结论**：立即推送 (`CardSignals`) + 定时推送 (`ProactiveAgent`)。Phase 3 再加汇总推送。
-
----
-
-## 二、Vermilion Bird 改造影响分析
-
-### 受影响模块清单
-
-| 模块 | 文件 | 改动类型 | 改动说明 | 复杂度 |
-|------|------|---------|---------|--------|
-| **ChatCore** | `src/llm_chat/chat_core.py` | **修改** | `send_message()` 增加卡片模式分支；新增 `send_decision_card()` 方法 | 🔴 高 |
-| **IntentClassifier** | `src/llm_chat/intent/classifier.py` | **修改** | 新增 `Decision` 意图类型；L1 模式匹配增加"审查/分析/优化"等触发词 | 🟡 中 |
-| **Intent Types** | `src/llm_chat/intent/types.py` | **修改** | 新增 `Intent.DECISION`；`RoutingDecision` 增加 `agent_workflow` 字段 | 🟢 低 |
-| **AgentOrchestrator** | `src/llm_chat/agent/` | **新增** | 任务拆解 + DAG 调度 + Agent 通信 + 断点续传 | 🔴 高 |
-| **DecisionEngine** | `src/llm_chat/decision/` | **新增** | 选项生成 + 置信度计算 + 卡片序列化 + 卡片状态机 + 决策日志 | 🔴 高 |
-| **Storage** | `src/llm_chat/storage/_core.py` | **修改** | 新增 `decision_log` 表 + `pending_cards` 表 | 🟡 中 |
-| **SpawnSubagentTool** | `src/llm_chat/skills/task_delegator/` | **修改** | 支持 Agent 间上下文传递；支持子任务依赖关系 | 🟡 中 |
-| **TaskExecutor** | `src/llm_chat/scheduler/task_executor.py` | **修改** | 支持 DAG 工作流调度；支持断点续传 | 🟡 中 |
-| **GUI Frontend** | `src/llm_chat/frontends/gui.py` | **修改** | 新增卡片渲染组件；WebSocket 客户端 | 🔴 高 |
-| **Web UI** | **新项目** | **新增** | 决策卡片 Web 渲染器（React/Vue + WebSocket） | 🔴 高 |
-| **MemoryManager** | `src/llm_chat/memory/manager.py` | **修改** | 决策结果写入 mid-term memory | 🟢 低 |
-| **Conversation** | `src/llm_chat/conversation.py` | **修改** | 会话中区分文本消息和卡片消息 | 🟡 中 |
-| **Config** | `src/llm_chat/config.py` | **修改** | 新增 `decision` + `agent` + `card_renderer` 配置节点 | 🟢 低 |
+| 文件 | 改动 |
+|------|------|
+| `chat_core.py` | `_DECISION_CARD_PROMPT` 增强（并行 Agent 模式 + tool call 提交）；`send_message` + `send_message_stream` 都加 `get_pending_card()` 提取 + fallback `_try_extract_card`；`send_message_stream` 加 `on_card` 参数 |
+| `decision/schema.py` | `DecisionOption` 加 `action: Optional[Dict]` 字段 |
+| `decision/log.py` | `decision_log` 表加 `execution_result` + `executed_at`；新增 `update_execution_result()` |
+| `storage/_core.py` | 同步 `decision_log` 建表语句；新增 `_migrate_decision_log_columns()` 灰度迁移 |
+| `client/_base.py` | `_setup_skills()` 在 `clear()` 后注册 `SubmitDecisionCardTool`（避免被 wipe） |
+| `frontends/gui.py` | `display_card` 延迟追加（流式场景）vs 立即渲染（ProactiveAgent）；`_start_streaming()` 公共方法；`_continue_chat_from_card()` 卡片选择后继续对话；`_update_context_status()` 跳过 card 消息 |
+| `frontends/feishu/adapter.py` | `_pending_cards` 绑定 + `_try_handle_card_decision()` 文本命令检测；`_send_card_text_to_chat` 加操作提示 |
 
 ### 不改的模块
 
-以下模块在 Phase 1 **保持不变**：
 - `protocols/` — 协议层不涉及卡片逻辑
-- `mcp/` — MCP 工具照常可用，只是结果输入给 DecisionEngine
-- `frontends/feishu/` — 飞书集成不纳入 Phase 1
+- `mcp/` — MCP 工具正常可用
 - `context/` — 上下文管理沿用现有机制
-- `skills/` (除 task_delegator) — 技能系统照常工作
-
-### 架构演进图
-
-```
-Phase 1 前 (当前 Vermilion Bird):
-  用户输入 → IntentClassifier → ChatCore.send_message()
-    → LLM 调用 → 工具执行 → 文本输出
-
-Phase 1 后 (卡片模式):
-  用户输入 → IntentClassifier
-    ├─ [普通对话] → ChatCore.send_message() → 文本输出 (保持不变)
-    └─ [决策任务] → AgentOrchestrator
-                      ├─ 任务拆解 → 多 Agent 并行
-                      ├─ 结果汇总 → DecisionEngine
-                      │   ├─ 选项生成 + 置信度
-                      │   └─ 卡片序列化
-                      └─ WebSocket → CardRenderer → 用户决策
-                                        │
-                                        ▼
-                              用户选择 → ActionExecutor
-                                ├─ execute_skill
-                                ├─ reject/revision
-                                └─ 结果 → 决策日志
-```
+- `skills/` — 技能系统不变（task_delegator 的 spawn_subagent 直接复用）
+- `intent/` — 意图层不做能力扩展，卡片由 system prompt 驱动
 
 ---
 
-## 三、MVP 用例定义
-
-### 用例 1: 代码审查卡片
-
-**触发方式**：用户在 IDE 中选中代码，通过 Vermilion Bird 快捷指令触发"审查代码"
-
-**数据流**：
-```
-用户选中代码 + "审查这段代码"
-    → IntentClassifier → DECISION intent
-    → AgentOrchestrator 拆解为 3 个子任务:
-        ├─ Agent 1: 安全分析 (SQL注入/XSS/硬编码密钥)
-        ├─ Agent 2: 性能分析 (复杂度/内存/IO)
-        └─ Agent 3: 最佳实践 (命名/设计模式/可读性)
-    → 3 Agent 并行执行，各自调用 tool:
-        ├─ file_reader (读取完整文件上下文)
-        ├─ shell_exec (运行 linter/SAST)
-        └─ web_search (查询 CVE 相关信息)
-
-    → DecisionEngine 汇总:
-        ├─ 安全: 2 HIGH, 1 MEDIUM
-        ├─ 性能: 0 issue
-        └─ 最佳实践: 3 WARNING
-        ├─ 生成 3 个选项 + 置信度
-        └─ 序列化为决策卡片
-```
-
-**预期卡片**：
-```
-┌───────────────────────────────────────────────┐
-│  🔍 代码审查完成                               │
-│  文件: api/payment.py · 影响范围: 89 行        │
-│                                                │
-│  摘要: 发现 2 个安全问题、3 个代码风格问题      │
-│  无性能瓶颈                                    │
-│  ───────────────────────────────────────────── │
-│                                                │
-│  选项 A: 自动修复全部（推荐 ✅）                │
-│    ├ 操作: 修改 1 个文件，5 处改动              │
-│    ├ 预期: 消除 2 HIGH 安全问题，代码评级 +2    │
-│    ├ 风险: 低 — 改动为局部变量重命名 + 加参数校验│
-│    └ 置信度: 92%                               │
-│                                                │
-│  选项 B: 只修复安全问题                         │
-│    ├ 操作: 修改 1 个文件，2 处改动              │
-│    ├ 预期: 消除 2 HIGH 安全问题                 │
-│    ├ 风险: 低                                   │
-│    └ 风格问题留待后续处理                       │
-│                                                │
-│  选项 C: 只查看报告，我自己改                   │
-│                                                │
-│  问题详情 (点击展开 ▼):                         │
-│    🔴 [HIGH] L42: 未验证的 user_id 直接传入 SQL │
-│    🔴 [HIGH] L67: API key 硬编码                │
-│    🟡 [WARN] L23: 变量名 `x` 不够语义化         │
-│    🟡 [WARN] L45: 函数超过 50 行，建议拆分      │
-│    🟡 [WARN] L78: 缺少类型注解                  │
-│                                                │
-│  引用: api/payment.py · pylint report · bandit  │
-│                                                │
-│  [选A并执行] [选B] [选C] [详细报告(进入L2)]      │
-└───────────────────────────────────────────────┘
-```
-
-**成功标准**：
-- 从触发到卡片呈现 < 15 秒
-- 卡片选项可执行（选 A 后 5 个文件改动全部 apply）
-- 决策日志正确记录
-
----
-
-### 用例 2: 计划拆解卡片（Phase 2 候选）
-
-**触发方式**：用户输入模糊目标如"给项目加用户认证模块"
-
-**Agent 工作流**：
-```
-AgentOrchestrator:
-  ├─ Agent 1: 代码库分析 (当前架构、依赖、入口点)
-  ├─ Agent 2: 方案调研 (搜索最佳实践、库对比)
-  └─ 汇总 → DecisionEngine:
-       ├─ 选项 A: JWT + OAuth2 (推荐)
-       ├─ 选项 B: Session + Cookie
-       └─ 选项 C: 第三方 Auth0/Firebase Auth
-```
-
-> 注：此用例 Phase 1 不实现，仅作为 Phase 2 方向参考。
-
----
-
-## 四、卡片状态机
+## 三、实际架构：System Prompt 驱动的并行 Agent
 
 ```
-                    ┌──────────┐
-                    │  pending  │  卡片生成，等待用户决策
-                    └────┬─────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-         ┌────────┐ ┌────────┐ ┌─────────┐
-         │decided │ │snoozed │ │expired  │
-         └───┬────┘ └───┬────┘ └────┬────┘
-             │          │           │
-             │    (超时唤醒)       │
-             │          │           │
-             │          ▼           │
-             │     ┌────────┐      │
-             │     │pending │◄─────┘
-             │     └────────┘
-             ▼
-        ┌──────────┐
-        │ executing│  正在执行用户选择的 action
-        └────┬─────┘
-             │
-        ┌────┴────┐
-        ▼         ▼
-   ┌─────────┐ ┌─────────┐
-   │completed│ │ failed  │
-   └────┬────┘ └────┬────┘
-        │           │
-        │     (用户选择重试)
-        │           │
-        │           ▼
-        │      ┌──────────┐
-        │      │ revision │  用户驳回，需要重新生成
-        │      └────┬─────┘
-        │           │
-        │           ▼
-        │      ┌──────────┐
-        │      │ pending  │  重新生成卡片
-        │      └──────────┘
-        │
-        ▼
-   ┌──────────┐
-   │ archived │  最终归档
-   └──────────┘
-```
-
-**状态说明**：
-
-| 状态 | 含义 | 可执行操作 |
-|------|------|-----------|
-| `pending` | 卡片生成，等待用户决策 | decide / snooze / dismiss |
-| `decided` | 用户已选择，等待执行 | 自动进入 executing |
-| `executing` | 正在执行 action | - |
-| `completed` | 执行成功 | 自动归档 |
-| `failed` | 执行失败 | retry / revision / dismiss |
-| `revision` | 用户驳回，要求修改 | 重新生成卡片 |
-| `snoozed` | 用户暂缓 | 超时后回到 pending |
-| `expired` | 超时未处理 | 自动归档 |
-| `archived` | 最终状态，进入决策日志 | 可查询不可修改 |
-
----
-
-## 五、未覆盖的关键问题（待讨论）
-
-### Q1: 多轮决策的对话组织
-
-当一个决策卡片进入 `revision` 状态后，AI 重新生成的卡片是：
-- **方案 A**：新建一张卡片，原卡片归档
-- **方案 B**：在原卡片上原地修改，保留修改历史
-
-**建议**：方案 A + 卡片之间用 `parent_card_id` 建立引用链。
-
----
-
-### Q2: 卡片推送可靠性
-
-WebSocket 断连时，pending 卡片不应丢失：
-
-| 机制 | 实现方式 |
-|------|---------|
-| **服务端持久化** | `pending_cards` 表存储，WebSocket 重连后重新推送 |
-| **至少一次语义** | 卡片 ID 去重，客户端确认后服务端标记 delivered |
-| **重试策略** | 未确认卡片每 30s 重推一次，最多 5 次 |
-| **降级方案** | 若 WebSocket 长时间不可用，fallback 为 HTTP 轮询 |
-
----
-
-### Q3: L0 安静模式的 Phase 1 边界
-
-Phase 1 **不做**用户桌面监控。L0 的范围限定在：
-
-- ✅ Vermilion Bird 自己的会话历史（现有能力）
-- ✅ 项目记忆文件（`~/.vermilion-bird/memory/`）
-- ✅ MCP 工具的数据源（如已连接的 Jira/GitHub）
-- ❌ 用户屏幕内容
-- ❌ 浏览器历史
-- ❌ 本地文件系统（除非用户主动打开）
-
----
-
-### Q4: 决策日志与记忆系统的关系
-
-```
-决策卡片完成 (archived)
+用户: "审查这段代码" / "评估这三个方案"
     │
     ▼
-决策日志表 (decision_log)      ← 结构化查询
+ChatCore._build_system_context()
+    │
+    ├─ _DECISION_CARD_PROMPT 注入:
+    │   "遇到多维度分析 → 拆分维度 → 并行 spawn_subagent(wait=true) → submit_decision_card"
     │
     ▼
-MemoryManager 定期汇总          ← 利用现有 LLM 聚类去重
+LLM 自主决策:
+    │
+    ├─ 代码审查 → spawn(安全) ∥ spawn(性能) ∥ spawn(代码质量)
+    ├─ 方案评估 → spawn(可行性) ∥ spawn(成本) ∥ spawn(风险)
+    └─ 用户指定 → "只看安全" → spawn(安全) only
     │
     ▼
-mid-term memory                 ← 同现有记忆一起注入 system prompt
+ToolExecutor.execute_tools_parallel() → 并行执行
+    │
+    ▼
+LLM 汇总 → submit_decision_card(title=..., options=[...])
+    │
+    ├─ SubmitDecisionCardTool.execute() → thread-local
+    │
+    ▼
+ChatCore.get_pending_card()
+    ├─ 优先路径 (tool) → on_card(card)
+    └─ Fallback (_try_extract_card) → 向后兼容
+    │
+    ▼
+GUI: CardSignals → DecisionCardWidget 渲染
+飞书: 结构化文本 + "回复 A/B/C 选择方案"
 ```
 
-决策日志作为 mid-term memory 的**特殊子类型**，用现有去重 + 聚类能力做决策模式分析和复盘。
+**关键设计**：不新增 AgentOrchestrator。LLM 通过 system prompt 学习并行分析模式，利用现有 `SpawnSubagentTool` 实现。不同场景零代码改动。
 
 ---
 
-## 六、代码审查卡片 — 端到端 Gap 清单
+## 四、卡片提交流程对比
 
-### 架构原则
+| | 旧方案（文本嵌入） | 新方案（tool call） |
+|---|---|---|
+| LLM 输出 | 文本中嵌入 ` ```decision-card` JSON 块 | 调用 `submit_decision_card(title=..., options=[...])` |
+| 提取方式 | `_try_extract_card()` 正则解析 | `get_pending_card()` thread-local |
+| 格式保证 | ❌ LLM 可能漏掉围栏标记 | ✅ function calling 参数校验 |
+| 文本展示 | 需要剥离 JSON 块 | 卡片不污染文本回复 |
+| 兼容性 | — | 仍保留 fallback |
 
-**意图层不做能力扩展**。意图分类器只管路由（模型选型/工具预加载/跳过LLM），不管"产什么卡片"。卡片生成能力通过 System Prompt 注入，LLM 自行判断何时产卡片。
+---
 
-`_DECISION_CARD_PROMPT` 已存在，对所有意图生效。
+## 五、多端决策交互
 
-### Gap 清单（按实现顺序）
-
-| # | Gap | 文件 | 复杂度 | 状态 |
-|---|-----|------|--------|------|
-| G0 | System prompt 卡片指令 | `chat_core.py` `_DECISION_CARD_PROMPT` | - | ✅ |
-| G5 | `DecisionOption.action` 字段 | `decision/schema.py` | 🟢 低 | ✅ |
-| G3 | `_handle_review()` 审查管道 | `chat_core.py` (新增方法) | 🔴 高 | ✅ |
-| G1' | `/review` 快捷指令映射到 CODE | `intent/classifier.py` | 🟢 低 | ✅ |
-| G2 | `send_message()` 加 REVIEW 分支 | `chat_core.py` | 🟡 中 | ✅ |
-| G4 | `_handle_card_decided()` action 分发 | `frontends/gui.py` | 🟡 中 | ✅ |
-| G6 | 决策日志 `execution_result` | `decision/log.py` | 🟢 低 | ✅ |
-
-### 实现顺序
+### GUI
 
 ```
-G5 (schema action字段)
-  → G3 (审查管道核心)
-    → G1' + G2 (触发入口)
-      → G4 (action分发)
-        → G6 (日志补全)
+用户消息
+  ↓
+AI 文本回复（分析总结）
+  ↓
+DecisionCardWidget（选项按钮）
+  ├─ 选A → action 分发:
+  │   ├─ 有 action.execute_skill → 执行 → 结果追加到当前会话
+  │   └─ 无 action → _continue_chat_from_card → 新一轮对话
+  ├─ 选B → 同上
+  └─ 了解更多 → QMessageBox 弹窗
+```
+
+卡片渲染策略：
+- **流式场景**：缓存到 `_pending_card`，等 `_on_stream_finished` 追加到 AI 文本之后
+- **ProactiveAgent**：无活跃流，立即渲染
+
+### 飞书
+
+```
+飞书用户收到卡片文本:
+  🗳 代码审查结果
+  3 个选项
+  ✅ A. 立即修复高危漏洞（推荐） (95%)
+     B. 完整重构 (85%)
+     C. 仅修复安全漏洞 (70%)
+  来源: 安全审查子Agent, ...
+  💡 回复 A/B/C 选择方案
+  ↓
+用户回复: "A" / "选A" / "选 A"
+  ↓
+FeishuAdapter._try_handle_card_decision()
+  ├─ 正则: ^(?:选\s*|选项\s*)?([A-Z])(?![A-Z])
+  ├─ 清除 _pending_cards
+  ├─ 记录决策日志
+  └─ execute_card_action() → 返回执行结果文本
 ```
 
 ---
 
-## 七、风险登记
+## 六、卡片状态管理
 
-| 风险 | 影响 | 概率 | 缓解措施 |
-|------|------|------|---------|
-| Agent 输出质量不足以生成有用卡片 | 高 | 中 | 先用 LLM 直接生成卡片 mock 测试质量，再决定是否上 Agent |
-| WebSocket 推送延迟导致卡片体验差 | 中 | 低 | 用 SSE 作为备选方案 |
-| 卡片渲染原型开发比预期慢 | 中 | 低 | 降低 Phase 1 UI 标准：先做命令行卡片（Rich/TUI） |
-| Vermilion Bird 改造量超预期 | 高 | 中 | 做最小侵入：先在 ChatCore 上加一个分支，不动主干 |
-| 用户不接受卡片交互 | 高 | 中 | 第 2 周内部测试是关键门禁——测试不过就迭代，不进入第 3 周 |
+### DecisionCardWidget 状态
+
+| 状态 | 触发 | UI 表现 |
+|------|------|---------|
+| 活跃 | 卡片插入聊天流 | 按钮可点击，推荐项高亮 |
+| 已决策 | 用户点击选项 | 按钮全部禁用，选中项绿色边框 |
+| 已忽略 | 用户点击"稍后" | 按钮禁用，卡片灰色 |
+
+### 会话卡片 vs ProactiveAgent 卡片
+
+| 来源 | `conversation_id` | 点击选项行为 |
+|------|-------------------|-------------|
+| 对话中生成 | 有值 | `_continue_chat_from_card` → 在当前会话继续 |
+| ProactiveAgent 推送 | 无 | `_create_conversation_from_card` → 新建会话 |
 
 ---
 
-## 八、变更记录
+## 七、文件索引
+
+| 模块 | 文件 | 核心符号 |
+|------|------|---------|
+| 卡片提交 | `decision/submit_tool.py` | `SubmitDecisionCardTool`, `get_pending_card()` |
+| Action 执行 | `decision/action_executor.py` | `execute_card_action()` |
+| 数据模型 | `decision/schema.py` | `DecisionCard`, `DecisionOption`, `CardType`, `CardStatus` |
+| 卡片渲染 | `decision/card_panel.py` | `DecisionCardWidget`, `CardSignals` |
+| 决策日志 | `decision/log.py` | `DecisionLogStore` |
+| System Prompt | `chat_core.py:33` | `_DECISION_CARD_PROMPT` |
+| GUI 集成 | `frontends/gui.py` | `display_card()`, `_start_streaming()`, `_continue_chat_from_card()` |
+| 飞书集成 | `frontends/feishu/adapter.py` | `_try_handle_card_decision()`, `_send_card_text_to_chat()` |
+| 工具注册 | `client/_base.py:120` | `_setup_skills()` 注册 `SubmitDecisionCardTool` |
+| 存储迁移 | `storage/_core.py` | `_migrate_decision_log_columns()` |
+
+---
+
+## 八、测试场景
+
+```
+场景 1: 代码审查 — 完整链路
+  输入: "审查以下代码：```python ...```"
+  预期: 3 个 spawn_subagent 并行 + submit_decision_card → 卡片渲染 → 点击选项继续对话
+
+场景 2: 方案评估 — 泛化验证
+  输入: "评估 FastAPI / Django / Litestar，从性能、生态、学习成本三个维度"
+  预期: 同样走并行 Agent + 决策卡片模式
+
+场景 3: 用户指定维度
+  输入: "只从安全角度审查这段代码"
+  预期: 只 spawn 安全 Agent，不自行添加其他维度
+
+场景 4: 飞书卡片选择
+  输入: 收到卡片文本后回复 "A" 或 "选A"
+  预期: 识别为卡片选择，执行 action，返回结果
+```
+
+---
+
+## 九、变更记录
 
 | 日期 | 版本 | 变更内容 | 作者 |
 |------|------|---------|------|
-| 2026-05-05 | v0.2 | D1-D4 全部定稿（方案已存在）；Phase 1 任务清单替换为代码审查卡片 Gap 清单；明确意图层不做能力扩展 | AI (via Claude) |
-
----
-
-> **下一步**：请逐项确认以上内容，特别是 D1-D4 设计决策和 Phase 1 任务清单。确认后进入第 1 周执行。
+| 2026-05-05 | v0.1 | 初稿：设计决策、影响分析、用例 mockup、状态机、任务清单、风险 | AI |
+| 2026-05-05 | v0.2 | D1-D4 定稿；替换为 Gap 清单；明确意图层不做能力扩展 | AI |
+| 2026-05-05 | v1.0 | Phase 1 完成：实际架构、工具链、多端交互、文件索引、测试场景 | AI |
