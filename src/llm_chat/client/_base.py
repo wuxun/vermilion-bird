@@ -117,7 +117,16 @@ class LLMClientBase:
             skills_filter: 可选，只加载列表中的技能名称。
                           None 表示加载所有技能。用于子 agent 的场景。
         """
+        # 保存 MCP 工具（clear 会清除所有，后续重新注册）
+        mcp_tools = [
+            t for t in self._tool_registry.get_all_tools()
+            if hasattr(t, '_executor')  # MCPToolAdapter 的特征：有 _executor
+        ]
         self._tool_registry.clear()
+
+        # 恢复 MCP 工具
+        for tool in mcp_tools:
+            self._tool_registry.register(tool)
 
         # 注册系统级工具（仅在父 LLMClient，子 agent 不注册卡片工具）
         if skills_filter is None:

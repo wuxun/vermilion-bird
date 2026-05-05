@@ -33,7 +33,8 @@ class WebSearchTool(BaseTool):
     def description(self) -> str:
         if self._fallback:
             return (
-                "网络搜索工具（备用）。仅在其他搜索方式不可用时使用。"
+                "备用网络搜索工具。仅在首选的 MCP 搜索工具（如 tavily_search）"
+                "不可用、出错或返回空结果时才使用此工具。"
             )
         return "搜索互联网获取实时信息。当用户询问时事新闻、最新信息、或需要查询网络内容时使用此工具。"
 
@@ -129,7 +130,6 @@ class WebSearchTool(BaseTool):
                 ddgs = DDGS(proxy=proxy, timeout=self.timeout)
 
                 backends = ["google", "bing", "yahoo", "brave"]
-                search_results = []
                 for backend in backends:
                     try:
                         logger.info(f"尝试后端: {backend}")
@@ -149,23 +149,6 @@ class WebSearchTool(BaseTool):
                     except Exception as e:
                         logger.warning(f"后端 {backend} 失败: {e}")
                         search_results = []
-
-                # 代理全挂？retry without proxy
-                if not search_results and proxy:
-                    logger.info("所有后端通过代理失败，尝试直连...")
-                    try:
-                        ddgs_direct = DDGS(timeout=self.timeout)
-                        search_results = list(
-                            ddgs_direct.text(
-                                query,
-                                region=detected_region,
-                                max_results=num_results,
-                            )
-                        )
-                        if search_results:
-                            logger.info(f"直连返回 {len(search_results)} 个结果")
-                    except Exception as e:
-                        logger.warning(f"直连也失败: {e}")
             else:
                 proxies = self._get_proxies()
                 with DDGS(proxies=proxies, timeout=self.timeout) as ddgs:
