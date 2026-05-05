@@ -864,11 +864,10 @@ class SchedulerDialog(QDialog):
             QMessageBox.warning(self, "错误", f"任务 {task_id} 不存在")
             return
 
-        # 先删除旧任务（APScheduler 不支持直接更新）
-        self._scheduler.remove_task(task_id)
-
         dialog = TaskEditDialog(self, task=task, scheduler=self._scheduler)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            # 用户确认后再删除旧任务、添加新任务
+            self._scheduler.remove_task(task_id)
             new_task = dialog.result_task
             self._scheduler.add_task(new_task)
             self._load_tasks()
