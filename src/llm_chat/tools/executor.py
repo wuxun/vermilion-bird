@@ -2,7 +2,7 @@ import time
 import json
 import logging
 from typing import Dict, Any, List
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +96,11 @@ class ToolExecutor:
         logger.info(f"并行执行 {len(tool_calls)} 个工具调用")
 
         results = []
+        # 按 tool_call 原始顺序收集（非完成顺序）以便 LLM 正确匹配
+        results_map: Dict[str, Dict] = {}
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {}
+            futures_map: Dict[Future, str] = {}
 
             for tool_call in tool_calls:
                 tool_name = tool_call["function"]["name"]
@@ -117,30 +119,35 @@ class ToolExecutor:
                 future = executor.submit(
                     self.execute_single_tool, tool_name, tool_args, tool_call_id
                 )
-                futures[future] = tool_call
+                futures_map[future] = tool_call_id
 
-            for future in as_completed(futures, timeout=self.timeout * len(tool_calls)):
-                tool_call = futures[future]
+            # 使用无总超时的 as_completed：每个工具的 execute_single_tool
+            # 内部已有重试和超时控制，外层不应再加总超时限制。
+            # 之前 timeout=self.timeout*len(tool_calls) 可能导致
+            # spawn_subagent(wait=true) 等长时间阻塞工具被截断。
+            for future in as_completed(futures_map):
+                tool_call_id = futures_map[future]
                 try:
-                    result = future.result(timeout=self.timeout)
-                    results.append(result)
-                except TimeoutError:
-                    logger.error(f"工具 {tool_call['function']['name']} 执行超时")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call["id"],
-                            "content": f"Error: Tool execution timeout after {self.timeout}s",
-                            "is_error": True,
-                        }
-                    )
+                    result = future.result(timeout=0)  # 0 = 不等待，已完成才取
+                    results_map[tool_call_id] = result
                 except Exception as e:
-                    logger.error(f"工具调用失败: {e}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call["id"],
-                            "content": f"Error: {str(e)}",
-                            "is_error": True,
-                        }
-                    )
+                    logger.error(f"工具调用失败 {tool_call_id}: {e}")
+                    results_map[tool_call_id] = {
+                        "tool_call_id": tool_call_id,
+                        "content": f"Error: {str(e)}",
+                        "is_error": True,
+                    }
+
+        # 按原始 tool_calls 顺序返回，确保 LLM 能正确匹配 tool_call_id
+        for tool_call in tool_calls:
+            tc_id = tool_call["id"]
+            if tc_id in results_map:
+                results.append(results_map[tc_id])
+            else:
+                results.append({
+                    "tool_call_id": tc_id,
+                    "content": "Error: Tool execution lost (unknown error)",
+                    "is_error": True,
+                })
 
         return results

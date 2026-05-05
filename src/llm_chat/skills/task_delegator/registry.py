@@ -287,7 +287,7 @@ class SubAgentRegistry:
                 if ctx and ctx.status == "running":
                     import time as _time
                     if ctx.deadline > 0 and _time.time() > ctx.deadline:
-                        self._cancel_locked(agent_id)
+                        ctx._cancelled.set()
                         ctx.status = "timeout"
                         ctx.result = "Agent timed out"
             return None
