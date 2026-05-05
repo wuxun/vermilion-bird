@@ -212,10 +212,6 @@ class DecisionCardWidget(QFrame):
             src.setStyleSheet(f"color: {_COLORS['muted']}; font-size: 10px;")
             layout.addWidget(src)
 
-        # 如果卡片已决策，禁用按钮
-        if self._card.status != CardStatus.PENDING:
-            self._set_decided_state(None)
-
     def _build_options_list(self, layout: QVBoxLayout):
         """用左右布局展示选项：左侧 A/B/C 序号，右侧标题+描述+详情。"""
         if not self._card.options:
@@ -401,12 +397,12 @@ class DecisionCardWidget(QFrame):
     # ── 事件处理 ─────────────────────────────────────────────────────
 
     def _on_decide_clicked(self, option_id: str):
+        # 设置模型状态（持久化以支持 widget 重建）
         try:
             self._card.decide(option_id)
-        except ValueError as e:
-            logger.warning(str(e))
-            return
-
+        except ValueError:
+            pass  # 非 PENDING 状态也可能触发（换一个）
+        self._last_decided = option_id
         self._set_decided_state(option_id)
 
         if self._on_decide:
@@ -423,6 +419,8 @@ class DecisionCardWidget(QFrame):
             btn.setEnabled(False)
         if self._dismiss_btn:
             self._dismiss_btn.setEnabled(False)
+        if getattr(self, '_reselect_btn', None):
+            self._reselect_btn.hide()
 
         self.setStyleSheet(_CARD_STYLE.replace(_COLORS["bg"], "#f5f5f5"))
 
@@ -434,7 +432,6 @@ class DecisionCardWidget(QFrame):
         if self._on_more_info:
             self._on_more_info()
         else:
-            # 没有回调时的 fallback（不应发生）
             from PyQt6.QtWidgets import QMessageBox
             details = []
             for opt in self._card.options:
@@ -448,9 +445,49 @@ class DecisionCardWidget(QFrame):
                 details.append("<br>".join(parts))
             QMessageBox.information(self, "选项详情", "<br><br>".join(details))
 
-    def _set_decided_state(self, option_id: Optional[str]):
+    def _on_reselect_clicked(self):
+        """重新选择：恢复所有按钮为可点击状态。"""
+        self._last_decided = None
+        self._card.status = CardStatus.PENDING
+        self._card.decided_at = None
         for oid, btn in self._option_buttons.items():
-            btn.setEnabled(False)
+            btn.setEnabled(True)
+            is_rec = oid == self._card.recommendation
+            if is_rec:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {_COLORS['accent']};
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 6px 14px;
+                        font-weight: bold;
+                    }}
+                    QPushButton:hover {{ background-color: {_COLORS['accent_hover']}; }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: white;
+                        color: {_COLORS['text']};
+                        border: 1px solid {_COLORS['border']};
+                        border-radius: 4px;
+                        padding: 6px 14px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {_COLORS['accent_hover']};
+                        color: white;
+                        border-color: {_COLORS['accent_hover']};
+                    }}
+                """)
+        if getattr(self, '_reselect_btn', None):
+            self._reselect_btn.hide()
+        if self._dismiss_btn:
+            self._dismiss_btn.setEnabled(True)
+
+    def _set_decided_state(self, option_id: Optional[str]):
+        """标记卡片为已决策状态：选中项高亮，其他暗但可点击，显示重新选择。"""
+        for oid, btn in self._option_buttons.items():
             if oid == option_id:
                 btn.setStyleSheet(f"""
                     QPushButton {{
@@ -462,8 +499,70 @@ class DecisionCardWidget(QFrame):
                         font-weight: bold;
                     }}
                 """)
+            else:
+                btn.setEnabled(True)  # 不禁止，允许换方案
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: #f8f8f8;
+                        color: #999;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                        padding: 6px 14px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {_COLORS['accent_hover']};
+                        color: white;
+                        border-color: {_COLORS['accent_hover']};
+                    }}
+                """)
+
         if self._dismiss_btn:
-            self._dismiss_btn.setEnabled(False)
+            self._dismiss_btn.setEnabled(True)
+
+        # 显示/更新"换一个"提示（在按钮行末尾）
+        if not hasattr(self, '_reselect_btn') or self._reselect_btn is None:
+            self._reselect_btn = QPushButton("已选择")
+            self._reselect_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {_COLORS['muted']};
+                    border: none;
+                    font-size: 10px;
+                }}
+            """)
+            self._reselect_btn.setEnabled(False)
+            # 找到按钮布局并添加
+            for i in range(self.layout().count()):
+                item = self.layout().itemAt(i)
+                if item and item.layout():
+                    # 找到含 dismiss_btn 的行
+                    btn_layout = item.layout()
+                    for j in range(btn_layout.count()):
+                        w = btn_layout.itemAt(j)
+                        if w and w.widget() is self._dismiss_btn:
+                            btn_layout.insertWidget(j, self._reselect_btn)
+                            break
+                    break
+
+        selected_label = next(
+            (o.label for o in self._card.options if o.id == option_id),
+            option_id
+        )
+        self._reselect_btn.setText(f"已选 {selected_label[:8]} · 换一个")
+        self._reselect_btn.setEnabled(True)
+        self._reselect_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {_COLORS['accent']};
+                border: none;
+                font-size: 10px;
+                text-decoration: underline;
+            }}
+            QPushButton:hover {{ color: {_COLORS['accent_hover']}; }}
+        """)
+        self._reselect_btn.clicked.disconnect()
+        self._reselect_btn.clicked.connect(self._on_reselect_clicked)
+        self._reselect_btn.show()
 
     @property
     def card(self) -> DecisionCard:
