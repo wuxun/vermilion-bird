@@ -13,28 +13,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
 
 class CardType(str, Enum):
     """决策卡片类型。"""
-
     DECISION = "decision"
     """方案决策: 多个选项，用户选择其一执行。"""
-
-    APPROVAL = "approval"
-    """审批请求: 确认发布/执行某个产出。"""
-
-    STATUS = "status"
-    """状态通报: 无需操作，仅需知情。"""
-
-    ALERT = "alert"
-    """异常告警: 需要用户定夺处理方式。"""
-
-    SUGGESTION = "suggestion"
-    """建议推送: AI 预判用户可能要做的某件事。"""
 
 
 class CardStatus(str, Enum):
@@ -48,10 +35,6 @@ class CardStatus(str, Enum):
 
     DISMISSED = "dismissed"
     """已忽略: 用户关闭/暂缓此卡片。"""
-
-    ARCHIVED = "archived"
-    """已归档: 超出有效期或已处理完毕。"""
-
 
 class DecisionOption(BaseModel):
     """决策卡片中的单个选项。"""
@@ -70,18 +53,6 @@ class DecisionOption(BaseModel):
         ge=0.0,
         le=1.0,
         description="置信度 (0.0 ~ 1.0)",
-    )
-    action: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description=(
-            "用户选择后的执行动作。格式: "
-            "{'type': 'execute_skill'|'approve'|'reject'|'delegate', "
-            "'skill': 'file_editor', 'params': {...}}。"
-            "为 None 时使用默认行为（创建对话）"
-        ),
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        default=None, description="扩展元数据"
     )
 
 
@@ -120,9 +91,6 @@ class DecisionCard(BaseModel):
     conversation_id: Optional[str] = Field(
         default=None,
         description="关联的对话 ID",
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        default=None, description="扩展元数据"
     )
 
     # ── 时间戳 ──
@@ -164,21 +132,6 @@ class DecisionCard(BaseModel):
             raise ValueError(f"卡片 {self.id} 状态为 {self.status.value}，不可忽略")
         self.status = CardStatus.DISMISSED
         self.dismissed_at = datetime.now()
-
-    def archive(self):
-        """归档卡片（超时或已处理完毕）。"""
-        self.status = CardStatus.ARCHIVED
-        if not self.decided_at:
-            self.dismissed_at = datetime.now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        """序列化为字典 (用于 JSON 传输/存储)。"""
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> DecisionCard:
-        """从字典反序列化。"""
-        return cls.model_validate(data)
 
 
 class DecisionRecord(BaseModel):

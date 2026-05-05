@@ -228,37 +228,8 @@ class ChatCore:
             processed_message, processed_history, system_context, params
         )
 
-        # 7. 提取决策卡片
-        # 优先路径: 从 tool call (submit_decision_card) 提取
-        from llm_chat.decision.submit_tool import get_pending_card
-        tool_card = get_pending_card()
-        if tool_card and on_card:
-            tool_card.conversation_id = conversation_id
-            on_card(tool_card)
-            logger.info(f"决策卡片已提取 (tool): {tool_card.id} -> {tool_card.title}")
-
-        # Fallback: 从文本 ```decision-card 块提取 (向后兼容)
-        if not tool_card:
-            cleaned_response, card_data = self._try_extract_card(response)
-            if card_data and on_card:
-                try:
-                    from llm_chat.decision.schema import DecisionCard, DecisionOption
-                    options = [
-                        DecisionOption(**o) for o in card_data['options']
-                    ]
-                    card = DecisionCard(
-                        title=card_data['title'],
-                        context=card_data.get('context'),
-                        options=options,
-                        recommendation=card_data.get('recommendation'),
-                        sources=card_data.get('sources', []),
-                        conversation_id=conversation_id,
-                    )
-                    on_card(card)
-                    logger.info(f"决策卡片已提取 (text): {card.id} -> {card.title}")
-                except Exception as e:
-                    logger.warning(f"决策卡片提取失败: {e}")
-            response = cleaned_response
+        # 7. 提取决策卡片（仅 tool-call 路径）
+        self._extract_pending_card(conversation_id, on_card)
 
         # 8. 持久化助手回复
 
@@ -447,12 +418,7 @@ class ChatCore:
         conv.add_assistant_message(full_text)
 
         # 8. 提取 tool call 提交的决策卡片
-        from llm_chat.decision.submit_tool import get_pending_card
-        tool_card = get_pending_card()
-        if tool_card and on_card:
-            tool_card.conversation_id = conversation_id
-            on_card(tool_card)
-            logger.info(f"决策卡片已提取 (tool/stream): {tool_card.id} -> {tool_card.title}")
+        self._extract_pending_card(conversation_id, on_card)
 
         # 9. 异步记忆提取
         self._extract_memory_async(conv, message, full_text)
@@ -655,29 +621,6 @@ class ChatCore:
             logger.warning(f"上下文压缩失败，使用原始历史: {e}")
             return history, message
 
-    @staticmethod
-    def _try_extract_card(text: str) -> tuple:
-        """从 LLM 回复中提取决策卡片 JSON 块。"""
-        import json
-        import re
-
-        pattern = r'```decision-card\s*\n(.*?)\n```'
-        match = re.search(pattern, text, re.DOTALL)
-        if not match:
-            return text, None
-
-        json_str = match.group(1).strip()
-        try:
-            card_data = json.loads(json_str)
-            if not card_data.get('title') or not card_data.get('options'):
-                return text, None
-            if len(card_data['options']) < 2:
-                return text, None
-            cleaned = text[:match.start()] + text[match.end():]
-            return cleaned.strip(), card_data
-        except (json.JSONDecodeError, KeyError):
-            return text, None
-
     def _call_llm(
         self,
         message: str,
@@ -703,6 +646,20 @@ class ChatCore:
         return self.client.chat(
             message, history=history, system_context=system_context, **params
         )
+
+    def _extract_pending_card(self, conversation_id: str, on_card: Optional[CardCallback] = None):
+        """提取 thread-local 中的待推送决策卡片。
+
+        由 send_message 和 send_message_stream 在 LLM 调用完成后调用。
+        """
+        if on_card is None:
+            return
+        from llm_chat.decision.submit_tool import get_pending_card
+        card = get_pending_card()
+        if card:
+            card.conversation_id = conversation_id
+            on_card(card)
+            logger.info(f"决策卡片已提取: {card.id} -> {card.title}")
 
     def _extract_memory_async(self, conv, user_message: str, assistant_response: str):
         """异步提取记忆到记忆系统。"""

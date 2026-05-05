@@ -1,18 +1,7 @@
-"""CardActionExecutor — 共享的卡片 action 执行逻辑。
+"""CardActionExecutor — 卡片选项确认文本生成。
 
-GUI 和 Feishu 共用此模块执行卡片选项对应的 action，
-避免两处维护相同的执行逻辑。
-
-用法:
-    from llm_chat.decision.action_executor import execute_card_action
-
-    result = execute_card_action(
-        card=card,
-        option_id="A",
-        client=app.client,
-        conversation_manager=app.conversation_manager,
-    )
-    # result = {"success": True, "text": "修复方案...", "action_type": "execute_skill"}
+GUI 端不使用此模块——点击卡片直接走 _continue_chat_from_card
+启动新一轮 LLM 对话。此模块仅用于 Feishu 纯文本端的确认消息生成。
 """
 
 from __future__ import annotations
