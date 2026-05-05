@@ -160,12 +160,14 @@ class DecisionCardWidget(QFrame):
         card: DecisionCard,
         on_decide: Optional[Callable[[str, str], None]] = None,
         on_dismiss: Optional[Callable[[str], None]] = None,
+        on_more_info: Optional[Callable[[], None]] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self._card = card
         self._on_decide = on_decide
         self._on_dismiss = on_dismiss
+        self._on_more_info = on_more_info
         self._option_buttons: Dict[str, QPushButton] = {}
         self._build_ui()
 
@@ -428,14 +430,23 @@ class DecisionCardWidget(QFrame):
             self._on_dismiss(self._card.id)
 
     def _on_more_clicked(self):
-        details = []
-        for opt in self._card.options:
-            if opt.description:
-                details.append(f"<b>{opt.label}:</b> {opt.description}")
-        if details:
+        """了解更多 → 触发 L2 对话 (由上层 GUI 处理)。"""
+        if self._on_more_info:
+            self._on_more_info()
+        else:
+            # 没有回调时的 fallback（不应发生）
             from PyQt6.QtWidgets import QMessageBox
-
-            QMessageBox.information(self, "选项详情", "\n\n".join(details))
+            details = []
+            for opt in self._card.options:
+                parts = [f"<b>{opt.label}:</b>"]
+                if opt.description:
+                    parts.append(opt.description)
+                if opt.expected_effect:
+                    parts.append(f"✨ {opt.expected_effect}")
+                if opt.risk:
+                    parts.append(f"⚠️ {opt.risk}")
+                details.append("<br>".join(parts))
+            QMessageBox.information(self, "选项详情", "<br><br>".join(details))
 
     def _set_decided_state(self, option_id: Optional[str]):
         for oid, btn in self._option_buttons.items():

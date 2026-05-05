@@ -1527,10 +1527,26 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         def on_dismiss(card_id: str):
             self._handle_card_dismissed(card_id)
 
+        def on_more_info():
+            # L2 对话：以卡片内容为上下文发起新对话
+            lines = [f"我想了解更多关于「{card.title}」的细节。请详细对比以下选项：", ""]
+            for opt in card.options:
+                parts = [f"**{opt.id}. {opt.label}**"]
+                if opt.description:
+                    parts.append(f"  说明：{opt.description}")
+                if opt.expected_effect:
+                    parts.append(f"  预期效果：{opt.expected_effect}")
+                if opt.risk:
+                    parts.append(f"  风险：{opt.risk}")
+                parts.append(f"  置信度：{int(opt.confidence * 100)}%")
+                lines.append("\n".join(parts))
+            self._start_streaming("\n".join(lines))
+
         card_widget = DecisionCardWidget(
             card=card,
             on_decide=on_decide,
             on_dismiss=on_dismiss,
+            on_more_info=on_more_info,
         )
         self._add_widget_to_chat(card_widget)
 
