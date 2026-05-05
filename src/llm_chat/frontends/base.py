@@ -131,6 +131,11 @@ class BaseFrontend(ABC):
     def request_conversation_list_refresh(self):
         pass
 
+    def display_card(self, card: Any) -> None:
+        """显示决策卡片。默认实现：不渲染，仅记录日志。
+        各前端可 override 此方法以支持决策卡片 UI。"""
+        logger.info(f"卡片 (未渲染): {card.id} -> {card.title}")
+
     def _handle_message(self, message: Message, context: ConversationContext):
         if self._on_message_callback:
             self._on_message_callback(message, context)

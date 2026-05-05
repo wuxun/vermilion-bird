@@ -470,9 +470,13 @@ class App:
         # 统一的消息处理回调 — 委托给 ChatCore（CLI/简单前端使用此路径）
         def handle_message(message: Message, ctx: ConversationContext):
             try:
+                def on_card(card):
+                    frontend.display_card(card)
+
                 response = self.chat_core.send_message(
                     conversation_id=ctx.conversation_id,
                     message=message.content,
+                    on_card=on_card,
                 )
                 response_msg = Message(
                     content=response, role="assistant", msg_type=MessageType.TEXT

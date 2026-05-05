@@ -26,6 +26,50 @@ StreamCallback = Callable[[str], None]  # 收到文本 chunk
 ToolCallStartCallback = Callable[[str, str], None]  # 工具调用开始 (name, args_json)
 ToolCallEndCallback = Callable[[str, str, str], None]  # 工具调用结束 (name, args, result_preview)
 
+# 决策卡片回调: 当 LLM 输出中包含决策卡片时调用
+CardCallback = Callable[['DecisionCard'], None]  # noqa: F821
+
+# ── 决策卡片系统提示 ──
+_DECISION_CARD_PROMPT = '''
+## 决策卡片能力
+当你认为用户面临一个需要多选一的场景（选择方案、决定方向、审批请求），
+可以用结构化卡片来呈现选项，让用户做选择题而不是写作文。
+
+### 何时使用
+- 用户问该选哪个方案
+- 用户让你给几个方案对比一下
+- 用户说要不要做 X
+- 你发现用户有多个可选路径
+- 简单问答无需卡片
+- 用户明确要求文字回答
+- 闲聊
+
+### 输出格式
+在回复中嵌入以下格式的 JSON 块（不要用任何其他标记)：
+
+```decision-card
+{
+    "title": "带 emoji 的标题",
+    "context": "一句话背景",
+    "options": [
+        {
+            "id": "A",
+            "label": "选项名称",
+            "description": "简要说明",
+            "expected_effect": "预期效果",
+            "risk": "风险",
+            "confidence": 0.85
+        }
+    ],
+    "sources": ["source1"]
+}
+```
+
+卡片前后的文字会正常显示，卡片块会被自动提取为交互组件。
+请确保每个选项的 id 依次为 A, B, C...
+推荐选项的 confidence 设为最高值。
+'''
+
 
 class ChatCore:
     """核心对话引擎
@@ -72,6 +116,7 @@ class ChatCore:
         self,
         conversation_id: str,
         message: str,
+        on_card: Optional[CardCallback] = None,
         **model_params,
     ) -> str:
         """同步发送消息，返回完整回复文本。
@@ -81,11 +126,14 @@ class ChatCore:
         Args:
             conversation_id: 会话 ID
             message: 用户消息
+            on_card: 可选回调，当 LLM 输出决策卡片时调用。
             **model_params: 覆盖默认模型参数 (temperature, max_tokens 等)
 
         Returns:
-            AI 回复的完整文本
+            AI 回复的完整文本（已移除决策卡片 JSON 块）
         """
+
+        # 延迟导入避免循环
         conv = self.conversation_manager.get_conversation(conversation_id)
 
         # ── 0. 意图识别 ──
@@ -182,10 +230,32 @@ class ChatCore:
             processed_message, processed_history, system_context, params
         )
 
-        # 7. 持久化助手回复
+        # 7. 提取决策卡片
+        cleaned_response, card_data = self._try_extract_card(response)
+        if card_data and on_card:
+            try:
+                from llm_chat.decision.schema import DecisionCard, DecisionOption
+                options = [
+                    DecisionOption(**o) for o in card_data['options']
+                ]
+                card = DecisionCard(
+                    title=card_data['title'],
+                    context=card_data.get('context'),
+                    options=options,
+                    recommendation=card_data.get('recommendation'),
+                    sources=card_data.get('sources', []),
+                    conversation_id=conversation_id,
+                )
+                on_card(card)
+                logger.info(f"决策卡片已提取: {card.id} -> {card.title}")
+            except Exception as e:
+                logger.warning(f"决策卡片提取失败: {e}")
+
+        # 8. 持久化助手回复（用纯净文本）
+        response = cleaned_response
         conv.add_assistant_message(response)
 
-        # 8. 异步记忆提取
+        # 9. 异步记忆提取
         self._extract_memory_async(conv, message, response)
 
         # 9. 记录 token 消耗
@@ -414,6 +484,9 @@ class ChatCore:
         memory_manager = getattr(conv, "_memory_manager", None)
         parts = []
 
+        # 0. 决策卡片能力提示
+        parts.append(_DECISION_CARD_PROMPT)
+
         # 1. 记忆系统
         if memory_manager is not None:
             try:
@@ -565,6 +638,29 @@ class ChatCore:
         except Exception as e:
             logger.warning(f"上下文压缩失败，使用原始历史: {e}")
             return history, message
+
+    @staticmethod
+    def _try_extract_card(text: str) -> tuple:
+        """从 LLM 回复中提取决策卡片 JSON 块。"""
+        import json
+        import re
+
+        pattern = r'```decision-card\s*\n(.*?)\n```'
+        match = re.search(pattern, text, re.DOTALL)
+        if not match:
+            return text, None
+
+        json_str = match.group(1).strip()
+        try:
+            card_data = json.loads(json_str)
+            if not card_data.get('title') or not card_data.get('options'):
+                return text, None
+            if len(card_data['options']) < 2:
+                return text, None
+            cleaned = text[:match.start()] + text[match.end():]
+            return cleaned.strip(), card_data
+        except (json.JSONDecodeError, KeyError):
+            return text, None
 
     def _call_llm(
         self,

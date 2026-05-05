@@ -402,6 +402,9 @@ class FeishuAdapter:
                 response = chat_core.send_message(
                     conversation_id=conversation_id,
                     message=message.content,
+                    on_card=lambda card: logger.info(
+                        f"飞书卡片 (不渲染): {card.id} -> {card.title}"
+                    ),
                 )
 
                 logger.info(

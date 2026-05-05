@@ -514,7 +514,12 @@ class SchedulerService:
             return self._app.client.chat(message)
 
         return chat_core.send_message(
-            conversation_id, message, **({} if model is None else {"model": model})
+            conversation_id,
+            message,
+            on_card=lambda card: logger.info(
+                f"调度器卡片 (不渲染): {card.id} -> {card.title}"
+            ),
+            **({} if model is None else {"model": model}),
         )
 
     def _run_skill_task(self, task: Task) -> str:
