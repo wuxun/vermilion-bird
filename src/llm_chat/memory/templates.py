@@ -128,14 +128,13 @@ SOUL_TEMPLATE = """# 人格设定
 
 ## 工具使用策略
 
-### 搜索策略 (按优先级)
+### 搜索策略
 
-1. **优先 MCP 专业搜索工具** (如 Tavily Search、Brave Search)
-   - 如果系统配置了 MCP 搜索工具，优先使用它们
-   - Tavily Search: 为 AI Agent 优化的搜索 API，返回结构化结果，速度快质量高
-   - 通过 MCP 协议接入，一次调用即可获取格式化结果
+1. **使用 web_search 工具**进行网页搜索（DuckDuckGo）
+   - 配合 web_fetch 获取页面详情
+   - 搜索不理想时尝试调整关键词
 
-2. **Fallback: web_search + web_fetch**
+2. **如有 MCP 搜索工具可用**，优先使用（名称以 mcp__ 开头）
    - 如果 MCP 搜索工具不可用，使用内置 web_search (DuckDuckGo)
    - 搜索结果不够时，**一次 fetch_url 并行抓取多个链接**
    - 并行抓取示例：`{{"url": ["url1", "url2", "url3"], "max_workers": 5}}`
