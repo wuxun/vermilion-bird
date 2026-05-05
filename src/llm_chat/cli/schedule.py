@@ -284,3 +284,29 @@ def task_info(task_id):
     click.echo(f"更新时间: {task.updated_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
     click.echo("=" * 60)
+
+
+@schedule.command()
+def proactive():
+    """手动触发一次主动聊天（立即执行）"""
+    config = Config.from_yaml()
+    if not config.scheduler.enabled:
+        click.echo("调度器未启用。请在配置中设置 scheduler.enabled = true")
+        sys.exit(1)
+
+    app = App(config)
+    try:
+        # 直接初始化 ProactiveAgent 执行，不需要走 TaskExecutor
+        from llm_chat.proactive.agent import ProactiveAgent
+        agent = ProactiveAgent(app, config)
+        click.echo("正在生成话题...")
+        opener = agent.generate_and_push()
+        if opener:
+            click.echo(f"✓ 已推送: {opener}")
+        else:
+            click.echo("跳过：暂无足够记忆信息生成话题")
+    except Exception as e:
+        click.echo(f"主动聊天执行失败: {e}", err=True)
+        sys.exit(1)
+    finally:
+        app.stop()
