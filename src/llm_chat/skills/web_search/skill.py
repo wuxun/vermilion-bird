@@ -65,6 +65,7 @@ class WebSearchTool(BaseTool):
         https_proxy: Optional[str] = None,
         timeout: int = 30,
         fallback: bool = False,
+        serpapi_key: Optional[str] = None,
     ):
         self.engine = engine
         self.api_key = api_key
@@ -72,6 +73,7 @@ class WebSearchTool(BaseTool):
         self.https_proxy = https_proxy
         self.timeout = timeout
         self._fallback = fallback
+        self.serpapi_key = serpapi_key
 
     def _get_proxy_string(self) -> Optional[str]:
         if self.https_proxy:
@@ -101,7 +103,58 @@ class WebSearchTool(BaseTool):
             return "cn-zh"
         return "us-en"
 
+    def _search_serpapi(
+        self, query: str, num_results: int = 5, region: str = "auto"
+    ) -> str:
+        """SerpAPI 搜索（Google 后端）。需要 serpapi_key。"""
+        import requests as _requests
+        try:
+            params = {
+                "q": query,
+                "api_key": self.serpapi_key,
+                "engine": "google",
+                "num": min(num_results, 20),
+            }
+            if region and region != "auto":
+                params["gl"] = region[:2]  # country code
+
+            proxies = self._get_proxies()
+            logger.info(f"SerpAPI 搜索: query={query}")
+            resp = _requests.get(
+                "https://serpapi.com/search",
+                params=params,
+                proxies=proxies,
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = []
+            for r in data.get("organic_results", [])[:num_results]:
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("link", ""),
+                    "snippet": r.get("snippet", ""),
+                })
+
+            if not results:
+                return "未找到相关结果"
+
+            logger.info(f"SerpAPI 返回 {len(results)} 个结果")
+            return json.dumps(results, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            logger.warning(f"SerpAPI 搜索失败: {e}")
+            return "未找到相关结果"
+
     def execute(self, query: str, num_results: int = 5, region: str = "auto") -> str:
+        # SerpAPI 优先（如有 key）
+        if self.serpapi_key:
+            result = self._search_serpapi(query, num_results, region)
+            if result and result != "未找到相关结果":
+                return result
+            logger.info("SerpAPI 无结果，回退到 DuckDuckGo")
+
         if self.engine == "duckduckgo":
             return self._search_duckduckgo(query, num_results, region)
         elif self.engine == "brave":
@@ -315,6 +368,7 @@ class WebSearchSkill(BaseSkill):
         self._https_proxy = None
         self._timeout = 30
         self._fallback = False
+        self._serpapi_key = None
 
     def get_tools(self) -> List[BaseTool]:
         return [
@@ -325,6 +379,7 @@ class WebSearchSkill(BaseSkill):
                 https_proxy=self._https_proxy,
                 timeout=self._timeout,
                 fallback=self._fallback,
+                serpapi_key=self._serpapi_key,
             )
         ]
 
@@ -335,10 +390,12 @@ class WebSearchSkill(BaseSkill):
         self._https_proxy = config.get("https_proxy")
         self._timeout = config.get("timeout", 30)
         self._fallback = config.get("prefer_external", False)
+        self._serpapi_key = config.get("serpapi_api_key")
 
         self.logger.info(
             f"WebSearchSkill loaded: engine={self._engine}, "
             f"api_key={'*' * 8 if self._api_key else 'None'}, "
+            f"serpapi={'*' * 8 if self._serpapi_key else 'None'}, "
             f"http_proxy={self._http_proxy}, https_proxy={self._https_proxy}, "
             f"timeout={self._timeout}, fallback={self._fallback}"
         )

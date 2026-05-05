@@ -53,3 +53,4 @@ skills:
     - printenv
   web_search:
     enabled: false
+    # serpapi_api_key: "your_serpapi_key"  # 配置后优先使用 SerpAPI (Google 搜索)
