@@ -568,7 +568,10 @@ class DecisionCardWidget(QFrame):
             }}
             QPushButton:hover {{ color: {_COLORS['accent_hover']}; }}
         """)
-        self._reselect_btn.clicked.disconnect()
+        try:
+            self._reselect_btn.clicked.disconnect()
+        except TypeError:
+            pass  # 首次创建时无连接
         self._reselect_btn.clicked.connect(self._on_reselect_clicked)
         self._reselect_btn.show()
 
