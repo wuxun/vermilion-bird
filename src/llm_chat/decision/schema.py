@@ -71,6 +71,15 @@ class DecisionOption(BaseModel):
         le=1.0,
         description="置信度 (0.0 ~ 1.0)",
     )
+    action: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "用户选择后的执行动作。格式: "
+            "{'type': 'execute_skill'|'approve'|'reject'|'delegate', "
+            "'skill': 'file_editor', 'params': {...}}。"
+            "为 None 时使用默认行为（创建对话）"
+        ),
+    )
     metadata: Optional[Dict[str, Any]] = Field(
         default=None, description="扩展元数据"
     )

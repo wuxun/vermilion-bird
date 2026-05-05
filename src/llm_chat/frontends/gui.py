@@ -913,8 +913,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return  # UI 尚未初始化
         from llm_chat.utils.token_counter import count_tokens, get_context_limit
 
-        # 对话历史 token 计数
-        history = [{"role": m["role"], "content": m["content"]} for m in self._messages]
+        # 对话历史 token 计数（跳过卡片消息，它们没有 content 字段）
+        history = [{"role": m["role"], "content": m.get("content", "")} for m in self._messages if m.get("role") != "card"]
         history_text = "\n".join(h.get("content", "") for h in history)
         total_tokens = count_tokens(history_text, self._current_model)
 
@@ -1005,25 +1005,23 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _on_send(self):
         if self._input_field is None:
             return
-
         content = self._input_field.toPlainText().strip()
         if not content:
             return
-
         self._input_field.clear()
+        self._start_streaming(content)
 
-        # 本地消息列表（仅用于 GUI 显示，持久化由 ChatCore 统一处理）
-        self._messages.append({"role": "user", "content": content})
+    def _start_streaming(self, message: str):
+        """启动流式对话：显示用户消息、发起 worker 线程调用 LLM。"""
+        self._messages.append({"role": "user", "content": message})
         self._update_context_status()
-        self._display_user_message(content)
+        self._display_user_message(message)
 
         self._set_input_state(False)
-
         self._current_stream_text = ""
         self._current_tool_calls = []
         self._is_streaming = True
         self._streaming_conversation_id = self.conversation_id
-
         self._display_ai_prefix()
 
         current_conv_id = self.conversation_id
@@ -1033,23 +1031,20 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             try:
                 chat_core = self._chat_core
                 if chat_core is None:
-                    self._stream_signals.error_occurred.emit(
-                        current_conv_id, "ChatCore 未初始化"
-                    )
+                    self._stream_signals.error_occurred.emit(current_conv_id, "ChatCore 未初始化")
                     return
 
                 full_text = chat_core.send_message_stream(
                     conversation_id=current_conv_id,
-                    message=content,
+                    message=message,
                     on_chunk=lambda text: self._stream_signals.text_received.emit(text),
                     on_tool_start=lambda name, args: self._stream_signals.tool_call_started.emit(name, args),
                     on_tool_end=lambda name, args, result: self._stream_signals.tool_call_finished.emit(name, args, result),
                     on_context_update=lambda used, limit: self._stream_signals.context_updated.emit(used, limit),
+                    on_card=lambda card: self._card_signals.card_created.emit(card),
                     **model_params,
                 )
-
                 self._stream_signals.stream_finished.emit(current_conv_id, full_text)
-
             except Exception as e:
                 self._stream_signals.error_occurred.emit(current_conv_id, str(e))
 
@@ -1121,6 +1116,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._current_tool_calls = []
         self._current_tool_call_widgets.clear()
+
+        # 追加暂存的决策卡片（在 AI 文本之后）
+        pending = getattr(self, "_pending_card", None)
+        if pending is not None:
+            self._messages.append({"role": "card", "card": pending})
+            self._pending_card = None
+            logger.info(f"卡片已追加到 assistant 之后: {pending.id}")
 
         self._update_context_status()
         self._refresh_chat_display()
@@ -1323,6 +1325,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                     f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{msg['content']}</span>"
                 )
                 self._add_widget_to_chat(user_browser)
+            elif msg["role"] == "card":
+                self._render_card_widget(msg["card"])
             elif msg["role"] == "assistant":
                 tool_calls = msg.get("tool_calls", [])
                 if tool_calls:
@@ -1501,11 +1505,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._scroll_to_bottom()
 
     def display_card(self, card: DecisionCard):
-        """渲染一张决策卡片到聊天流。通过闭包捕获 card 对象。"""
-        if self._chat_layout is None:
-            return
+        """暂存卡片，等 _on_stream_finished 时再追加到 assistant 之后渲染。
 
-        # on_decide 闭包捕获 card，后续可创建对话
+        延迟原因：用户期望卡片在 AI 文本回复之后，而不是夹在用户消息和 AI 之间。
+        """
+        self._pending_card = card
+        # 不立即 append 到 _messages，等 AI 文本到达后再追加
+
+    def _render_card_widget(self, card: DecisionCard):
+        """创建并插入卡片 widget（内部方法，供 display_card 和 refresh 共用）。"""
         def on_decide(card_id: str, option_id: str):
             self._handle_card_decided(card, option_id)
 
@@ -1526,8 +1534,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
         self._add_widget_to_chat(separator)
 
-        self._scroll_to_bottom()
-
     def _on_card_received(self, card: DecisionCard):
         """跨线程信号：收到新卡片。"""
         self.display_card(card)
@@ -1543,7 +1549,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             logger.warning(f"决策日志记录失败: {e}")
 
     def _handle_card_decided(self, card: DecisionCard, option_id: str):
-        """卡片按钮回调：用户做了决策 → 创建对话并切换。"""
+        """卡片按钮回调：用户做了决策。
+
+        如果选项包含 action 字段，执行对应动作。
+        否则默认行为：创建新对话。
+        """
         logger.info(f"卡片决策: {card.id} -> {option_id}")
         selected = next((o for o in card.options if o.id == option_id), None)
         if not selected:
@@ -1570,42 +1580,123 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         except Exception as e:
             logger.warning(f"决策日志记录失败: {e}")
 
-        # 创建新对话 + 写入开场白
+        # ── Action 分发 ──
+        action = getattr(selected, "action", None)
+        if action and isinstance(action, dict) and action.get("type"):
+            action_type = action["type"]
+            if action_type == "execute_skill":
+                self._execute_card_action(card, selected, action)
+            elif action_type == "approve":
+                logger.info(f"审批通过: {card.id} -> {selected.label}")
+                self._show_action_status(card, selected, "approved")
+            elif action_type == "reject":
+                logger.info(f"驳回: {card.id} -> {selected.label}")
+                self._show_action_status(card, selected, "rejected")
+            else:
+                logger.warning(f"未知 action 类型: {action_type}，回退到创建对话")
+                self._create_conversation_from_card(card, selected)
+        else:
+            # 没有 action — 将选择作为上下文继续对话
+            self._continue_chat_from_card(card, selected)
+
+    def _continue_chat_from_card(self, card: DecisionCard, selected):
+        """从卡片选择继续对话：将选项作为用户消息发送给 LLM。"""
+        follow_up = f"我选择了「{selected.label}」"
+        if selected.description:
+            follow_up += f"（{selected.description}）"
+        follow_up += "，请基于这个方向继续。"
+        self._start_streaming(follow_up)
+
+    def _execute_card_action(
+        self, card: DecisionCard, selected, action: dict
+    ):
+        """执行卡片 action — 调用共享执行器，结果追加到当前会话。"""
+        from llm_chat.decision.action_executor import execute_card_action
+
+        app = self._app_instance
+        if not app:
+            return
+
+        self._show_action_status(card, selected, "executing")
+
+        result = execute_card_action(
+            card=card,
+            option_id=selected.id,
+            client=app.client,
+        )
+
+        if not result["success"]:
+            self._show_action_status(card, selected, "failed", result["text"])
+            return
+
+        # 将执行结果作为 AI 消息追加到当前会话
+        response_text = result["text"]
+        self._messages.append({"role": "assistant", "content": response_text})
+        self._refresh_chat_display()
+
+        # 持久化到当前会话（不触发 LLM）
         try:
-            from datetime import datetime
-            app = self._app_instance
-            if not app:
-                return
-
-            today = datetime.now().strftime("%Y-%m-%d")
-            option_text = f"🗣 {card.title} — {selected.label}"
-            conv = app.conversation_manager.create_conversation(
-                title=option_text
-            )
-
-            # 生成开场白文本
-            opener_parts = [f"你选择了: {selected.label}"]
-            if selected.description:
-                opener_parts.append(f"\n{selected.description}")
-            if selected.expected_effect:
-                opener_parts.append(f"\n预期: {selected.expected_effect}")
-            opener_parts.append(f"\n\n我们来聊聊这个话题吧！")
-            opener = "".join(opener_parts)
-            conv.add_assistant_message(opener)
-
-            # 获取消息列表
-            from llm_chat.storage import Storage
-            storage = Storage()
-            msgs = storage.get_messages(conv.conversation_id)
-            formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
-
-            # 切换到新对话
-            self.set_current_conversation(conv.conversation_id, formatted)
-            self.request_conversation_list_refresh()
-
-            logger.info(f"已从卡片创建对话: {conv.conversation_id}")
+            conv = app.conversation_manager.get_conversation(self.conversation_id)
+            conv.add_assistant_message(response_text)
         except Exception as e:
-            logger.error(f"从卡片创建对话失败: {e}")
+            logger.warning(f"持久化卡片 action 结果失败: {e}")
+
+    def _show_action_status(
+        self,
+        card: DecisionCard,
+        selected,
+        status: str,
+        error: str = "",
+    ):
+        """在聊天流中显示 action 执行状态。"""
+        status_map = {
+            "approved": ("✅ 已批准", "color: #4CAF50;"),
+            "rejected": ("❌ 已驳回", "color: #B8312F;"),
+            "executing": ("⏳ 正在执行...", "color: #EC994B;"),
+            "failed": (f"❌ 执行失败: {error}", "color: #B8312F;"),
+        }
+        text, style = status_map.get(
+            status,
+            (f"状态: {status}", "color: #8B7355;"),
+        )
+        label = QLabel(
+            f"<span style='{style}'>{text}</span>"
+        )
+        label.setStyleSheet("padding: 4px 8px; margin: 2px 0;")
+        self._add_widget_to_chat(label)
+        self._scroll_to_bottom()
+
+    def _create_conversation_from_card(
+        self, card: DecisionCard, selected
+    ):
+        """从卡片选项创建新对话（默认行为）。"""
+        app = self._app_instance
+        if not app:
+            return
+
+        option_text = f"🗣 {card.title} — {selected.label}"
+        conv = app.conversation_manager.create_conversation(
+            title=option_text
+        )
+
+        opener_parts = [f"你选择了: {selected.label}"]
+        if selected.description:
+            opener_parts.append(f"\n{selected.description}")
+        if selected.expected_effect:
+            opener_parts.append(f"\n预期: {selected.expected_effect}")
+        opener_parts.append(f"\n\n我们来聊聊这个话题吧！")
+        opener = "".join(opener_parts)
+        conv.add_assistant_message(opener)
+
+        from llm_chat.storage import Storage
+        storage = Storage()
+        msgs = storage.get_messages(conv.conversation_id)
+        formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
+
+        self.set_current_conversation(conv.conversation_id, formatted)
+        self.request_conversation_list_refresh()
+
+        logger.info(f"已从卡片创建对话: {conv.conversation_id}")
 
     def _handle_card_dismissed(self, card_id: str):
         """卡片按钮回调：用户忽略了卡片。"""

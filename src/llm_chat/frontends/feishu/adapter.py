@@ -109,6 +109,12 @@ class FeishuAdapter:
         self._tenant_access_token: Optional[str] = None
         self._token_expires_at: int = 0
 
+        # 待决策卡片映射: conversation_id → DecisionCard
+        # 飞书用户回复选项后匹配并执行
+        self._pending_cards: Dict[str, Any] = {}
+        import threading
+        self._cards_lock = threading.Lock()
+
         # Thread-safe components
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="feishu_llm_"
@@ -193,6 +199,14 @@ class FeishuAdapter:
         chat_type = self._get_chat_type(message)
         original_id = message.chat.chat_id if message.chat else ""
         conversation_id = SessionMapper.to_conversation_id(chat_type, original_id)
+
+        # 检测是否为卡片选项选择（在 LLM 调用前拦截）
+        option_result = self._try_handle_card_decision(
+            internal_message, conversation_id, original_id
+        )
+        if option_result:
+            return option_result
+
         response_text = self._process_with_llm(internal_message, conversation_id)
 
         if not response_text:
@@ -264,7 +278,14 @@ class FeishuAdapter:
                 chat_type, original_id, force_new_session=force_new
             )
 
-            response_text = self._process_with_llm(internal_message, conversation_id)
+            # 检测卡片选项选择（在 LLM 调用前拦截）
+            option_result = self._try_handle_card_decision(
+                internal_message, conversation_id, original_id
+            )
+            if option_result:
+                response_text = option_result.text
+            else:
+                response_text = self._process_with_llm(internal_message, conversation_id)
 
             if response_text and message.chat and message.chat.chat_id:
                 card = self._build_markdown_card(response_text)
@@ -405,6 +426,9 @@ class FeishuAdapter:
                 def on_card(card):
                     nonlocal card_for_feishu
                     card_for_feishu = card
+                    # 存储待决策卡片，飞书用户可通过文本命令选择
+                    with self._cards_lock:
+                        self._pending_cards[conversation_id] = card
 
                 response = chat_core.send_message(
                     conversation_id=conversation_id,
@@ -451,12 +475,74 @@ class FeishuAdapter:
                 lines.append(f"     风险: {opt.risk}")
         if card.sources:
             lines.append(f"\n来源: {', '.join(card.sources)}")
+        lines.append("\n💡 回复 A/B/C 选择方案")
 
         self.send_message(
             receive_id=chat_id,
             msg_type="text",
             content={"text": "\n".join(lines)},
         )
+
+    def _try_handle_card_decision(
+        self, message, conversation_id: str, receive_id: str
+    ):
+        """检测用户消息是否为卡片选项选择。
+
+        匹配模式: "A" "选A" "选 A" "选A。" "A。" 等。
+        如果是，执行对应 action 并返回飞书消息。
+        不是则返回 None，走正常 LLM 流程。
+        """
+        import re
+        from llm_chat.decision.action_executor import execute_card_action
+
+        with self._cards_lock:
+            card = self._pending_cards.get(conversation_id)
+
+        if not card:
+            return None
+
+        msg = message.content.strip().upper()
+        match = re.match(r'^(?:选\s*|选项\s*)?([A-Z])(?![A-Z])', msg)
+        if not match:
+            return None
+
+        option_id = match.group(1)
+        if option_id not in [o.id for o in card.options]:
+            return None
+
+        # 清除待决策卡片
+        with self._cards_lock:
+            self._pending_cards.pop(conversation_id, None)
+
+        logger.info(
+            f"[Feishu] card decision: conv={conversation_id}, card={card.id}, option={option_id}"
+        )
+
+        # 记录决策日志
+        try:
+            from llm_chat.decision.log import DecisionLogStore
+            selected = next((o for o in card.options if o.id == option_id), None)
+            store = DecisionLogStore()
+            store.record(
+                card_id=card.id,
+                card_type=card.card_type.value,
+                title=card.title,
+                selected_option_id=option_id,
+                selected_option_label=selected.label if selected else "",
+                recommendation=card.recommendation,
+                context_snapshot=card.context,
+            )
+        except Exception as e:
+            logger.warning(f"决策日志记录失败: {e}")
+
+        # 执行 action
+        result = execute_card_action(
+            card=card,
+            option_id=option_id,
+            client=self.app.client,
+        )
+
+        return self._convert_to_feishu_message(result["text"], message)
 
     @retry(
         max_retries=3,

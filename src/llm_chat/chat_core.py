@@ -33,7 +33,7 @@ CardCallback = Callable[['DecisionCard'], None]  # noqa: F821
 _DECISION_CARD_PROMPT = '''
 ## 决策卡片能力
 当你认为用户面临一个需要多选一的场景（选择方案、决定方向、审批请求），
-可以用结构化卡片来呈现选项，让用户做选择题而不是写作文。
+使用 submit_decision_card 工具提交结构化决策卡片，而不是在文本中嵌入 JSON。
 
 ### 何时使用
 - 用户问该选哪个方案
@@ -44,30 +44,28 @@ _DECISION_CARD_PROMPT = '''
 - 用户明确要求文字回答
 - 闲聊
 
-### 输出格式
-在回复中嵌入以下格式的 JSON 块（不要用任何其他标记)：
+### 复杂分析任务：并行子Agent + 决策卡片模式
 
-```decision-card
-{
-    "title": "带 emoji 的标题",
-    "context": "一句话背景",
-    "options": [
-        {
-            "id": "A",
-            "label": "选项名称",
-            "description": "简要说明",
-            "expected_effect": "预期效果",
-            "risk": "风险",
-            "confidence": 0.85
-        }
-    ],
-    "sources": ["source1"]
-}
-```
+当用户的任务需要对同一对象进行多维度分析时（如代码审查、方案评估、
+文档审核、数据分析），使用以下模式：
 
-卡片前后的文字会正常显示，卡片块会被自动提取为交互组件。
-请确保每个选项的 id 依次为 A, B, C...
-推荐选项的 confidence 设为最高值。
+1. **拆分维度**：根据任务性质，自主决定分析维度。例如：
+   - 代码审查 → 安全 + 性能 + 代码质量
+   - 方案评估 → 技术可行性 + 成本 + 风险
+   - 文档审核 → 准确性 + 完整性 + 可读性
+   - 用户也可以指定维度："从安全和性能角度审查这段代码"
+
+2. **并行启动子Agent**：对每个维度调用 spawn_subagent 工具，设置 wait=true。
+   在同一轮回复中发出所有 spawn_subagent 调用，系统会并行执行。
+
+3. **汇总为决策卡片**：收到所有子Agent结果后，调用 submit_decision_card 工具
+   提交决策卡片。卡片参数包含 title、context、options、recommendation、sources。
+
+### 注意事项
+- 选项 id 依次为 A, B, C...
+- recommendation 指向 confidence 最高的选项
+- 每个选项必须给出 confidence (0.0~1.0)
+- sources 列出信息来源（如子 agent 名称）
 '''
 
 
@@ -231,29 +229,38 @@ class ChatCore:
         )
 
         # 7. 提取决策卡片
-        cleaned_response, card_data = self._try_extract_card(response)
-        if card_data and on_card:
-            try:
-                from llm_chat.decision.schema import DecisionCard, DecisionOption
-                options = [
-                    DecisionOption(**o) for o in card_data['options']
-                ]
-                card = DecisionCard(
-                    title=card_data['title'],
-                    context=card_data.get('context'),
-                    options=options,
-                    recommendation=card_data.get('recommendation'),
-                    sources=card_data.get('sources', []),
-                    conversation_id=conversation_id,
-                )
-                on_card(card)
-                logger.info(f"决策卡片已提取: {card.id} -> {card.title}")
-            except Exception as e:
-                logger.warning(f"决策卡片提取失败: {e}")
+        # 优先路径: 从 tool call (submit_decision_card) 提取
+        from llm_chat.decision.submit_tool import get_pending_card
+        tool_card = get_pending_card()
+        if tool_card and on_card:
+            tool_card.conversation_id = conversation_id
+            on_card(tool_card)
+            logger.info(f"决策卡片已提取 (tool): {tool_card.id} -> {tool_card.title}")
 
-        # 8. 持久化助手回复（用纯净文本）
-        response = cleaned_response
-        conv.add_assistant_message(response)
+        # Fallback: 从文本 ```decision-card 块提取 (向后兼容)
+        if not tool_card:
+            cleaned_response, card_data = self._try_extract_card(response)
+            if card_data and on_card:
+                try:
+                    from llm_chat.decision.schema import DecisionCard, DecisionOption
+                    options = [
+                        DecisionOption(**o) for o in card_data['options']
+                    ]
+                    card = DecisionCard(
+                        title=card_data['title'],
+                        context=card_data.get('context'),
+                        options=options,
+                        recommendation=card_data.get('recommendation'),
+                        sources=card_data.get('sources', []),
+                        conversation_id=conversation_id,
+                    )
+                    on_card(card)
+                    logger.info(f"决策卡片已提取 (text): {card.id} -> {card.title}")
+                except Exception as e:
+                    logger.warning(f"决策卡片提取失败: {e}")
+            response = cleaned_response
+
+        # 8. 持久化助手回复
 
         # 9. 异步记忆提取
         self._extract_memory_async(conv, message, response)
@@ -282,6 +289,7 @@ class ChatCore:
         on_tool_start: Optional[ToolCallStartCallback] = None,
         on_tool_end: Optional[ToolCallEndCallback] = None,
         on_context_update: Optional[Callable[[int, int], None]] = None,
+        on_card: Optional[CardCallback] = None,
         **model_params,
     ) -> str:
         """流式发送消息，通过回调逐步返回内容。
@@ -438,7 +446,15 @@ class ChatCore:
         # 7. 持久化助手回复
         conv.add_assistant_message(full_text)
 
-        # 8. 异步记忆提取
+        # 8. 提取 tool call 提交的决策卡片
+        from llm_chat.decision.submit_tool import get_pending_card
+        tool_card = get_pending_card()
+        if tool_card and on_card:
+            tool_card.conversation_id = conversation_id
+            on_card(tool_card)
+            logger.info(f"决策卡片已提取 (tool/stream): {tool_card.id} -> {tool_card.title}")
+
+        # 9. 异步记忆提取
         self._extract_memory_async(conv, message, full_text)
 
         # 9. 记录 token 消耗

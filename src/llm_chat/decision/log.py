@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS decision_log (
     context_snapshot TEXT,
     conversation_id TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    decided_at TIMESTAMP
+    decided_at TIMESTAMP,
+    execution_result TEXT,
+    executed_at TIMESTAMP
 );
 """
 
@@ -102,8 +104,9 @@ class DecisionLogStore:
                 (id, card_id, card_type, title,
                  selected_option_id, selected_option_label,
                  recommendation, context_snapshot,
-                 conversation_id, created_at, decided_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 conversation_id, created_at, decided_at,
+                 execution_result, executed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record.id,
                     record.card_id,
@@ -116,6 +119,8 @@ class DecisionLogStore:
                     record.conversation_id,
                     record.created_at,
                     record.decided_at or datetime.now(),
+                    None,  # execution_result — 执行后回填
+                    None,  # executed_at
                 ),
             )
 
@@ -157,6 +162,31 @@ class DecisionLogStore:
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def update_execution_result(
+        self, record_id: str, result: str, success: bool = True
+    ):
+        """回填 action 执行结果。
+
+        Args:
+            record_id: 决策记录 ID。
+            result: 执行结果摘要。
+            success: 是否成功。
+        """
+        import json
+        self.ensure_table()
+        payload = json.dumps({
+            "success": success,
+            "result": result,
+            "executed_at": datetime.now().isoformat(),
+        }, ensure_ascii=False)
+        storage = self._get_storage()
+        with storage._get_connection() as conn:
+            conn.execute(
+                "UPDATE decision_log SET execution_result = ?, executed_at = ? WHERE id = ?",
+                (payload, datetime.now(), record_id),
+            )
+        logger.info(f"执行结果已记录: {record_id} (success={success})")
 
     def get_statistics(self) -> Dict[str, Any]:
         """获取决策统计。"""

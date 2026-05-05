@@ -173,6 +173,7 @@ class StorageCore:
                 ON task_executions(started_at);
         """)
         self._migrate_tasks_columns(conn)
+        self._migrate_decision_log_columns(conn)
 
     def _migrate_tasks_columns(self, conn):
         cursor = conn.execute("PRAGMA table_info(tasks)")
@@ -191,6 +192,23 @@ class StorageCore:
         add_if_missing("notify_targets", "TEXT")
         add_if_missing("notify_on_success", "INTEGER DEFAULT 1")
         add_if_missing("notify_on_failure", "INTEGER DEFAULT 1")
+
+    def _migrate_decision_log_columns(self, conn):
+        """为旧 decision_log 表添加新列（灰度兼容）。"""
+        cursor = conn.execute("PRAGMA table_info(decision_log)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        def add_if_missing(col_name, col_def):
+            if col_name not in columns:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE decision_log ADD COLUMN {col_name} {col_def}"
+                    )
+                except sqlite3.OperationalError:
+                    pass
+
+        add_if_missing("execution_result", "TEXT")
+        add_if_missing("executed_at", "TIMESTAMP")
 
     def _create_feishu_table_in(self, conn):
         conn.execute("""
@@ -233,7 +251,9 @@ class StorageCore:
                 context_snapshot TEXT,
                 conversation_id TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                decided_at TIMESTAMP
+                decided_at TIMESTAMP,
+                execution_result TEXT,
+                executed_at TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_decision_log_card_id
                 ON decision_log(card_id);
