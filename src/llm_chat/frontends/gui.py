@@ -1505,12 +1505,19 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._scroll_to_bottom()
 
     def display_card(self, card: DecisionCard):
-        """暂存卡片，等 _on_stream_finished 时再追加到 assistant 之后渲染。
+        """渲染决策卡片。
 
-        延迟原因：用户期望卡片在 AI 文本回复之后，而不是夹在用户消息和 AI 之间。
+        流式对话中的卡片（有 AI 文本即将到来）：延迟追加，等 AI 文本后再渲染。
+        ProactiveAgent 推送的卡片（无活跃流）：立即渲染。
         """
-        self._pending_card = card
-        # 不立即 append 到 _messages，等 AI 文本到达后再追加
+        if self._is_streaming and self._streaming_conversation_id == self.conversation_id:
+            # 流式场景：暂存，等 _on_stream_finished 追加到 AI 文本之后
+            self._pending_card = card
+        else:
+            # ProactiveAgent 等无流场景：直接追加并渲染
+            self._pending_card = None
+            self._messages.append({"role": "card", "card": card})
+            self._refresh_chat_display()
 
     def _render_card_widget(self, card: DecisionCard):
         """创建并插入卡片 widget（内部方法，供 display_card 和 refresh 共用）。"""
@@ -1596,8 +1603,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 logger.warning(f"未知 action 类型: {action_type}，回退到创建对话")
                 self._create_conversation_from_card(card, selected)
         else:
-            # 没有 action — 将选择作为上下文继续对话
-            self._continue_chat_from_card(card, selected)
+            # 没有 action — 根据卡片来源决定行为
+            if getattr(card, "conversation_id", None):
+                # 来自某个会话（如代码审查卡片）→ 在当前会话继续
+                self._continue_chat_from_card(card, selected)
+            else:
+                # ProactiveAgent 推送的卡片 → 创建新会话
+                self._create_conversation_from_card(card, selected)
 
     def _continue_chat_from_card(self, card: DecisionCard, selected):
         """从卡片选择继续对话：将选项作为用户消息发送给 LLM。"""
