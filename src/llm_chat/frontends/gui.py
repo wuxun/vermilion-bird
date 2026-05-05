@@ -1574,8 +1574,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _handle_card_decided(self, card: DecisionCard, option_id: str):
         """卡片按钮回调：用户做了决策。
 
-        如果选项包含 action 字段，执行对应动作。
-        否则默认行为：创建新对话。
+        将选择消息发送给 LLM，由 LLM 自主决定下一步（调用工具/追问/执行）。
+        不做 hardcoded action 分发——LLM 应该自行判断需要做什么。
         """
         logger.info(f"卡片决策: {card.id} -> {option_id}")
         selected = next((o for o in card.options if o.id == option_id), None)
@@ -1603,29 +1603,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         except Exception as e:
             logger.warning(f"决策日志记录失败: {e}")
 
-        # ── Action 分发 ──
-        action = getattr(selected, "action", None)
-        if action and isinstance(action, dict) and action.get("type"):
-            action_type = action["type"]
-            if action_type == "execute_skill":
-                self._execute_card_action(card, selected, action)
-            elif action_type == "approve":
-                logger.info(f"审批通过: {card.id} -> {selected.label}")
-                self._show_action_status(card, selected, "approved")
-            elif action_type == "reject":
-                logger.info(f"驳回: {card.id} -> {selected.label}")
-                self._show_action_status(card, selected, "rejected")
-            else:
-                logger.warning(f"未知 action 类型: {action_type}，回退到创建对话")
-                self._create_conversation_from_card(card, selected)
+        # ── 统一处理：将选择交给 LLM ──
+        if getattr(card, "conversation_id", None):
+            # 来自某个会话 → 在当前会话继续
+            self._continue_chat_from_card(card, selected)
         else:
-            # 没有 action — 根据卡片来源决定行为
-            if getattr(card, "conversation_id", None):
-                # 来自某个会话（如代码审查卡片）→ 在当前会话继续
-                self._continue_chat_from_card(card, selected)
-            else:
-                # ProactiveAgent 推送的卡片 → 创建新会话
-                self._create_conversation_from_card(card, selected)
+            # ProactiveAgent 推送 → 创建新会话
+            self._create_conversation_from_card(card, selected)
 
     def _continue_chat_from_card(self, card: DecisionCard, selected):
         """从卡片选择继续对话：将选项作为用户消息发送给 LLM。"""
@@ -1634,65 +1618,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             follow_up += f"（{selected.description}）"
         follow_up += "，请基于这个方向继续。"
         self._start_streaming(follow_up)
-
-    def _execute_card_action(
-        self, card: DecisionCard, selected, action: dict
-    ):
-        """执行卡片 action — 调用共享执行器，结果追加到当前会话。"""
-        from llm_chat.decision.action_executor import execute_card_action
-
-        app = self._app_instance
-        if not app:
-            return
-
-        self._show_action_status(card, selected, "executing")
-
-        result = execute_card_action(
-            card=card,
-            option_id=selected.id,
-            client=app.client,
-        )
-
-        if not result["success"]:
-            self._show_action_status(card, selected, "failed", result["text"])
-            return
-
-        # 将执行结果作为 AI 消息追加到当前会话
-        response_text = result["text"]
-        self._messages.append({"role": "assistant", "content": response_text})
-        self._refresh_chat_display()
-
-        # 持久化到当前会话（不触发 LLM）
-        try:
-            conv = app.conversation_manager.get_conversation(self.conversation_id)
-            conv.add_assistant_message(response_text)
-        except Exception as e:
-            logger.warning(f"持久化卡片 action 结果失败: {e}")
-
-    def _show_action_status(
-        self,
-        card: DecisionCard,
-        selected,
-        status: str,
-        error: str = "",
-    ):
-        """在聊天流中显示 action 执行状态。"""
-        status_map = {
-            "approved": ("✅ 已批准", "color: #4CAF50;"),
-            "rejected": ("❌ 已驳回", "color: #B8312F;"),
-            "executing": ("⏳ 正在执行...", "color: #EC994B;"),
-            "failed": (f"❌ 执行失败: {error}", "color: #B8312F;"),
-        }
-        text, style = status_map.get(
-            status,
-            (f"状态: {status}", "color: #8B7355;"),
-        )
-        label = QLabel(
-            f"<span style='{style}'>{text}</span>"
-        )
-        label.setStyleSheet("padding: 4px 8px; margin: 2px 0;")
-        self._add_widget_to_chat(label)
-        self._scroll_to_bottom()
 
     def _create_conversation_from_card(
         self, card: DecisionCard, selected
