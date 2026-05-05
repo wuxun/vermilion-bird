@@ -18,18 +18,21 @@ from llm_chat.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
-# Thread-local: SubmitDecisionCardTool 写入，ChatCore 读取
-_card_local = threading.local()
+# 锁保护共享变量（不用 thread-local，因为 ToolExecutor 在不同线程运行工具）
+_card_lock = threading.Lock()
+_pending_card: Optional["DecisionCard"] = None
 
 
 def get_pending_card() -> Optional["DecisionCard"]:
-    """获取并清除当前线程的待推送卡片。
+    """获取并清除待推送的决策卡片。
 
-    由 ChatCore 在 LLM 调用完成后调用。线程安全，自动清除。
+    由 ChatCore 在 LLM 调用完成后调用。跨线程安全（SubmitDecisionCardTool
+    在 ThreadPoolExecutor 线程中执行，ChatCore 在 worker 线程中读取）。
     """
-    card = getattr(_card_local, "card", None)
-    if card is not None:
-        _card_local.card = None
+    global _pending_card
+    with _card_lock:
+        card = _pending_card
+        _pending_card = None
     return card
 
 
@@ -161,7 +164,9 @@ class SubmitDecisionCardTool(BaseTool):
                 sources=sources or [],
             )
 
-            _card_local.card = card
+            with _card_lock:
+                global _pending_card
+                _pending_card = card
             logger.info(
                 f"[提交卡片] {card.id}: {title} ({len(options)} 个选项)"
             )

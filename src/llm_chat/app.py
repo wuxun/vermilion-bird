@@ -42,9 +42,6 @@ class App:
         import time
         _t0 = time.time()
 
-        # Ensure agent_tag logging filter is loaded (for sub-agent prefix)
-        import llm_chat.skills.task_delegator.tools  # noqa: registers _AgentIdFilter
-
         self.config = config or Config()
         self.current_frontend: Optional[BaseFrontend] = None
         self._mcp_manager: Optional[MCPManager] = None

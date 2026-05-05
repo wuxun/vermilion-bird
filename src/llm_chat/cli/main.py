@@ -33,6 +33,13 @@ def setup_logging(level=logging.INFO, log_file: str = None):
         handlers=handlers,
     )
 
+    # 安装子 agent 日志前缀 filter（加在 handler 上，所有 logger 都生效）
+    try:
+        from llm_chat.skills.task_delegator.tools import install_agent_id_log_filter
+        install_agent_id_log_filter()
+    except ImportError:
+        pass
+
 
 
 # ===== 主 CLI 命令组 =====

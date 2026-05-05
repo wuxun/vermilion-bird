@@ -54,10 +54,16 @@ class _AgentIdFilter(logging.Filter):
         return True
 
 
-# 安装到所有 logger
+# Filter 实例（在 basicConfig 后由 app.py 安装到 handlers）
 _root_filter = _AgentIdFilter()
-logging.getLogger().addFilter(_root_filter)
-logger.debug("_AgentIdFilter installed on root logger")
+
+
+def install_agent_id_log_filter():
+    """在 basicConfig 之后调用，将 filter 安装到所有 handlers。"""
+    for h in logging.getLogger().handlers:
+        h.addFilter(_root_filter)
+    # 兜底：如果未来添加新 handler，监听之
+    logger.debug("_AgentIdFilter installed on %d handlers", len(logging.getLogger().handlers))
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────────────
