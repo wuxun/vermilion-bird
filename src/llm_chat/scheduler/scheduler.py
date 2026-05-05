@@ -474,6 +474,8 @@ class SchedulerService:
             return self._run_skill_task(task)
         elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
             return self._run_maintenance_task(task)
+        elif task.task_type == TaskType.PROACTIVE_CHAT:
+            return self._run_proactive_chat_task(task)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
@@ -554,6 +556,21 @@ class SchedulerService:
             return "Database vacuumed"
         else:
             return f"Unknown maintenance action: {action}"
+
+    def _run_proactive_chat_task(self, task: Task) -> str:
+        """执行主动聊天任务。"""
+        try:
+            from llm_chat.proactive.agent import ProactiveAgent
+            agent = ProactiveAgent(self._app, self._app.config)
+            opener = agent.generate_and_push()
+            if opener:
+                logger.info(f"主动消息已推送: {opener[:100]}...")
+                return f"主动聊天已推送: {opener[:200]}"
+            else:
+                return "主动聊天跳过（无足够信息）"
+        except Exception as e:
+            logger.error(f"主动聊天执行失败: {e}")
+            raise
 
     def _notify_task_completion(self, task: Task, result: str, success: bool = True):
         try:
