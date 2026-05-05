@@ -88,6 +88,7 @@ class StorageCore:
             self._create_tasks_tables_in(conn)
             self._create_feishu_table_in(conn)
             self._create_context_cache_table_in(conn)
+            self._create_decision_log_table_in(conn)
 
     def _create_conversations_table_in(self, conn):
         conn.executescript("""
@@ -218,6 +219,27 @@ class StorageCore:
             "CREATE INDEX IF NOT EXISTS idx_context_conversation_id "
             "ON context_cache(conversation_id)"
         )
+
+    def _create_decision_log_table_in(self, conn):
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS decision_log (
+                id TEXT PRIMARY KEY,
+                card_id TEXT NOT NULL,
+                card_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                selected_option_id TEXT,
+                selected_option_label TEXT,
+                recommendation TEXT,
+                context_snapshot TEXT,
+                conversation_id TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                decided_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_decision_log_card_id
+                ON decision_log(card_id);
+            CREATE INDEX IF NOT EXISTS idx_decision_log_created_at
+                ON decision_log(created_at);
+        """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_context_last_accessed "
             "ON context_cache(last_accessed)"
