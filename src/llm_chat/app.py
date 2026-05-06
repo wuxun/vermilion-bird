@@ -589,19 +589,20 @@ class App:
         # Scheduler 初始化（含 APScheduler 启动，~2s）
         if self.scheduler is None:
             self._init_scheduler()
-            self._register_proactive_chat_task()
         if self.config.enable_tools:
             if self.config.mcp.servers:
                 self.enable_tools()
         # 异步启动 Docker 沙箱（不阻塞界面）
         self._start_docker_sandbox_async()
         self.service_manager.start_all()
+        # 调度器启动后注册主动聊天任务（add_job 在 start 之后才能持久化到 apscheduler_jobs 表）
+        self._register_proactive_chat_task()
         if self.current_frontend:
             self.current_frontend.display_info("服务就绪")
         logger.info("后台服务初始化完成")
 
     def _register_proactive_chat_task(self):
-        """注册每日主动聊天任务。"""
+        """注册每日主动聊天任务。幂等：任务存在但 APScheduler job 丢失时会重新注册。"""
         if not self.scheduler or not self.config.scheduler.enabled:
             return
         if not self.config.scheduler.proactive_enabled:
@@ -612,14 +613,25 @@ class App:
             from datetime import datetime
             import uuid
 
-            # 检查是否已存在
-            existing = self._get_tasks_by_type("PROACTIVE_CHAT")
-            if existing:
-                logger.info("主动聊天任务已存在，跳过注册")
-                return
-
             hour = self.config.scheduler.proactive_hour
             minute = self.config.scheduler.proactive_minute
+
+            # 检查是否已有任务（含 APScheduler job 同步检查）
+            existing_tasks = self._get_tasks_by_type("PROACTIVE_CHAT")
+            if existing_tasks:
+                task = existing_tasks[0]
+                # 检查 APScheduler 是否有对应的 job
+                try:
+                    job = self.scheduler._scheduler.get_job(task.id)
+                    if job:
+                        logger.info(f"主动聊天任务已存在并已调度: {task.id}")
+                        return
+                    else:
+                        logger.warning(f"主动聊天任务在存储中存在但 APScheduler job 丢失，重新注册: {task.id}")
+                        # 删除旧任务记录，重新创建
+                        self.storage.delete_task(task.id)
+                except Exception as e:
+                    logger.warning(f"检查 APScheduler job 失败，重新注册: {e}")
 
             task = Task(
                 id=f"proactive-daily-{uuid.uuid4().hex[:8]}",

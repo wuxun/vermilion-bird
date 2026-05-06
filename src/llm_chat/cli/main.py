@@ -180,7 +180,6 @@ def feishu(config_path, log_file, log_level):
     # 初始化调度器（如果启用）
     if config.scheduler.enabled:
         app._init_scheduler()
-        app._register_proactive_chat_task()
 
     adapter = FeishuAdapter(
         app=app,
@@ -194,6 +193,10 @@ def feishu(config_path, log_file, log_level):
     logging.info("Starting all services...")
     app.service_manager.start_all()
     logging.info("All services started")
+
+    # 调度器已启动，此时注册主动聊天任务（add_job 在 start 之后，job 才会持久化）
+    if config.scheduler.enabled:
+        app._register_proactive_chat_task()
 
     server = FeishuServer(
         app_id=feishu_cfg.app_id,
