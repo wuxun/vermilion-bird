@@ -590,11 +590,13 @@ class MemoryManager:
         self._consolidate_long_term()
 
     def _consolidate_long_term(self):
-        """整理长期记忆：LLM 去重 + 重新分类。
+        """整理长期记忆：LLM 去重 + 重新分类 + 安全网。
 
-        1. 扫描「用户主动告知」和「系统观察发现」所有事实
+        1. 扫描「用户主动告知」「系统观察发现」「系统推断」所有事实
         2. 用 LLM 去重合并语义相似条目
         3. 将事实重新分配到正确的长期记忆章节
+        4. 安全网：LLM 返回条数不足 70% 时拒绝写入，防止吞事实
+        5. 写入前自动备份
         """
         if not self._summarizer:
             return
@@ -613,9 +615,14 @@ class MemoryManager:
         observed_match = re.search(
             r'### 系统观察发现\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
         )
+        # 提取「系统推断」事实
+        inferred_match = re.search(
+            r'### 系统推断\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
 
         user_facts_raw = user_told_match.group(1).strip() if user_told_match else ""
         observed_facts_raw = observed_match.group(1).strip() if observed_match else ""
+        inferred_facts_raw = inferred_match.group(1).strip() if inferred_match else ""
 
         # 解析每个章节的条目
         def parse_facts(text: str) -> list[str]:
@@ -624,27 +631,40 @@ class MemoryManager:
 
         user_facts = parse_facts(user_facts_raw)
         observed_facts = parse_facts(observed_facts_raw)
+        inferred_facts = parse_facts(inferred_facts_raw)
 
-        total_facts = len(user_facts) + len(observed_facts)
+        total_facts = len(user_facts) + len(observed_facts) + len(inferred_facts)
         if total_facts < 3:
             logger.debug(f"长期记忆事实不足 {total_facts} 条，跳过整理")
             return
 
-        logger.info(f"开始整理长期记忆: {len(user_facts)} 用户告知 + {len(observed_facts)} 系统观察")
+        logger.info(
+            f"开始整理长期记忆: {len(user_facts)} 用户告知 + "
+            f"{len(observed_facts)} 系统观察 + {len(inferred_facts)} 系统推断 = {total_facts} 条"
+        )
+
+        # 备份（整理前）
+        try:
+            self.storage.backup_memory()  # 使用默认时间戳路径
+        except Exception as e:
+            logger.warning(f"整理前备份失败: {e}")
 
         all_facts_text = "\n".join(
             [f"[用户告知] {f}" for f in user_facts]
             + [f"[系统观察] {f}" for f in observed_facts]
+            + [f"[系统推断] {f}" for f in inferred_facts]
         )
 
-        prompt = f"""你是一个记忆整理助手。以下是用户的长期记忆事实列表，其中可能包含重复、过时或可合并的条目。
+        prompt = f"""你是一个记忆整理助手。以下是用户的长期记忆事实列表。
+
+重要：你必须保留所有事实，只合并语义完全相同的条目，不能删除任何一条。
 
 当前事实 ({total_facts} 条):
 {all_facts_text}
 
 请完成以下任务：
 
-1. **去重合并**：将语义相同或高度相似的条目合并为一条精炼的事实。每条不超过 60 字。
+1. **去重合并**：仅将语义**完全相同**的条目合并为一条。语义相近但不同的条目要分别保留。每条不超过 60 字。
 2. **重新分类**：将每条事实分配到以下最合适的类别：
    - identity: 身份、年龄、性别、职业、角色等
    - preference: 偏好、习惯、喜欢/不喜欢
@@ -652,9 +672,9 @@ class MemoryManager:
    - plan: 未来计划、目标
    - skill: 技能、能力描述
    - fact: 其他客观事实
-3. **标注来源**：\"user_told\" 表示用户明确告知，\"observed\" 表示系统观察。
+3. **标注来源**："user_told" / "observed" / "inferred"
 
-输出格式 (JSON 数组):
+输出格式 (JSON 数组，必须包含所有事实):
 [
   {{"category": "identity", "fact": "用户是 35 岁男性，IT 行业从业者", "source": "user_told"}},
   {{"category": "preference", "fact": "用户偏好使用 Python 3.11 进行开发", "source": "user_told"}},
@@ -666,6 +686,7 @@ class MemoryManager:
         try:
             response = self._summarizer.generate(prompt, max_tokens=2000)
             if not response:
+                logger.warning("长期记忆整理：LLM 无响应，跳过")
                 return
 
             import json
@@ -676,11 +697,22 @@ class MemoryManager:
                 clusters = json.loads(response.strip())
 
             if not isinstance(clusters, list) or len(clusters) == 0:
+                logger.warning("长期记忆整理：LLM 返回空结果，跳过")
                 return
 
-            # 按类别分组
+            # 安全网：LLM 返回条数 < 输入条数 × 70% 则拒绝写入
+            min_expected = max(1, int(total_facts * 0.7))
+            if len(clusters) < min_expected:
+                logger.warning(
+                    f"长期记忆整理：LLM 返回 {len(clusters)} 条 < {min_expected} 条 (70% 阈值)，"
+                    f"疑似丢失事实，拒绝写入。原始 {total_facts} 条保持不变。"
+                )
+                return
+
+            # 按类别和来源分组
             categorized: dict[str, list[str]] = {}
             observed: list[str] = []
+            inferred: list[str] = []
             for item in clusters:
                 cat = item.get("category", "fact")
                 fact = item.get("fact", "")
@@ -690,31 +722,36 @@ class MemoryManager:
 
                 if source == "observed":
                     observed.append(fact)
+                elif source == "inferred":
+                    inferred.append(fact)
                 else:
                     if cat not in categorized:
                         categorized[cat] = []
                     categorized[cat].append(fact)
 
             # 重建长期记忆内容
-            self._rebuild_long_term(content, categorized, observed, total_facts)
+            self._rebuild_long_term(
+                content, categorized, observed, inferred, total_facts
+            )
 
             # 重置计数器
             self._long_term_fact_count = 0
             self._last_consolidate_time = datetime.now()
 
             logger.info(
-                f"长期记忆整理完成: {total_facts} → {sum(len(v) for v in categorized.values()) + len(observed)} 条 "
+                f"长期记忆整理完成: {total_facts} → {len(clusters)} 条 "
                 f"(类别: {list(categorized.keys())})"
             )
 
         except Exception as e:
-            logger.warning(f"长期记忆整理失败: {e}")
+            logger.warning(f"长期记忆整理失败 (原内容保持不变): {e}")
 
     def _rebuild_long_term(
         self,
         content: str,
         categorized: dict[str, list[str]],
         observed: list[str],
+        inferred: list[str],
         original_count: int,
     ):
         """用整理后的事实重建长期记忆的「用户画像」和「重要事实」章节。"""
@@ -747,6 +784,13 @@ class MemoryManager:
             else "(暂无系统观察)"
         )
 
+        # 系统推断事实
+        inferred_block = (
+            "\n".join(f"- {f}" for f in inferred)
+            if inferred
+            else "(暂无系统推断)"
+        )
+
         # 替换「用户画像」章节 (## 用户画像 到下一个 ##)
         content = re.sub(
             r'(## 用户画像\n).*?(?=\n##|\Z)',
@@ -767,6 +811,14 @@ class MemoryManager:
         content = re.sub(
             r'(### 系统观察发现\n).*?(?=\n###|\n##|\Z)',
             r'\1' + observed_block,
+            content,
+            flags=re.DOTALL,
+        )
+
+        # 替换「系统推断」
+        content = re.sub(
+            r'(### 系统推断\n).*?(?=\n###|\n##|\Z)',
+            r'\1' + inferred_block,
             content,
             flags=re.DOTALL,
         )
