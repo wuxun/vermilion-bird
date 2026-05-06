@@ -638,9 +638,7 @@ class App:
                 name="每日主动聊天",
                 task_type=TaskType.PROACTIVE_CHAT,
                 trigger_config={
-                    "type": "cron",
-                    "hour": hour,
-                    "minute": minute,
+                    "cron": f"{minute} {hour} * * *",
                     "timezone": "Asia/Shanghai",
                 },
                 params={},
