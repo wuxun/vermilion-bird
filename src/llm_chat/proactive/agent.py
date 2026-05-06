@@ -270,15 +270,26 @@ class ProactiveAgent:
     # ----------------------------------------------------------------
 
     def _push_to_feishu(self, card: DecisionCard):
-        """飞书推送纯文本摘要。"""
+        """推送话题卡片到飞书最近活跃会话。"""
         if not self._config.feishu.enabled:
             return
         try:
-            from llm_chat.frontends.feishu.push import PushService
-
             adapter = getattr(self._app, "_feishu_adapter", None)
             if not adapter:
                 logger.warning("飞书适配器未初始化，跳过推送")
+                return
+
+            # 获取最近活跃的飞书会话
+            recent = adapter.get_recent_chat()
+            if not recent or recent.get("type") != "feishu":
+                logger.warning("无最近飞书会话，跳过主动推送")
+                return
+
+            # 确定 chat_id 和 receive_id_type
+            receive_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
+            receive_id_type = "chat_id" if "chat_id" in recent else ("open_id" if "open_id" in recent else "user_id")
+            if not receive_id:
+                logger.warning("无法确定飞书接收方 ID，跳过推送")
                 return
 
             # 纯文本摘要
@@ -292,8 +303,14 @@ class ProactiveAgent:
             if card.sources:
                 lines.append(f"  来源: {', '.join(card.sources)}")
 
-            push = PushService(adapter)
-            push.broadcast("\n".join(filter(None, lines)))
+            text = "\n".join(filter(None, lines))
+            adapter.send_message(
+                receive_id=receive_id,
+                msg_type="text",
+                content={"text": text},
+                receive_id_type=receive_id_type,
+            )
+            logger.info(f"主动话题卡片已推送到飞书: {card.title}")
         except Exception as e:
             logger.warning(f"飞书推送失败: {e}")
 

@@ -126,6 +126,7 @@ class FeishuAdapter:
 
         # 记录最近的对话，用于任务通知
         self._recent_chat: Optional[Dict[str, str]] = None
+        self._load_recent_chat_from_db()
 
     def set_recent_chat(self, chat_id: str, chat_type: str = "chat_id"):
         """记录最近的对话，用于任务通知。
@@ -147,6 +148,21 @@ class FeishuAdapter:
             最近对话的信息字典，或 None
         """
         return self._recent_chat
+
+    def _load_recent_chat_from_db(self):
+        """从数据库恢复最近飞书会话（跨重启持久化）。"""
+        try:
+            from llm_chat.storage import Storage
+            storage = Storage()
+            row = storage.get_recent_feishu_chat()
+            if row:
+                self._recent_chat = {
+                    "type": "feishu",
+                    row["id_type"]: row["chat_id"],
+                }
+                logger.info(f"已从数据库恢复最近飞书会话: {self._recent_chat}")
+        except Exception as e:
+            logger.debug(f"加载最近飞书会话失败 (可能尚无记录): {e}")
 
     @property
     def http_client(self) -> httpx.Client:
