@@ -823,7 +823,7 @@ class MemoryManager:
             flags=re.DOTALL,
         )
 
-        # 追加进化日志
+        # 追加进化日志，保留最近 10 条防止无限增长
         today = datetime.now().strftime("%Y-%m-%d %H:%M")
         log_entry = (
             f"- {today}: 整理长期记忆，{original_count} 条事实经去重合并后重新分类"
@@ -833,6 +833,15 @@ class MemoryManager:
                 r'(## 进化日志\n)',
                 r'\1' + log_entry + "\n",
                 content,
+            )
+            # 截断：只保留最近 10 条日志
+            content = re.sub(
+                r'(## 进化日志\n)((?:.+(?:\n|$))*)',
+                lambda m: m.group(1) + "\n".join(
+                    [l for l in m.group(2).strip().split("\n") if l.strip()][-10:]
+                ) + "\n",
+                content,
+                flags=re.DOTALL,
             )
 
         self.storage.save_long_term(content)

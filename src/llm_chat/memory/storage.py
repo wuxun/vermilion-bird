@@ -177,7 +177,7 @@ class MemoryStorage:
                 logger.info(f"添加推断事实: {fact[:50]}...")
     
     def add_evolution_log(self, date: str, log: str):
-        """添加进化日志（线程安全）"""
+        """添加进化日志（线程安全，保留最近 10 条）"""
         with self._lock:
             content = self.load_long_term()
             
@@ -186,8 +186,25 @@ class MemoryStorage:
                 insert_pos = evolution_match.end()
                 new_entry = f"\n### {date}\n{log}\n"
                 content = content[:insert_pos] + new_entry + content[insert_pos:]
+                # 截断：只保留最近 10 条 ### 日期标记的日志
+                content = self._trim_evolution_log(content)
                 self.save_long_term(content)
                 logger.info(f"添加进化日志: {date}")
+
+    def _trim_evolution_log(self, content: str, max_entries: int = 10) -> str:
+        """截断进化日志章节，保留最近 N 条。"""
+        match = re.search(r'(## 进化日志\n)(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        if not match:
+            return content
+        header = match.group(1)
+        body = match.group(2)
+        # 按 ### 分割日志条目
+        entries = re.split(r'(?=\n### )', body.strip())
+        entries = [e.strip() for e in entries if e.strip()]
+        if len(entries) <= max_entries:
+            return content
+        trimmed_body = "\n".join(entries[-max_entries:])
+        return content[:match.start()] + header + trimmed_body + "\n" + content[match.end():]
     
     def update_timestamp(self, memory_type: str = "all"):
         """更新记忆文件的时间戳"""
