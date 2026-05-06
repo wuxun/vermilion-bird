@@ -476,7 +476,7 @@ class Config(BaseSettings):
     )
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     log_file: str = Field(
-        default="~/.vermilion-bird/app.log",
+        default="~/.vermilion-bird/logs/app.log",
         description="日志文件路径，可被 CLI --log-file 覆盖",
     )
     log_level: str = Field(
@@ -604,7 +604,7 @@ class Config(BaseSettings):
             )
 
             # 日志配置
-            log_file = config_data.get("log_file", "~/.vermilion-bird/app.log")
+            log_file = config_data.get("log_file", "~/.vermilion-bird/logs/app.log")
             log_level = config_data.get("log_level", "INFO")
 
             config_instance = cls(

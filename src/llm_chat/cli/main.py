@@ -20,12 +20,16 @@ def setup_logging(level=logging.INFO, log_file: str = None):
     handlers = [logging.StreamHandler(sys.stdout)]
 
     if log_file:
-        # 自动创建日志文件所在目录
+        # 自动创建日志目录 (logs/ 子目录)
         log_path = os.path.abspath(os.path.expanduser(log_file))
         log_dir = os.path.dirname(log_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+        from logging.handlers import TimedRotatingFileHandler
+        handlers.append(TimedRotatingFileHandler(
+            log_path, when="midnight", interval=1,
+            backupCount=30, encoding="utf-8",
+        ))
 
     logging.basicConfig(
         level=level,
