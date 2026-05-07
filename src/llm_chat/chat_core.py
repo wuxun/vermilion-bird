@@ -68,6 +68,42 @@ _DECISION_CARD_PROMPT = '''
 - sources 列出信息来源（如子 agent 名称）
 '''
 
+# ── 苏格拉底式对话提示 (仅注入到可执行意图) ──
+_SOCRATIC_PROMPT = '''
+## 苏格拉底式对话 — 先理解再行动
+
+当面对可执行的请求（写代码、操作文件、搜索、定时任务）时，遵循：
+
+### 判断是否需要澄清
+- **请求足够具体**（含语言/平台/约束/输入输出格式）→ 直接执行，不弹卡
+- **请求模糊**（如"帮我写个脚本"、"处理数据"、"优化一下"、"查一下"）
+  → 不要急于动手！先调用 submit_decision_card 提交澄清卡片
+
+### 澄清卡片要求
+- **引导需求层次**（快速原型 vs 生产级 vs 探索性），不是问技术参数（"你要 Python 还是 Rust？"）
+- 选项间有区分度，不要同质化
+- 最后一个选项 id 固定为"让我说更多"的逃生选项
+- 简单明确的问题不要弹卡
+- **弹卡时文本回复保持简短**：一句话说明为什么需要确认即可，不要同时输出大段分析
+
+### 示例
+用户："帮我写个爬虫"
+→ 卡：A.快速原型(一次性, requests+bs4) / B.生产级(代理轮换+重试+持久化) / C.让我说更多
+→ 文本回复："爬虫的实现方式取决于你的目标，我列了几个方向："
+
+用户："用 Python 3.11 和 aiohttp 写一个抓取 Hacker News 首页标题的脚本"
+→ 足够具体，直接写代码，不要弹卡
+
+用户："优化这段代码"
+→ 卡：A.可读性优化 / B.性能优化 / C.全面优化 / D.让我说更多
+
+用户："帮我查一下"
+→ 卡：A.技术最新动态 / B.社区生态 / C.生产实践经验 / D.让我说更多
+'''
+
+# ── 需要注入苏格拉底提示的意图类型 ──
+_SOCRATIC_INTENTS = {Intent.CODE, Intent.FILE_OP, Intent.SEARCH, Intent.SCHEDULE}
+
 
 class ChatCore:
     """核心对话引擎
@@ -195,8 +231,10 @@ class ChatCore:
         # 1. 持久化用户消息
         conv.add_user_message(message)
 
-        # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv, effective_message)
+        # 2. 构建系统上下文（记忆注入 + 苏格拉底提示）
+        system_context = self._build_system_context(
+            conv, effective_message, intent=decision.intent
+        )
 
         # 3. 获取对话历史（不含刚添加的用户消息）
         history = conv.get_history()
@@ -345,8 +383,10 @@ class ChatCore:
         # 1. 持久化用户消息
         conv.add_user_message(message)
 
-        # 2. 构建系统上下文（记忆注入）
-        system_context = self._build_system_context(conv, effective_message)
+        # 2. 构建系统上下文（记忆注入 + 苏格拉底提示）
+        system_context = self._build_system_context(
+            conv, effective_message, intent=decision.intent
+        )
 
         # 3. 获取对话历史
         history = conv.get_history()
@@ -458,7 +498,9 @@ class ChatCore:
     # internal helpers
     # ------------------------------------------------------------------
 
-    def _build_system_context(self, conv, user_message: str = None) -> Optional[str]:
+    def _build_system_context(
+        self, conv, user_message: str = None, intent: Optional[Intent] = None
+    ) -> Optional[str]:
         """从 Conversation 的记忆管理器构建系统上下文。
 
         注入顺序：记忆 → 相关对话搜索(FTS5) → prompt skills
@@ -468,6 +510,11 @@ class ChatCore:
 
         # 0. 决策卡片能力提示
         parts.append(_DECISION_CARD_PROMPT)
+
+        # 0a. 苏格拉底式对话 (仅对可执行意图注入)
+        if intent in _SOCRATIC_INTENTS:
+            parts.append(_SOCRATIC_PROMPT)
+            logger.debug(f"[SOCRATIC] 注入苏格拉底提示 (intent={intent.value})")
 
         # 1. 记忆系统
         if memory_manager is not None:

@@ -262,7 +262,7 @@ class ProactiveAgent:
             # 获取 SubmitDecisionCardTool 的 schema
             from llm_chat.tools.registry import ToolRegistry
             registry = ToolRegistry()
-            all_tools = registry.get_tools()
+            all_tools = registry.get_tools_for_openai()
             card_tool = [t for t in all_tools if t.get("function", {}).get("name") == "submit_decision_card"]
             if not card_tool:
                 logger.warning("submit_decision_card 工具未注册，跳过卡片生成")
