@@ -337,7 +337,7 @@ class MemoryManager:
         return cjk_chars + (other_chars // 4)
 
     def build_system_prompt(self) -> str:
-        """构建注入到LLM的系统提示，按 soul > long_term > mid_term > short_term 优先级控制在 token 预算内"""
+        """构建注入到LLM的系统提示，按 soul > behavioral > long_term > mid_term > short_term 优先级控制在 token 预算内"""
         budget = self._max_memory_tokens
         if budget <= 0:
             return ""
@@ -353,6 +353,19 @@ class MemoryManager:
             if soul_tokens > 0 and soul_tokens <= budget_remaining:
                 sections.append("## 你的人格设定\n" + soul_content)
                 budget_remaining -= soul_tokens
+
+        # 优先级 0.5: 行为指引（从长期记忆推导，仅次于 soul）
+        behavioral = self._build_behavioral_context()
+        if behavioral and budget_remaining > 0:
+            b_tokens = self._estimate_tokens(behavioral)
+            if b_tokens <= budget_remaining:
+                sections.append(behavioral)
+                budget_remaining -= b_tokens
+            else:
+                truncated = self._truncate_by_tokens(behavioral, budget_remaining)
+                if truncated:
+                    sections.append(truncated)
+                    budget_remaining = 0
 
         # 优先级 1: 长期记忆（用户画像 + 重要事实）
         long_term = self.storage.load_long_term()
@@ -424,6 +437,132 @@ class MemoryManager:
 
         return '\n'.join(result_lines) if result_lines else ""
     
+    def _build_behavioral_context(self) -> str:
+        """从长期记忆中提取偏好，构建 LLM 行为指引。
+
+        与"关于用户"（知识）不同，行为指引是**指令**——
+        告诉 LLM 如何行动，而非仅仅告知用户是谁。
+
+        数据来源：long_term.md 中「沟通偏好」「工具偏好」「身份与背景」等技术相关章节。
+        新用户无数据时返回空字符串。
+        """
+        content = self.storage.load_long_term()
+        if not content:
+            return ""
+
+        import re
+
+        sections = []
+
+        # ── 沟通偏好 → 沟通方式指令 ──
+        comm = re.search(
+            r'### 沟通偏好\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
+        if comm:
+            text = comm.group(1).strip()
+            items = [
+                l.strip("- ").strip()
+                for l in text.split("\n")
+                if l.strip().startswith("-") and "待填写" not in l and l.strip("- ").strip()
+            ]
+            if items:
+                # 将事实描述转为行为指令语气
+                directives = []
+                for item in items:
+                    directives.append(self._to_directive(item))
+                sections.append("### 沟通方式\n" + "\n".join(f"- {d}" for d in directives))
+
+        # ── 工具偏好 → 技术默认指令 ──
+        tools = re.search(
+            r'### 工具偏好\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
+        if tools:
+            text = tools.group(1).strip()
+            items = [
+                l.strip("- ").strip()
+                for l in text.split("\n")
+                if l.strip().startswith("-") and "待填写" not in l and l.strip("- ").strip()
+            ]
+            if items:
+                tech_dirs = []
+                for item in items:
+                    tech_dirs.append(self._to_directive(item))
+                sections.append("### 技术默认\n" + "\n".join(f"- {d}" for d in tech_dirs))
+
+        # ── 身份与背景中的技术栈信息 ──
+        identity = re.search(
+            r'### 身份与背景\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
+        )
+        if identity:
+            text = identity.group(1).strip()
+            # 只提取技术相关条目（技术栈、工作领域）
+            tech_keywords = ["技术栈", "语言", "Python", "Rust", "Go", "Java",
+                           "C++", "JavaScript", "TypeScript", "框架", "库", "工具"]
+            for line in text.split("\n"):
+                stripped = line.strip("- ").strip()
+                if any(kw in stripped for kw in tech_keywords) and "待填写" not in stripped:
+                    if "技术默认" not in "\n".join(sections):
+                        sections.append("### 技术默认\n")
+                    # Append to last section
+                    sections[-1] += f"- {self._to_directive(stripped)}\n"
+
+        if not sections:
+            return ""
+
+        return (
+            "## 行为指引\n"
+            "以下基于对用户的了解，请在回复中主动遵循这些偏好：\n\n"
+            + "\n\n".join(s for s in sections if s.strip())
+        )
+
+    @staticmethod
+    def _to_directive(item: str) -> str:
+        """将偏好事实条目转为行为指令语气。
+
+        例: "首选语言：中文" → "使用中文回复"
+        例: "回复风格偏好 (详细/简洁/引导式)：简洁" → "保持简洁，结论前置"
+        例: "常用框架/库：FastAPI" → "优先使用 FastAPI 等用户熟悉的框架"
+        """
+        import re
+
+        # 去掉标签前缀，提取实际值
+        # 模式: "标签：值" 或 "标签 (说明)：值" 或 "纯描述"
+        value = re.sub(r'^[^：:]*(?:[：:]\s*)?', '', item).strip()
+        key = re.sub(r'[：:].*$', '', item).strip()
+
+        # 如果去掉标签后没有实质内容，说明本身就是纯描述
+        if not value or value == item:
+            value = item
+
+        # 映射：偏好类别 → 行为指令模板
+        keyword_directives = {
+            "简洁": "保持简洁，结论前置，不过度展开",
+            "详细": "回复详尽完整，给出推导过程和上下文",
+            "引导式": "用提问引导思考，而非直接给出答案",
+            "中文": "使用中文回复",
+            "英文": "使用英文回复",
+        }
+
+        for kw, directive in keyword_directives.items():
+            if kw in value:
+                return directive
+
+        # 技术相关 → 默认使用
+        tech_keywords = ["Python", "Rust", "Go", "Java", "JavaScript", "TypeScript",
+                        "C++", "C#", "Kotlin", "Swift", "Ruby", "PHP"]
+        for tech in tech_keywords:
+            if tech in value:
+                return f"代码示例默认使用 {tech}"
+
+        if any(kw in key for kw in ["命令行", "Shell"]):
+            return f"Shell 示例优先使用 {value}"
+
+        if any(kw in key for kw in ["框架", "库", "IDE", "编辑器"]):
+            return f"优先使用 {value}"
+
+        # 无法解析 → 保留原文，加"注意"前缀
+        return f"注意：{value}"
+
     def _extract_soul_content(self, content: str) -> str:
         """提取人格设定内容"""
         import re
