@@ -301,28 +301,111 @@ class MemoryManager:
             return 0
     
     def evolve_understanding(self):
-        """进化对用户的理解"""
+        """进化对用户的理解 — 规则检测偏好 + LLM 生成行为指引。
+
+        规则部分（轻量）：检测语言、风格、代码偏好 → 更新 long_term 偏好章节。
+        LLM 部分（重量）：分析近期对话，生成行为指引 → 写入「## 行为指引」章节。
+        """
         logger.info("开始记忆进化...")
-        
-        preferences = self.extractor.detect_user_preferences(
-            self.load_recent_conversations(7)
-        )
-        
+
+        messages = self.load_recent_conversations(7)
+
+        # ── 规则检测偏好（轻量，不依赖 LLM）──
+        preferences = self.extractor.detect_user_preferences(messages)
+
         if preferences.get("language"):
             self.storage.update_section("基本信息", f"- 偏好语言：{preferences['language']}")
-        
         if preferences.get("style"):
             self.storage.update_section("沟通偏好", f"- 回复风格：{preferences['style']}")
-        
         if preferences.get("code_style"):
             self.storage.update_section("沟通偏好", f"- 代码风格：{preferences['code_style']}")
-        
+
+        # ── LLM 生成行为指引 ──
+        summarizer = self._summarizer
+        if summarizer and messages:
+            try:
+                directives = self._generate_behavioral_directives(
+                    summarizer, messages
+                )
+                if directives:
+                    self._write_behavioral_section(directives)
+                    logger.info(f"行为指引已更新 ({len(directives)} 字符)")
+            except Exception as e:
+                logger.warning(f"LLM 行为指引生成失败，跳过: {e}")
+
         today = datetime.now().strftime("%Y-%m-%d")
         evolution_log = "- 更新了用户偏好理解\n- 优化了记忆系统"
+        if summarizer and messages:
+            evolution_log += "\n- 更新了行为指引"
         self.storage.add_evolution_log(today, evolution_log)
-        
+
         self.storage.update_timestamp("long_term")
         logger.info("记忆进化完成")
+
+    def _generate_behavioral_directives(
+        self, summarizer, messages: List[Dict]
+    ) -> str:
+        """让 LLM 分析近期对话，生成行为指引。"""
+        # 格式化近期对话
+        lines = []
+        for msg in messages[-30:]:  # 最近 30 条
+            role = msg.get("role", "?")
+            content = msg.get("content", "")[:200]
+            if content:
+                lines.append(f"[{role}]: {content}")
+        conversation_text = "\n".join(lines)
+
+        # 加载现有 long_term + soul 提供上下文
+        long_term = self.storage.load_long_term() or ""
+        soul = self.storage.load_soul() or ""
+
+        prompt = f"""你是一个用户行为分析师。基于以下信息，生成 AI 助手的行为指引。
+
+## 助手当前人格 (soul)
+{soul[:1000]}
+
+## 已有用户画像
+{long_term[:1500]}
+
+## 近期对话 (最近 7 天)
+{conversation_text[:3000]}
+
+## 任务
+分析用户的沟通偏好、技术偏好、工作习惯，生成行为指引段。
+每条指引是 AI 助手应当遵循的具体行为规则。
+
+要求：
+1. 使用指令语气，如"使用中文回复"、"代码示例默认用 Python"
+2. 每条一行，以 "- " 开头
+3. 只写可以确定的内容，推测的不要写
+4. 不要重复 soul 中已有的通用准则
+5. 3-8 条，每条不超过 30 字
+
+直接输出行为指引，不要 JSON、不要解释。"""
+
+        response = summarizer.generate(prompt, max_tokens=500)
+        if not response:
+            return ""
+        return response.strip()
+
+    def _write_behavioral_section(self, directives: str):
+        """将 LLM 生成的行为指引写入 long_term.md 的「## 行为指引」章节。"""
+        import re
+        content = self.storage.load_long_term()
+
+        # 替换或追加 ## 行为指引 章节
+        pattern = r'## 行为指引\n.*?(?=\n##|\Z)'
+        replacement = "## 行为指引\n\n" + directives
+
+        if re.search(r'## 行为指引', content):
+            content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+        else:
+            # 插入到 ## 重要事实 之前
+            content = content.replace(
+                "## 重要事实", replacement + "\n\n## 重要事实"
+            )
+
+        self.storage.save_long_term(content)
     
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -342,6 +425,7 @@ class MemoryManager:
         if budget <= 0:
             return ""
 
+        import re
         sections = []  # List of (priority, header, content)
         budget_remaining = budget
 
@@ -354,21 +438,30 @@ class MemoryManager:
                 sections.append("## 你的人格设定\n" + soul_content)
                 budget_remaining -= soul_tokens
 
-        # 优先级 0.5: 行为指引（从长期记忆推导，仅次于 soul）
-        behavioral = self._build_behavioral_context()
-        if behavioral and budget_remaining > 0:
-            b_tokens = self._estimate_tokens(behavioral)
-            if b_tokens <= budget_remaining:
-                sections.append(behavioral)
-                budget_remaining -= b_tokens
-            else:
-                truncated = self._truncate_by_tokens(behavioral, budget_remaining)
-                if truncated:
-                    sections.append(truncated)
-                    budget_remaining = 0
-
-        # 优先级 1: 长期记忆（用户画像 + 重要事实）
+        # 优先级 1: 长期记忆 — 一次加载，拆分使用
         long_term = self.storage.load_long_term()
+
+        # 优先级 0.5: 行为指引
+        # LLM 在 evolve_understanding() 时写入 long_term.md 的「## 行为指引」章节。
+        # 这里直接读取——不解析、不转换，LLM 写什么就注入什么。
+        if long_term and budget_remaining > 0:
+            behavioral_match = re.search(
+                r'## 行为指引\n(.*?)(?=\n##|\Z)', long_term, re.DOTALL
+            )
+            if behavioral_match:
+                behavioral = behavioral_match.group(1).strip()
+                if behavioral and "待生成" not in behavioral and "待填写" not in behavioral:
+                    b_tokens = self._estimate_tokens(behavioral)
+                    if b_tokens <= budget_remaining:
+                        sections.append("## 行为指引\n" + behavioral)
+                        budget_remaining -= b_tokens
+                    else:
+                        truncated = self._truncate_by_tokens(behavioral, budget_remaining)
+                        if truncated:
+                            sections.append("## 行为指引\n" + truncated)
+                            budget_remaining = 0
+
+        # 优先级 2: 长期记忆（用户画像 + 重要事实 — 不含行为指引）
         if long_term and budget_remaining > 0:
             lt_content = self._extract_relevant_sections(long_term)
             lt_tokens = self._estimate_tokens(lt_content)
@@ -437,132 +530,6 @@ class MemoryManager:
 
         return '\n'.join(result_lines) if result_lines else ""
     
-    def _build_behavioral_context(self) -> str:
-        """从长期记忆中提取偏好，构建 LLM 行为指引。
-
-        与"关于用户"（知识）不同，行为指引是**指令**——
-        告诉 LLM 如何行动，而非仅仅告知用户是谁。
-
-        数据来源：long_term.md 中「沟通偏好」「工具偏好」「身份与背景」等技术相关章节。
-        新用户无数据时返回空字符串。
-        """
-        content = self.storage.load_long_term()
-        if not content:
-            return ""
-
-        import re
-
-        sections = []
-
-        # ── 沟通偏好 → 沟通方式指令 ──
-        comm = re.search(
-            r'### 沟通偏好\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
-        )
-        if comm:
-            text = comm.group(1).strip()
-            items = [
-                l.strip("- ").strip()
-                for l in text.split("\n")
-                if l.strip().startswith("-") and "待填写" not in l and l.strip("- ").strip()
-            ]
-            if items:
-                # 将事实描述转为行为指令语气
-                directives = []
-                for item in items:
-                    directives.append(self._to_directive(item))
-                sections.append("### 沟通方式\n" + "\n".join(f"- {d}" for d in directives))
-
-        # ── 工具偏好 → 技术默认指令 ──
-        tools = re.search(
-            r'### 工具偏好\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
-        )
-        if tools:
-            text = tools.group(1).strip()
-            items = [
-                l.strip("- ").strip()
-                for l in text.split("\n")
-                if l.strip().startswith("-") and "待填写" not in l and l.strip("- ").strip()
-            ]
-            if items:
-                tech_dirs = []
-                for item in items:
-                    tech_dirs.append(self._to_directive(item))
-                sections.append("### 技术默认\n" + "\n".join(f"- {d}" for d in tech_dirs))
-
-        # ── 身份与背景中的技术栈信息 ──
-        identity = re.search(
-            r'### 身份与背景\n(.*?)(?=\n###|\n##|\Z)', content, re.DOTALL
-        )
-        if identity:
-            text = identity.group(1).strip()
-            # 只提取技术相关条目（技术栈、工作领域）
-            tech_keywords = ["技术栈", "语言", "Python", "Rust", "Go", "Java",
-                           "C++", "JavaScript", "TypeScript", "框架", "库", "工具"]
-            for line in text.split("\n"):
-                stripped = line.strip("- ").strip()
-                if any(kw in stripped for kw in tech_keywords) and "待填写" not in stripped:
-                    if "技术默认" not in "\n".join(sections):
-                        sections.append("### 技术默认\n")
-                    # Append to last section
-                    sections[-1] += f"- {self._to_directive(stripped)}\n"
-
-        if not sections:
-            return ""
-
-        return (
-            "## 行为指引\n"
-            "以下基于对用户的了解，请在回复中主动遵循这些偏好：\n\n"
-            + "\n\n".join(s for s in sections if s.strip())
-        )
-
-    @staticmethod
-    def _to_directive(item: str) -> str:
-        """将偏好事实条目转为行为指令语气。
-
-        例: "首选语言：中文" → "使用中文回复"
-        例: "回复风格偏好 (详细/简洁/引导式)：简洁" → "保持简洁，结论前置"
-        例: "常用框架/库：FastAPI" → "优先使用 FastAPI 等用户熟悉的框架"
-        """
-        import re
-
-        # 去掉标签前缀，提取实际值
-        # 模式: "标签：值" 或 "标签 (说明)：值" 或 "纯描述"
-        value = re.sub(r'^[^：:]*(?:[：:]\s*)?', '', item).strip()
-        key = re.sub(r'[：:].*$', '', item).strip()
-
-        # 如果去掉标签后没有实质内容，说明本身就是纯描述
-        if not value or value == item:
-            value = item
-
-        # 映射：偏好类别 → 行为指令模板
-        keyword_directives = {
-            "简洁": "保持简洁，结论前置，不过度展开",
-            "详细": "回复详尽完整，给出推导过程和上下文",
-            "引导式": "用提问引导思考，而非直接给出答案",
-            "中文": "使用中文回复",
-            "英文": "使用英文回复",
-        }
-
-        for kw, directive in keyword_directives.items():
-            if kw in value:
-                return directive
-
-        # 技术相关 → 默认使用
-        tech_keywords = ["Python", "Rust", "Go", "Java", "JavaScript", "TypeScript",
-                        "C++", "C#", "Kotlin", "Swift", "Ruby", "PHP"]
-        for tech in tech_keywords:
-            if tech in value:
-                return f"代码示例默认使用 {tech}"
-
-        if any(kw in key for kw in ["命令行", "Shell"]):
-            return f"Shell 示例优先使用 {value}"
-
-        if any(kw in key for kw in ["框架", "库", "IDE", "编辑器"]):
-            return f"优先使用 {value}"
-
-        # 无法解析 → 保留原文，加"注意"前缀
-        return f"注意：{value}"
-
     def _extract_soul_content(self, content: str) -> str:
         """提取人格设定内容"""
         import re
