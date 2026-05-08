@@ -304,8 +304,14 @@ class ProactiveAgent:
                 logger.warning("飞书适配器未初始化，跳过推送")
                 return
 
-            # 获取最近活跃的飞书会话
+            # 获取最近活跃的飞书会话 (内存 → 数据库回退)
             recent = adapter.get_recent_chat()
+            if not recent or recent.get("type") != "feishu":
+                # 回退到数据库 (跨重启 / 内存未初始化时)
+                try:
+                    recent = self._app.storage.get_recent_feishu_chat()
+                except Exception as e:
+                    logger.debug(f"数据库回退查询飞书会话失败: {e}")
             if not recent or recent.get("type") != "feishu":
                 logger.warning("无最近飞书会话，跳过主动推送")
                 return
