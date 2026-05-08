@@ -304,7 +304,8 @@ class MemoryManager:
         """进化对用户的理解 — 规则检测偏好 + LLM 生成行为指引。
 
         规则部分（轻量）：检测语言、风格、代码偏好 → 更新 long_term 偏好章节。
-        LLM 部分（重量）：分析近期对话，生成行为指引 → 写入「## 行为指引」章节。
+        LLM 部分（重量）：结合中期日摘要 (30 天全景) + 近期原始消息 (7 天细节)
+        → 生成行为指引 → 写入「## 行为指引」章节。
         """
         logger.info("开始记忆进化...")
 
@@ -324,8 +325,12 @@ class MemoryManager:
         summarizer = self._summarizer
         if summarizer and messages:
             try:
+                # 加载中期日摘要作为全景视图 (最近 30 天，截断到 2000 字符)
+                mid_term = self.storage.load_mid_term()
+                daily_summaries = self._extract_all_daily_summaries(mid_term)
+
                 directives = self._generate_behavioral_directives(
-                    summarizer, messages
+                    summarizer, messages, daily_summaries
                 )
                 if directives:
                     self._write_behavioral_section(directives)
@@ -336,19 +341,68 @@ class MemoryManager:
         today = datetime.now().strftime("%Y-%m-%d")
         evolution_log = "- 更新了用户偏好理解\n- 优化了记忆系统"
         if summarizer and messages:
-            evolution_log += "\n- 更新了行为指引"
+            evolution_log += "\n- 更新了行为指引 (基于中期日摘要+近期对话)"
         self.storage.add_evolution_log(today, evolution_log)
 
         self.storage.update_timestamp("long_term")
         logger.info("记忆进化完成")
 
-    def _generate_behavioral_directives(
-        self, summarizer, messages: List[Dict]
-    ) -> str:
-        """让 LLM 分析近期对话，生成行为指引。"""
-        # 格式化近期对话
+    @staticmethod
+    def _extract_all_daily_summaries(mid_term_content: str) -> str:
+        """从中期记忆中提取所有日摘要，截断到 2000 字符。
+
+        返回聚合的日摘要文本，最近的排在前面。
+        """
+        import re
+        if not mid_term_content:
+            return ""
+
+        # 提取所有 ### YYYY-MM-DD 条目
+        entries = re.findall(
+            r'### (\d{4}-\d{2}-\d{2})\n(.*?)(?=\n###|\Z)',
+            mid_term_content,
+            re.DOTALL,
+        )
+
+        if not entries:
+            return ""
+
+        # 按日期排序 (升序)，取最近 30 条
+        entries.sort(key=lambda x: x[0])
+        recent = entries[-30:]
+
         lines = []
-        for msg in messages[-30:]:  # 最近 30 条
+        total_chars = 0
+        max_chars = 2000
+        # 倒序输出 (最近的在前面)
+        for date, text in reversed(recent):
+            clean = text.strip()
+            if not clean:
+                continue
+            entry_line = f"### {date}\n{clean}"
+            if total_chars + len(entry_line) > max_chars:
+                # 截断最后一条
+                remaining = max_chars - total_chars
+                if remaining > 50:
+                    lines.append(entry_line[:remaining] + "...")
+                break
+            lines.append(entry_line)
+            total_chars += len(entry_line)
+
+        return "\n\n".join(lines)
+
+    def _generate_behavioral_directives(
+        self, summarizer, messages: List[Dict], daily_summaries: str = ""
+    ) -> str:
+        """让 LLM 分析近期对话 + 中期日摘要，生成行为指引。
+
+        两层视角：
+        - 日摘要 (30 天全景)：跨天的主题演变、工作节奏
+        - 原始消息 (7 天细节)：具体的偏好表达、交互模式
+        """
+        # 格式化近期对话 (细节视图)
+        lines = []
+        for msg in messages[-50:]:  # 最近 50 条 (扩大窗口，细节互补)
             role = msg.get("role", "?")
             content = msg.get("content", "")[:200]
             if content:
@@ -359,29 +413,46 @@ class MemoryManager:
         long_term = self.storage.load_long_term() or ""
         soul = self.storage.load_soul() or ""
 
-        prompt = f"""你是一个用户行为分析师。基于以下信息，生成 AI 助手的行为指引。
+        # 组装 prompt：日摘要提供全景，原始消息提供细节
+        prompt_parts = [
+            "你是一个用户行为分析师。基于以下信息，生成 AI 助手的行为指引。",
+            "",
+            "## 助手当前人格 (soul)",
+            soul[:1000] if soul else "(无)",
+        ]
 
-## 助手当前人格 (soul)
-{soul[:1000]}
+        if daily_summaries:
+            prompt_parts.extend([
+                "",
+                "## 中期日摘要 (最近 30 天全景 — 主题演变、工作节奏)",
+                daily_summaries,
+            ])
 
-## 已有用户画像
-{long_term[:1500]}
+        prompt_parts.extend([
+            "",
+            "## 已有用户画像",
+            long_term[:1500] if long_term else "(无)",
+            "",
+            "## 近期对话 (最近 7 天细节 — 偏好表达、交互模式)",
+            conversation_text[:3000],
+            "",
+            "## 任务",
+            "结合日摘要全景和近期对话细节，分析用户的行为模式，生成行为指引。",
+            "每条指引是 AI 助手应当遵循的具体行为规则。",
+            "",
+            "要求：",
+            "1. 优先从日摘要中识别跨天模式 (如：连续多天讨论同一主题、固定时间做某类任务)",
+            "2. 从近期对话中提取具体的偏好和习惯作为补充",
+            "3. 使用指令语气，如\"使用中文回复\"、\"代码示例默认用 Python\"",
+            "4. 每条一行，以 \"- \" 开头",
+            "5. 只写可以确定的内容，推测的不要写",
+            "6. 不要重复 soul 中已有的通用准则",
+            "7. 3-8 条，每条不超过 30 字",
+            "",
+            "直接输出行为指引，不要 JSON、不要解释。",
+        ])
 
-## 近期对话 (最近 7 天)
-{conversation_text[:3000]}
-
-## 任务
-分析用户的沟通偏好、技术偏好、工作习惯，生成行为指引段。
-每条指引是 AI 助手应当遵循的具体行为规则。
-
-要求：
-1. 使用指令语气，如"使用中文回复"、"代码示例默认用 Python"
-2. 每条一行，以 "- " 开头
-3. 只写可以确定的内容，推测的不要写
-4. 不要重复 soul 中已有的通用准则
-5. 3-8 条，每条不超过 30 字
-
-直接输出行为指引，不要 JSON、不要解释。"""
+        prompt = "\n".join(prompt_parts)
 
         response = summarizer.generate(prompt, max_tokens=500)
         if not response:
