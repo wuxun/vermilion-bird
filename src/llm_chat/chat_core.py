@@ -207,6 +207,16 @@ class ChatCore:
 
             # /new 特殊处理：创建新会话
             if decision.override_message == "__new_conversation__":
+                # 飞书会话：SessionMapper 已处理会话切换，ChatCore 只确认
+                if conv.conversation_id.startswith("feishu_"):
+                    response = "已开始新会话 ✓"
+                    conv.add_assistant_message(response)
+                    logger.info(
+                        f"[INTENT] 飞书新建会话 (由 SessionMapper 处理): "
+                        f"{conv.conversation_id}"
+                    )
+                    return response
+
                 # 从消息中提取标题 (如 /new 项目讨论 → 项目讨论)
                 title = message[4:].strip() if len(message) > 4 else None
                 new_conv = self.conversation_manager.create_conversation(title=title)
@@ -354,6 +364,18 @@ class ChatCore:
 
             # /new 特殊处理：新建会话
             if decision.override_message == "__new_conversation__":
+                # 飞书会话：SessionMapper 已处理会话切换，ChatCore 只确认
+                if conv.conversation_id.startswith("feishu_"):
+                    response = "已开始新会话 ✓"
+                    conv.add_assistant_message(response)
+                    if on_chunk:
+                        on_chunk(response)
+                    logger.info(
+                        f"[INTENT] 飞书新建会话 (由 SessionMapper 处理): "
+                        f"{conv.conversation_id}"
+                    )
+                    return response
+
                 title = message[4:].strip() if len(message) > 4 else None
                 new_conv = self.conversation_manager.create_conversation(title=title)
                 response = f"已创建新会话: {new_conv.conversation_id}"
