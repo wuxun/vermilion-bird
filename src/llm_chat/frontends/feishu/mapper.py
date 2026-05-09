@@ -1,5 +1,8 @@
+import logging
 from typing import Tuple, Dict, Optional
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class SessionMapper:
@@ -14,6 +17,9 @@ class SessionMapper:
 
     Note: Sanitation replaces any non-alphanumeric character with '_', ensuring the
     final string contains only alphanumeric characters and underscores.
+
+    Session numbers persist across restarts — the mapper queries the database
+    for the highest existing session number on first access.
     """
 
     SESSION_TIMEOUT_SECONDS = 30 * 60  # 30 minutes
@@ -26,6 +32,43 @@ class SessionMapper:
     def _sanitize_id(original_id: str) -> str:
         s = str(original_id)
         return "".join(ch if ch.isalnum() else "_" for ch in s)
+
+    @classmethod
+    def _load_max_session_number(cls, prefix: str, sanitized: str) -> int:
+        """从数据库查询该聊天已有会话的最大 session_number。
+
+        跨重启持久化：避免重启后 session_number 重置为 1 导致
+        覆盖已有会话 (INSERT OR REPLACE)。
+
+        Returns:
+            最大 session_number，无记录时返回 0
+        """
+        try:
+            from llm_chat.storage import Storage
+
+            storage = Storage()
+            pattern = f"{prefix}_{sanitized}_%"
+            with storage._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM conversations WHERE id LIKE ?",
+                    (pattern,),
+                ).fetchall()
+
+            max_num = 0
+            for row in rows:
+                parts = row["id"].rsplit("_", 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    max_num = max(max_num, int(parts[1]))
+
+            if max_num > 0:
+                logger.debug(
+                    f"SessionMapper 从 DB 恢复 {prefix}_{sanitized}: "
+                    f"max_session={max_num}"
+                )
+            return max_num
+        except Exception as e:
+            logger.debug(f"SessionMapper DB 查询失败 (可能无存储): {e}")
+            return 0
 
     @classmethod
     def to_conversation_id(
@@ -54,8 +97,11 @@ class SessionMapper:
         current_time = time.time()
 
         if cache_key not in cls._session_cache:
+            # 首次访问：从 DB 恢复最大 session_number (跨重启持久化)
+            max_from_db = cls._load_max_session_number(prefix, sanitized)
+            start_num = max(max_from_db, 1)
             cls._session_cache[cache_key] = {
-                "session_number": 1,
+                "session_number": start_num,
                 "last_active_time": current_time,
             }
         else:
