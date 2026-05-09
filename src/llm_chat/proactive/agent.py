@@ -341,9 +341,80 @@ class ProactiveAgent:
                 content={"text": text},
                 receive_id_type=receive_id_type,
             )
+
+            # 将推送内容持久化到对应会话的消息历史
+            self._persist_to_conversation(recent, text, card)
+
             logger.info(f"主动话题卡片已推送到飞书: {card.title}")
         except Exception as e:
             logger.warning(f"飞书推送失败: {e}")
+
+    # ----------------------------------------------------------------
+    # 会话持久化
+    # ----------------------------------------------------------------
+
+    def _find_feishu_conversation_id(self, recent: dict) -> Optional[str]:
+        """根据飞书 recent_chat 信息找到对应的 conversation_id。"""
+        chat_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
+        if not chat_id:
+            return None
+
+        # 对 chat_id 做与 SessionMapper 一致的 sanitize
+        sanitized = "".join(ch if ch.isalnum() else "_" for ch in str(chat_id))
+        # 匹配 feishu_p2p_{sanitized}_% 或 feishu_group_{sanitized}_%
+        pattern = f"feishu_%_{sanitized}_%"
+
+        try:
+            storage = self._app.storage
+            with storage._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT id FROM conversations "
+                    "WHERE id LIKE ? "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (pattern,),
+                ).fetchone()
+            if row:
+                return row["id"]
+        except Exception as e:
+            logger.debug(f"查找飞书 conversation_id 失败: {e}")
+        return None
+
+    def _persist_to_conversation(
+        self, recent: dict, text: str, card: DecisionCard
+    ):
+        """将 ProactiveAgent 的推送消息写入对应会话的消息历史。
+
+        这样后续对话中 ChatCore 加载历史时能看到这条消息，
+        保持会话上下文完整。
+        """
+        conversation_id = self._find_feishu_conversation_id(recent)
+        if not conversation_id:
+            logger.debug("未找到对应 conversation_id，跳过持久化")
+            return
+
+        try:
+            storage = self._app.storage
+            conv = storage.get_conversation(conversation_id)
+            if not conv:
+                logger.debug(f"会话不存在: {conversation_id}")
+                return
+
+            storage.add_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=text,
+                metadata={
+                    "source": "proactive_agent",
+                    "card_id": card.id,
+                    "card_title": card.title,
+                },
+            )
+            logger.info(
+                f"ProactiveAgent 消息已持久化: conv={conversation_id}, "
+                f"card={card.id}"
+            )
+        except Exception as e:
+            logger.warning(f"持久化 ProactiveAgent 消息失败: {e}")
 
     def _push_to_gui(self, card: DecisionCard):
         """通过信号将决策卡片推送到 GUI。"""
