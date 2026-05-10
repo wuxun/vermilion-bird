@@ -295,7 +295,11 @@ class ProactiveAgent:
     # ----------------------------------------------------------------
 
     def _push_to_feishu(self, card: DecisionCard):
-        """推送话题卡片到飞书最近活跃会话。"""
+        """推送话题卡片到飞书，并为卡片新建独立会话。
+
+        每次推送都是新话题的起点，不混入已有对话。
+        用户 30 分钟内回复则继续该会话，超时则按默认策略再切新会话。
+        """
         if not self._config.feishu.enabled:
             return
         try:
@@ -307,7 +311,6 @@ class ProactiveAgent:
             # 获取最近活跃的飞书会话 (内存 → 数据库回退)
             recent = adapter.get_recent_chat()
             if not recent or recent.get("type") != "feishu":
-                # 回退到数据库 (跨重启 / 内存未初始化时)
                 try:
                     recent = self._app.storage.get_recent_feishu_chat()
                 except Exception as e:
@@ -335,6 +338,8 @@ class ProactiveAgent:
                 lines.append(f"  来源: {', '.join(card.sources)}")
 
             text = "\n".join(filter(None, lines))
+
+            # 1. 推送到飞书
             adapter.send_message(
                 receive_id=receive_id,
                 msg_type="text",
@@ -342,69 +347,47 @@ class ProactiveAgent:
                 receive_id_type=receive_id_type,
             )
 
-            # 将推送内容持久化到对应会话的消息历史
-            self._persist_to_conversation(recent, text, card)
+            # 2. 为卡片新建独立会话并持久化消息
+            conversation_id = self._open_proactive_session(receive_id, text, card)
 
-            # 刷新 SessionMapper 活跃时间，防止用户回复时因超时切到新会话
-            from llm_chat.frontends.feishu.mapper import SessionMapper
-            SessionMapper.touch_session(receive_id)
-
-            logger.info(f"主动话题卡片已推送到飞书: {card.title}")
+            logger.info(
+                f"主动话题卡片已推送到飞书: {card.title}, "
+                f"会话: {conversation_id or '?'}"
+            )
         except Exception as e:
             logger.warning(f"飞书推送失败: {e}")
 
     # ----------------------------------------------------------------
-    # 会话持久化
+    # 会话管理
     # ----------------------------------------------------------------
 
-    def _find_feishu_conversation_id(self, recent: dict) -> Optional[str]:
-        """根据飞书 recent_chat 信息找到对应的 conversation_id。"""
-        chat_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
-        if not chat_id:
-            return None
+    def _open_proactive_session(
+        self, chat_id: str, text: str, card: DecisionCard
+    ) -> Optional[str]:
+        """为 ProactiveAgent 卡片新建独立会话并持久化消息。
 
-        # 对 chat_id 做与 SessionMapper 一致的 sanitize
-        sanitized = "".join(ch if ch.isalnum() else "_" for ch in str(chat_id))
-        # 匹配 feishu_p2p_{sanitized}_% 或 feishu_group_{sanitized}_%
-        pattern = f"feishu_%_{sanitized}_%"
-
-        try:
-            storage = self._app.storage
-            with storage._get_connection() as conn:
-                row = conn.execute(
-                    "SELECT id FROM conversations "
-                    "WHERE id LIKE ? "
-                    "ORDER BY updated_at DESC LIMIT 1",
-                    (pattern,),
-                ).fetchone()
-            if row:
-                return row["id"]
-        except Exception as e:
-            logger.debug(f"查找飞书 conversation_id 失败: {e}")
-        return None
-
-    def _persist_to_conversation(
-        self, recent: dict, text: str, card: DecisionCard
-    ):
-        """将 ProactiveAgent 的推送消息写入对应会话的消息历史。
-
-        这样后续对话中 ChatCore 加载历史时能看到这条消息，
-        保持会话上下文完整。
+        利用 SessionMapper.to_conversation_id(force_new_session=True)
+        创建新会话编号，30 分钟内用户回复将复用此会话。
         """
-        conversation_id = self._find_feishu_conversation_id(recent)
-        if not conversation_id:
-            logger.debug("未找到对应 conversation_id，跳过持久化")
-            return
+        from llm_chat.frontends.feishu.mapper import SessionMapper
+
+        # 从已有会话推断 p2p / group 类型
+        chat_type = self._infer_chat_type(chat_id)
+
+        # 强制新建会话 (SessionMapper 递增 session_number)
+        conv_id = SessionMapper.to_conversation_id(
+            chat_type, chat_id, force_new_session=True
+        )
 
         try:
             storage = self._app.storage
-            conv = storage.get_conversation(conversation_id)
-            if not conv:
-                logger.debug(f"会话不存在: {conversation_id}")
-                return
+            # 确保会话记录存在
+            if storage.get_conversation(conv_id) is None:
+                storage.create_conversation(conv_id, title=card.title[:80])
 
+            # 持久化卡片消息
             storage.add_message(
-                conversation_id=conversation_id,
+                conversation_id=conv_id,
                 role="assistant",
                 content=text,
                 metadata={
@@ -414,11 +397,40 @@ class ProactiveAgent:
                 },
             )
             logger.info(
-                f"ProactiveAgent 消息已持久化: conv={conversation_id}, "
-                f"card={card.id}"
+                f"ProactiveAgent 新建会话并持久化: conv={conv_id}, card={card.id}"
             )
+            return conv_id
         except Exception as e:
-            logger.warning(f"持久化 ProactiveAgent 消息失败: {e}")
+            logger.warning(f"新建 proactive 会话失败: {e}")
+            return None
+
+    def _infer_chat_type(self, chat_id: str) -> str:
+        """从已有 conversations 表推断飞书会话类型 (p2p / group)。"""
+        sanitized = "".join(ch if ch.isalnum() else "_" for ch in str(chat_id))
+        try:
+            storage = self._app.storage
+            with storage._get_connection() as conn:
+                # 查 p2p 优先
+                row = conn.execute(
+                    "SELECT id FROM conversations "
+                    "WHERE id LIKE ? "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (f"feishu_p2p_{sanitized}_%",),
+                ).fetchone()
+                if row:
+                    return "p2p"
+                # 再查 group
+                row = conn.execute(
+                    "SELECT id FROM conversations "
+                    "WHERE id LIKE ? "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (f"feishu_group_{sanitized}_%",),
+                ).fetchone()
+                if row:
+                    return "group"
+        except Exception as e:
+            logger.debug(f"推断 chat_type 失败: {e}")
+        return "p2p"  # 默认私聊
 
     def _push_to_gui(self, card: DecisionCard):
         """通过信号将决策卡片推送到 GUI。"""
