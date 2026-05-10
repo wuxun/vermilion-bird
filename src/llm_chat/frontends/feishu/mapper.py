@@ -118,6 +118,23 @@ class SessionMapper:
         return f"{prefix}_{sanitized}_{session_number}"
 
     @classmethod
+    def touch_session(cls, chat_id: str):
+        """标记会话为活跃，不改变 session_number。
+
+        供 ProactiveAgent 等外部推送方调用：防止推送后用户回复时
+        因 30 分钟超时触发非预期的会话切换。
+
+        同时尝试 p2p 和 group 两种缓存 key (只需一个命中)。
+        """
+        sanitized = cls._sanitize_id(chat_id)
+        current_time = time.time()
+        for chat_type in ("p2p", "group"):
+            cache_key = f"feishu_{chat_type}_{sanitized}"
+            if cache_key in cls._session_cache:
+                cls._session_cache[cache_key]["last_active_time"] = current_time
+                logger.debug(f"SessionMapper touch: {cache_key}")
+
+    @classmethod
     def check_new_session_command(cls, message_content: str) -> bool:
         """Check if user wants to start a new session.
 

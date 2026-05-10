@@ -345,6 +345,10 @@ class ProactiveAgent:
             # 将推送内容持久化到对应会话的消息历史
             self._persist_to_conversation(recent, text, card)
 
+            # 刷新 SessionMapper 活跃时间，防止用户回复时因超时切到新会话
+            from llm_chat.frontends.feishu.mapper import SessionMapper
+            SessionMapper.touch_session(receive_id)
+
             logger.info(f"主动话题卡片已推送到飞书: {card.title}")
         except Exception as e:
             logger.warning(f"飞书推送失败: {e}")
