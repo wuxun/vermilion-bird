@@ -12,46 +12,67 @@ except ImportError:
 
 
 MODEL_CONTEXT_LIMITS = {
-    # OpenAI
+    # ── OpenAI ──
     "gpt-4": 8192,
     "gpt-4-32k": 32768,
     "gpt-4-turbo": 128000,
     "gpt-4o": 128000,
     "gpt-4o-mini": 128000,
+    "gpt-4.1": 1048576,
+    "gpt-4.1-mini": 1048576,
+    "gpt-4.1-nano": 1048576,
     "gpt-3.5-turbo": 4096,
     "gpt-3.5-turbo-16k": 16384,
     "o1": 200000,
     "o1-mini": 128000,
+    "o3": 200000,
     "o3-mini": 200000,
-    # Anthropic
-    "claude-3-opus": 200000,
+    "o4-mini": 200000,
+    # ── Anthropic ──
+    "claude-4-opus": 200000,
+    "claude-4-sonnet": 200000,
     "claude-3-5-sonnet": 200000,
     "claude-3-5-haiku": 200000,
+    "claude-3-opus": 200000,
     "claude-3-sonnet": 200000,
     "claude-3-haiku": 200000,
     "claude-2": 100000,
     "claude-instant": 100000,
-    # Google
+    # ── Google ──
     "gemini-2.5-pro": 1048576,
+    "gemini-2.5-flash": 1048576,
     "gemini-2.0-flash": 1048576,
     "gemini-1.5-pro": 1048576,
     "gemini-1.5-flash": 1048576,
     "gemini-pro": 32760,
-    # DeepSeek
-    "deepseek-chat": 1048576,        # DeepSeek V3
-    "deepseek-reasoner": 65536,      # DeepSeek R1
+    # ── DeepSeek ──
+    "deepseek-chat": 65536,             # DeepSeek V3 (API)
+    "deepseek-reasoner": 65536,         # DeepSeek R1
     "deepseek-coder": 64000,
-    "deepseek-ai/DeepSeek-V3": 1048576,
+    "deepseek-ai/DeepSeek-V3": 65536,
     "deepseek-ai/DeepSeek-R1": 65536,
-    "deepseek-ai/DeepSeek-V4": 1048576,
-    # Qwen (通义千问)
+    # ── Qwen / 通义千问 ──
+    "qwen-turbo": 1048576,
+    "qwen-plus": 131072,
+    "qwen-max": 32768,
+    "qwen3-max": 262144,
+    "qwen3-plus": 131072,
+    "qwen3-turbo": 131072,
     "Qwen/Qwen2.5-72B-Instruct": 32768,
     "Qwen/Qwen2.5-32B-Instruct": 32768,
     "Qwen/Qwen2.5-14B-Instruct": 32768,
     "Qwen/Qwen2.5-7B-Instruct": 32768,
-    "qwen-turbo": 1048576,
-    "qwen-plus": 131072,
-    "qwen-max": 32768,
+    # ── Moonshot / Kimi ──
+    "moonshot-v1-8k": 8192,
+    "moonshot-v1-32k": 32768,
+    "moonshot-v1-128k": 128000,
+    # ── Minimax ──
+    "abab6.5s-chat": 245760,
+    "abab7-chat": 245760,
+    # ── GLM / 智谱 ──
+    "glm-4-plus": 128000,
+    "glm-4-flash": 128000,
+    "glm-4-air": 128000,
 }
 
 DEFAULT_CONTEXT_LIMIT = 8192
@@ -145,16 +166,20 @@ def get_context_limit(model: str) -> int:
             return limit
 
     # 3. 聚类 fallback
-    if "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
+    if "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower or "o4" in model_lower:
         return 128000
     if "claude" in model_lower:
         return 200000
     if "gemini" in model_lower:
         return 1048576
     if "deepseek" in model_lower:
-        return 1048576
+        return 65536
     if "qwen" in model_lower:
         return 32768
+    if "glm" in model_lower:
+        return 128000
+    if "moonshot" in model_lower:
+        return 128000
 
     return DEFAULT_CONTEXT_LIMIT
 
