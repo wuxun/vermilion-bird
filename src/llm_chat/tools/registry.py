@@ -62,7 +62,24 @@ class ToolRegistry:
         if tool is None:
             raise ValueError(f"Tool not found: {name}")
         if arguments is not None:
-            return tool.execute(**arguments)
+            try:
+                return tool.execute(**arguments)
+            except TypeError as e:
+                # LLM 传入参数不匹配 → 友好提示，帮助 LLM 自我纠正
+                required = getattr(tool, '_required_params', None)
+                if required is None:
+                    # 从 execute 签名推断
+                    import inspect
+                    sig = inspect.signature(tool.execute)
+                    required = [
+                        p.name for p in sig.parameters.values()
+                        if p.default is inspect.Parameter.empty and p.name != 'self'
+                    ]
+                msg = (
+                    f"参数错误：{e}。请检查并重新调用。"
+                    f"必填参数：{', '.join(required)}。"
+                )
+                raise ValueError(msg) from e
         return tool.execute(**kwargs)
 
     @classmethod

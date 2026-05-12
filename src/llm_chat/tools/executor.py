@@ -57,6 +57,9 @@ class ToolExecutor:
                     "is_error": False,
                 }
 
+            except ValueError:
+                # 参数校验 / 业务逻辑错误 — 不重试，立即返回
+                raise
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
