@@ -100,6 +100,8 @@ class WebFetchTool(BaseTool):
         self.jina_reader_url = jina_reader_url
         self.use_playwright = use_playwright and PLAYWRIGHT_AVAILABLE
         self.playwright_timeout = playwright_timeout
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._executor_max_workers = 0  # track current pool size for resize
 
     def _get_proxies(self) -> Optional[Dict[str, str]]:
         proxies = {}
@@ -170,33 +172,42 @@ class WebFetchTool(BaseTool):
 
         return self._fetch_with_basic_requests(url, max_length)
 
+    def _get_executor(self, max_workers: int) -> ThreadPoolExecutor:
+        """懒加载复用线程池，worker 数变化时自动重建。"""
+        if self._executor is None or self._executor_max_workers != max_workers:
+            if self._executor is not None:
+                self._executor.shutdown(wait=False)
+            self._executor = ThreadPoolExecutor(max_workers=max_workers)
+            self._executor_max_workers = max_workers
+        return self._executor
+
     def _fetch_multiple_urls(
         self, urls: List[str], max_length: int, max_workers: int
     ) -> str:
         results = []
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_url = {
-                executor.submit(self._fetch_single_url, url, max_length): url
-                for url in urls
-            }
+        executor = self._get_executor(max_workers)
+        future_to_url = {
+            executor.submit(self._fetch_single_url, url, max_length): url
+            for url in urls
+        }
 
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    result = future.result()
-                    results.append(
-                        {
-                            "url": url,
-                            "content": result,
-                            "success": not result.startswith("错误:"),
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"抓取 {url} 时出错: {e}")
-                    results.append(
-                        {"url": url, "content": f"错误: {str(e)}", "success": False}
-                    )
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                result = future.result()
+                results.append(
+                    {
+                        "url": url,
+                        "content": result,
+                        "success": not result.startswith("错误:"),
+                    }
+                )
+            except Exception as e:
+                logger.error(f"抓取 {url} 时出错: {e}")
+                results.append(
+                    {"url": url, "content": f"错误: {str(e)}", "success": False}
+                )
 
         import json
 

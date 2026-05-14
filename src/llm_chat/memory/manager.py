@@ -474,14 +474,15 @@ class MemoryManager:
 
         self.storage.save_long_term(content)
     
+    # CJK 字符正则（中日韩），预编译避免每次 _estimate_tokens 重复编译
+    _CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]')
+
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         """粗略估算文本 token 数（中文约 1 字 = 1 token，英文约 4 字符 = 1 token）"""
         if not text:
             return 0
-        # 中文字符、日韩字符
-        cjk_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', text))
-        # 其余字符按 4 字符 ≈ 1 token 估算
+        cjk_chars = len(MemoryManager._CJK_RE.findall(text))
         other_chars = len(text) - cjk_chars
         return cjk_chars + (other_chars // 4)
 
