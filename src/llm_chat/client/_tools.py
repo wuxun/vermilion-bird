@@ -128,8 +128,7 @@ class LLMClientToolsMixin:
                                 recommendation=args_dict.get("recommendation") or None,
                                 sources=args_dict.get("sources", []),
                             )
-                            with st._card_lock:
-                                st._pending_card = card
+                            st.submit_card(card)
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
 

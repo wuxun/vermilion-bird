@@ -199,8 +199,7 @@ class LLMClientStreamToolsMixin:
                                 recommendation=args.get("recommendation") or None,
                                 sources=args.get("sources", []),
                             )
-                            with st._card_lock:
-                                st._pending_card = card
+                            st.submit_card(card)
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败: {e}")
 

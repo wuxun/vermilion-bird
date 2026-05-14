@@ -3,33 +3,89 @@
 替代在文本中嵌入 ```decision-card JSON 块，利用 tool call 的结构化保证
 卡片数据完整可靠。同时保留 _try_extract_card() 作为 fallback。
 
-Thread-local 传递机制：
-    - SubmitDecisionCardTool.execute() 写入 thread-local
-    - ChatCore 在 LLM 调用完成后读取并清除
+请求范围隔离机制：
+    - ChatCore 在 LLM 调用前调用 init_card_context() 建立 request_id
+    - SubmitDecisionCardTool.execute()（或直接旁路）调用 submit_card()
+      写入 _cards[request_id]
+    - ChatCore 调用 get_pending_card() 读取并清除当前 request 的卡片
+    - contextvars 确保不同并发请求之间完全隔离
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
+import uuid
 from typing import Any, Dict, Optional
 
 from llm_chat.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
-# 锁保护共享变量（不用 thread-local，因为 ToolExecutor 在不同线程运行工具）
-_card_lock = threading.Lock()
-_pending_card: Optional["DecisionCard"] = None
+# ── 请求级卡片存储 ──
+# contextvars 在 Python 3.7+ 的 ThreadPoolExecutor.submit() 中自动传播到工作线程
+
+_card_request_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "card_request_id", default=None
+)
+_cards: Dict[str, "DecisionCard"] = {}
+_cards_lock = threading.Lock()
+
+
+# ── 公共 API ──
+
+
+def init_card_context() -> str:
+    """初始化卡片上下文，返回唯一的 request_id。
+
+    在 LLM 调用之前调用。request_id 通过 contextvars 传播到
+    ThreadPoolExecutor 工作线程。
+    """
+    request_id = uuid.uuid4().hex[:12]
+    _card_request_id.set(request_id)
+    logger.debug(f"[卡片上下文] 初始化 request_id={request_id}")
+    return request_id
+
+
+def clear_card_context() -> None:
+    """清除当前请求的卡片上下文。
+
+    在 get_pending_card() 之后调用，确保不会泄漏到下一个请求。
+    """
+    request_id = _card_request_id.get()
+    if request_id:
+        with _cards_lock:
+            _cards.pop(request_id, None)
+    _card_request_id.set(None)
+
+
+def submit_card(card: "DecisionCard") -> None:
+    """在当前请求上下文中提交一张决策卡片。
+
+    线程安全：通过 contextvars 获取 request_id，
+    使用锁保护共享 dict 写入。
+    """
+    request_id = _card_request_id.get()
+    if request_id:
+        with _cards_lock:
+            _cards[request_id] = card
+        logger.info(f"[提交卡片] {card.id}: {card.title} (request={request_id})")
+    else:
+        logger.warning("[提交卡片] 无活跃请求上下文，卡片被丢弃")
 
 
 def get_pending_card() -> Optional["DecisionCard"]:
-    """获取并清除待推送的决策卡片。"""
-    global _pending_card
-    with _card_lock:
-        card = _pending_card
-        _pending_card = None
-    return card
+    """获取并清除当前请求上下文中的待推送决策卡片。
+
+    Returns:
+        卡片对象，若当前上下文无卡片则返回 None。
+    """
+    request_id = _card_request_id.get()
+    if not request_id:
+        return None
+    with _cards_lock:
+        return _cards.pop(request_id, None)
 
 
 class SubmitDecisionCardTool(BaseTool):
@@ -160,12 +216,7 @@ class SubmitDecisionCardTool(BaseTool):
                 sources=sources or [],
             )
 
-            with _card_lock:
-                global _pending_card
-                _pending_card = card
-            logger.info(
-                f"[提交卡片] {card.id}: {title} ({len(options)} 个选项)"
-            )
+            submit_card(card)
             return (
                 f"卡片已提交。ID: {card.id}，"
                 f"{len(options)} 个选项，推荐 {recommendation or '无'}。"

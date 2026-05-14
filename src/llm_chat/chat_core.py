@@ -153,21 +153,7 @@ class ChatCore:
         on_card: Optional[CardCallback] = None,
         **model_params,
     ) -> str:
-        """同步发送消息，返回完整回复文本。
-
-        适用场景：CLI 非流式模式、飞书消息回复、定时任务等。
-
-        Args:
-            conversation_id: 会话 ID
-            message: 用户消息
-            on_card: 可选回调，当 LLM 输出决策卡片时调用。
-            **model_params: 覆盖默认模型参数 (temperature, max_tokens 等)
-
-        Returns:
-            AI 回复的完整文本（已移除决策卡片 JSON 块）
-        """
-
-        # 延迟导入避免循环
+        """同步发送消息，返回完整回复文本。"""
         conv = self.conversation_manager.get_conversation(conversation_id)
 
         # ── 0. 意图识别 ──
@@ -177,121 +163,33 @@ class ChatCore:
             f"skip_llm={decision.skip_llm}, model={decision.suggested_model})"
         )
 
-        # 0a. 短路：跳过 LLM 直接返回
-        if decision.skip_llm:
-            conv.add_user_message(message)
+        # 0a. 短路处理（统一入口，消除与 stream 路径的重复）
+        shortcut_response = self._handle_shortcut(conv, decision, message)
+        if shortcut_response is not None:
+            return shortcut_response
 
-            # /style 特殊处理：切换对话风格
-            if decision.override_message and decision.override_message.startswith("__style__:"):
-                style_name = decision.override_message.split(":", 1)[1]
-                response = self._apply_style(style_name)
-                conv.add_assistant_message(response)
-                logger.info(f"[INTENT] 风格切换: {style_name}")
-                return response
-
-            # /remember 特殊处理：直接存储到长期记忆
-            if decision.override_message and decision.override_message.startswith("__remember__:"):
-                content = decision.override_message.split(":", 1)[1]
-                if content:
-                    memory_manager = getattr(conv, "_memory_manager", None)
-                    if memory_manager:
-                        memory_manager.consolidate_to_long_term([content], is_user_told=True)
-                        response = f"已记住 ✓: {content}"
-                    else:
-                        response = f"已记录（无记忆管理器）: {content}"
-                    logger.info(f"[INTENT] 记住事实: {content[:80]}...")
-                else:
-                    response = "请提供要记住的内容，例如：/记住 我最常用的 Python 版本是 3.11"
-                conv.add_assistant_message(response)
-                return response
-
-            # /new 特殊处理：创建新会话
-            if decision.override_message == "__new_conversation__":
-                # 飞书会话：SessionMapper 已处理会话切换，ChatCore 只确认
-                if conv.conversation_id.startswith("feishu_"):
-                    response = "已开始新会话 ✓"
-                    conv.add_assistant_message(response)
-                    logger.info(
-                        f"[INTENT] 飞书新建会话 (由 SessionMapper 处理): "
-                        f"{conv.conversation_id}"
-                    )
-                    return response
-
-                # 从消息中提取标题 (如 /new 项目讨论 → 项目讨论)
-                title = message[4:].strip() if len(message) > 4 else None
-                new_conv = self.conversation_manager.create_conversation(title=title)
-                response = f"已创建新会话: {new_conv.conversation_id}"
-                if title:
-                    response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
-                conv.add_assistant_message(response)
-                logger.info(f"[INTENT] 新建会话: {new_conv.conversation_id}")
-                return response
-
-            # /clear 特殊处理：清空对话
-            elif decision.intent == Intent.SHORTCUT and decision.direct_response:
-                conv.clear_history()
-
-            conv.add_assistant_message(decision.direct_response)
-            logger.info(f"[INTENT] 快速回复 (跳过 LLM): {decision.intent.value}")
-            return decision.direct_response
-
-        # 0b. 覆盖消息内容（如 /search xxx → xxx）
+        # 0b. 覆盖消息内容
         effective_message = decision.override_message or message
 
-        # 1. 持久化用户消息
-        conv.add_user_message(message)
-
-        # 2. 构建系统上下文（记忆注入 + 苏格拉底提示）
-        system_context = self._build_system_context(
-            conv, effective_message, intent=decision.intent
+        # 1-5. 管道前段
+        system_context, processed_history, processed_message, params = (
+            self._prepare_pipeline(conv, decision, message, effective_message, model_params)
         )
 
-        # 3. 获取对话历史（不含刚添加的用户消息）
-        history = conv.get_history()
-        history = history[:-1] if history else []
+        # 6. 调用 LLM
+        from llm_chat.decision.submit_tool import init_card_context, clear_card_context
+        init_card_context()
+        try:
+            response = self._call_llm(
+                processed_message, processed_history, system_context, params
+            )
+        finally:
+            self._extract_pending_card(conversation_id, on_card)
+            clear_card_context()
 
-        # 4. 上下文压缩（如果有 ContextManager）
-        processed_history, processed_message = self._compress_context(
-            conv, history, effective_message, system_context
-        )
-
-        # 5. 合并模型参数（意图推荐的模型优先于会话默认）
-        params = conv.get_model_params()
-        if decision.suggested_model:
-            from llm_chat.intent.classifier import IntentClassifier
-            model_hint = IntentClassifier.get_model_hint(decision.intent)
-            # 如果配置了 intent_model_map，则映射到具体模型名
-            if hasattr(self.config, 'tools') and hasattr(self.config.tools, 'intent_model_map'):
-                model_map = getattr(self.config.tools, 'intent_model_map', {})
-                suggested = model_map.get(model_hint)
-                if suggested:
-                    params["model"] = suggested
-                    logger.info(
-                        f"[INTENT] 模型路由: {decision.intent.value} → {suggested} (hint={model_hint})"
-                    )
-        params.update(model_params)
-
-        # 6. 调用 LLM（带工具或无工具）
-        response = self._call_llm(
-            processed_message, processed_history, system_context, params
-        )
-
-        # 7. 提取决策卡片（仅 tool-call 路径）
-        self._extract_pending_card(conversation_id, on_card)
-
-        # 8. 持久化助手回复
-
-        # 9. 异步记忆提取
-        self._extract_memory_async(conv, message, response)
-
-        # 10. 记录 token 消耗
-        self._record_tokens(
-            message=processed_message,
-            history=processed_history,
-            system_context=system_context,
-            response=response,
-        )
-
+        # 8-10. 管道后段
+        self._finalize_pipeline(conv, message, response,
+                                processed_message, processed_history, system_context)
         return response
 
     def cancel_generation(self) -> None:
@@ -311,188 +209,45 @@ class ChatCore:
         on_card: Optional[CardCallback] = None,
         **model_params,
     ) -> str:
-        """流式发送消息，通过回调逐步返回内容。
-
-        适用场景：GUI 实时显示、CLI 流式输出。
-
-        Args:
-            conversation_id: 会话 ID
-            message: 用户消息
-            on_chunk: 收到文本 chunk 时的回调
-            on_tool_start: 工具调用开始回调 (tool_name, args_json)
-            on_tool_end: 工具调用结束回调 (tool_name, args_json, result_preview)
-            on_context_update: 上下文更新回调 (used_tokens, limit)
-            **model_params: 覆盖默认模型参数
-
-        Returns:
-            AI 回复的完整文本（在所有 chunk 发送完毕后）
-        """
-        # ── 0. 意图识别 (只在短路时起作用) ──
+        """流式发送消息，通过回调逐步返回内容。"""
+        # ── 0. 意图识别 ──
         decision = self.intent_classifier.classify(message)
 
+        # 0a. 短路处理（统一入口）
         if decision.skip_llm:
             conv = self.conversation_manager.get_conversation(conversation_id)
-            conv.add_user_message(message)
-
-            # /style 特殊处理：切换对话风格
-            if decision.override_message and decision.override_message.startswith("__style__:"):
-                style_name = decision.override_message.split(":", 1)[1]
-                response = self._apply_style(style_name)
-                conv.add_assistant_message(response)
-                if on_chunk:
-                    on_chunk(response)
-                logger.info(f"[INTENT] 风格切换: {style_name}")
-                return response
-
-            # /remember 特殊处理：直接存储到长期记忆
-            if decision.override_message and decision.override_message.startswith("__remember__:"):
-                content = decision.override_message.split(":", 1)[1]
-                if content:
-                    memory_manager = getattr(conv, "_memory_manager", None)
-                    if memory_manager:
-                        memory_manager.consolidate_to_long_term([content], is_user_told=True)
-                        response = f"已记住 ✓: {content}"
-                    else:
-                        response = f"已记录（无记忆管理器）: {content}"
-                    logger.info(f"[INTENT] 记住事实: {content[:80]}...")
-                else:
-                    response = "请提供要记住的内容，例如：/记住 我最常用的 Python 版本是 3.11"
-                conv.add_assistant_message(response)
-                if on_chunk:
-                    on_chunk(response)
-                return response
-
-            # /new 特殊处理：新建会话
-            if decision.override_message == "__new_conversation__":
-                # 飞书会话：SessionMapper 已处理会话切换，ChatCore 只确认
-                if conv.conversation_id.startswith("feishu_"):
-                    response = "已开始新会话 ✓"
-                    conv.add_assistant_message(response)
-                    if on_chunk:
-                        on_chunk(response)
-                    logger.info(
-                        f"[INTENT] 飞书新建会话 (由 SessionMapper 处理): "
-                        f"{conv.conversation_id}"
-                    )
-                    return response
-
-                title = message[4:].strip() if len(message) > 4 else None
-                new_conv = self.conversation_manager.create_conversation(title=title)
-                response = f"已创建新会话: {new_conv.conversation_id}"
-                if title:
-                    response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
-                conv.add_assistant_message(response)
-                if on_chunk:
-                    on_chunk(response)
-                logger.info(f"[INTENT] 新建会话: {new_conv.conversation_id}")
-                return response
-
-            # /clear 特殊处理：清空对话
-            if decision.intent == Intent.SHORTCUT and decision.direct_response:
-                conv.clear_history()
-
-            conv.add_assistant_message(decision.direct_response)
-            # 通过回调发送完整文本作为 single chunk
-            if on_chunk:
-                on_chunk(decision.direct_response)
-            logger.info(f"[INTENT] 快速回复 (跳过 LLM): {decision.intent.value}")
-            return decision.direct_response
+            shortcut_response = self._handle_shortcut(conv, decision, message,
+                                                       on_chunk=on_chunk)
+            if shortcut_response is not None:
+                return shortcut_response
 
         effective_message = decision.override_message or message
-
         conv = self.conversation_manager.get_conversation(conversation_id)
 
-        # 1. 持久化用户消息
-        conv.add_user_message(message)
-
-        # 2. 构建系统上下文（记忆注入 + 苏格拉底提示）
-        system_context = self._build_system_context(
-            conv, effective_message, intent=decision.intent
+        # 1-5. 管道前段
+        system_context, processed_history, processed_message, params = (
+            self._prepare_pipeline(conv, decision, message, effective_message, model_params)
         )
 
-        # 3. 获取对话历史
-        history = conv.get_history()
-        history = history[:-1] if history else []
+        # 6. 流式 LLM 调用
+        from llm_chat.decision.submit_tool import init_card_context, clear_card_context
+        init_card_context()
+        self._cancel_event = threading.Event()
+        try:
+            full_text = self._call_llm_stream(
+                processed_message, processed_history, system_context, params,
+                on_chunk=on_chunk,
+                on_tool_start=on_tool_start,
+                on_tool_end=on_tool_end,
+                on_context_update=on_context_update,
+            )
+        finally:
+            self._extract_pending_card(conversation_id, on_card)
+            clear_card_context()
 
-        # 4. 上下文压缩
-        processed_history, processed_message = self._compress_context(
-            conv, history, effective_message, system_context
-        )
-
-        # 5. 合并模型参数
-        params = {**conv.get_model_params(), **model_params}
-
-        # 6. 检查是否需要工具调用 (模型不支持 tools 则跳过)
-        has_tools = self.client.has_builtin_tools()
-        model_supports_tools = self._current_model_supports_tools()
-
-        full_text = ""
-        self._cancel_event = threading.Event()  # 创建本次生成的取消事件
-
-        if has_tools and self.config.enable_tools and model_supports_tools:
-            # 获取可用工具
-            tools = self.client.get_builtin_tools()
-            if not tools:
-                tools = []
-
-            logger.info(f"[ChatCore] 流式工具调用: tools={[t.get('function', {}).get('name', '?') for t in tools]}")
-
-            for chunk in self.client.chat_stream_with_tools(
-                processed_message,
-                tools,
-                history=processed_history,
-                system_context=system_context,
-                cancel_event=self._cancel_event,
-                **params,
-            ):
-                if self._cancel_event.is_set():
-                    logger.info("[ChatCore] Stream cancelled by user")
-                    break
-                if isinstance(chunk, tuple):
-                    kind = chunk[0]
-                    if kind == "tool_call_start" and on_tool_start:
-                        on_tool_start(chunk[1], chunk[2])
-                    elif kind == "tool_call_end" and on_tool_end:
-                        on_tool_end(chunk[1], chunk[2], chunk[3])
-                    elif kind == "context_update" and on_context_update:
-                        on_context_update(chunk[1], chunk[2])
-                elif isinstance(chunk, str):
-                    full_text += chunk
-                    if on_chunk:
-                        on_chunk(chunk)
-        else:
-            # 无工具流式聊天
-            logger.info("[ChatCore] 流式聊天 (无工具)")
-            for chunk in self.client.chat_stream(
-                processed_message,
-                history=processed_history,
-                system_context=system_context,
-                **params,
-            ):
-                if self._cancel_event.is_set():
-                    logger.info("[ChatCore] Stream cancelled by user")
-                    break
-                full_text += chunk
-                if on_chunk:
-                    on_chunk(chunk)
-
-        # 7. 提取 tool call 提交的决策卡片
-        self._extract_pending_card(conversation_id, on_card)
-
-        # 8. 持久化助手回复
-        conv.add_assistant_message(full_text)
-
-        # 9. 异步记忆提取
-        self._extract_memory_async(conv, message, full_text)
-
-        # 10. 记录 token 消耗
-        self._record_tokens(
-            message=processed_message,
-            history=processed_history,
-            system_context=system_context,
-            response=full_text,
-        )
-
+        # 8-10. 管道后段
+        self._finalize_pipeline(conv, message, full_text,
+                                processed_message, processed_history, system_context)
         return full_text
 
     # ------------------------------------------------------------------
@@ -511,6 +266,164 @@ class ChatCore:
     def has_tools_available(self) -> bool:
         """是否有可用的工具。"""
         return self.client.has_builtin_tools()
+
+    # ------------------------------------------------------------------
+    # Shortcut handler (unified for sync & stream paths)
+    # ------------------------------------------------------------------
+
+    def _handle_shortcut(
+        self,
+        conv,
+        decision,
+        original_message: str,
+        on_chunk: Optional[StreamCallback] = None,
+    ) -> Optional[str]:
+        """统一处理所有 LLM 短路指令。
+
+        返回 None 表示此决策不应短路（应继续走 LLM 管道）。
+        返回 str 表示已处理完毕，调用方应直接返回该值。
+
+        Args:
+            conv: 当前 Conversation 实例
+            decision: 意图路由决策
+            original_message: 原始用户消息（用于提取 title 等）
+            on_chunk: 流式回调（None 表示同步路径）
+        """
+        conv.add_user_message(original_message)
+
+        override = decision.override_message
+
+        # /style — 切换对话风格
+        if override and override.startswith("__style__:"):
+            style_name = override.split(":", 1)[1]
+            response = self._apply_style(style_name)
+            conv.add_assistant_message(response)
+            if on_chunk:
+                on_chunk(response)
+            logger.info(f"[INTENT] 风格切换: {style_name}")
+            return response
+
+        # /remember — 存储到长期记忆
+        if override and override.startswith("__remember__:"):
+            content = override.split(":", 1)[1]
+            if content:
+                memory_manager = getattr(conv, "_memory_manager", None)
+                if memory_manager:
+                    memory_manager.consolidate_to_long_term([content], is_user_told=True)
+                    response = f"已记住 ✓: {content}"
+                else:
+                    response = f"已记录（无记忆管理器）: {content}"
+                logger.info(f"[INTENT] 记住事实: {content[:80]}...")
+            else:
+                response = "请提供要记住的内容，例如：/记住 我最常用的 Python 版本是 3.11"
+            conv.add_assistant_message(response)
+            if on_chunk:
+                on_chunk(response)
+            return response
+
+        # /new — 创建新会话
+        if override == "__new_conversation__":
+            if conv.conversation_id.startswith("feishu_"):
+                response = "已开始新会话 ✓"
+                conv.add_assistant_message(response)
+                if on_chunk:
+                    on_chunk(response)
+                logger.info(f"[INTENT] 飞书新建会话: {conv.conversation_id}")
+                return response
+
+            title = original_message[4:].strip() if len(original_message) > 4 else None
+            new_conv = self.conversation_manager.create_conversation(title=title)
+            response = f"已创建新会话: {new_conv.conversation_id}"
+            if title:
+                response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
+            conv.add_assistant_message(response)
+            if on_chunk:
+                on_chunk(response)
+            logger.info(f"[INTENT] 新建会话: {new_conv.conversation_id}")
+            return response
+
+        # /clear or generic shortcut with direct_response
+        if decision.intent == Intent.SHORTCUT and decision.direct_response:
+            if (
+                decision.direct_response == "对话已清空。开始新的对话吧！"
+            ):
+                conv.clear_history()
+            conv.add_assistant_message(decision.direct_response)
+            if on_chunk:
+                on_chunk(decision.direct_response)
+            logger.info(f"[INTENT] 快速回复 (跳过 LLM): {decision.intent.value}")
+            return decision.direct_response
+
+        return None  # not a shortcut → proceed to LLM pipeline
+
+    # ------------------------------------------------------------------
+    # Pipeline helpers (unified for sync & stream paths)
+    # ------------------------------------------------------------------
+
+    def _prepare_pipeline(
+        self,
+        conv,
+        decision,
+        original_message: str,
+        effective_message: str,
+        model_params: dict,
+    ):
+        """管道前段：步骤 1-5（持久化用户消息 → 系统上下文 → 压缩 → 模型参数）。
+
+        Returns:
+            (system_context, processed_history, processed_message, params)
+        """
+        # 1. 持久化用户消息
+        conv.add_user_message(original_message)
+
+        # 2. 构建系统上下文
+        system_context = self._build_system_context(
+            conv, effective_message, intent=decision.intent
+        )
+
+        # 3. 获取对话历史
+        history = conv.get_history()
+        history = history[:-1] if history else []
+
+        # 4. 上下文压缩
+        processed_history, processed_message = self._compress_context(
+            conv, history, effective_message, system_context
+        )
+
+        # 5. 合并模型参数
+        params = {**conv.get_model_params(), **model_params}
+        if decision.suggested_model:
+            from llm_chat.intent.classifier import IntentClassifier
+            model_hint = IntentClassifier.get_model_hint(decision.intent)
+            if hasattr(self.config, 'tools') and hasattr(self.config.tools, 'intent_model_map'):
+                model_map = getattr(self.config.tools, 'intent_model_map', {})
+                suggested = model_map.get(model_hint)
+                if suggested:
+                    params["model"] = suggested
+                    logger.info(
+                        f"[INTENT] 模型路由: {decision.intent.value} → {suggested} (hint={model_hint})"
+                    )
+
+        return system_context, processed_history, processed_message, params
+
+    def _finalize_pipeline(
+        self,
+        conv,
+        original_message: str,
+        response: str,
+        processed_message: str,
+        processed_history,
+        system_context,
+    ):
+        """管道后段：步骤 8-10（持久化助手回复 → 记忆提取 → token 记录）。"""
+        conv.add_assistant_message(response)
+        self._extract_memory_async(conv, original_message, response)
+        self._record_tokens(
+            message=processed_message,
+            history=processed_history,
+            system_context=system_context,
+            response=response,
+        )
 
     # ------------------------------------------------------------------
     # Tool executor override (由 App 注入 MCP)
@@ -690,6 +603,14 @@ class ChatCore:
             logger.warning(f"上下文压缩失败，使用原始历史: {e}")
             return history, message
 
+    def _should_use_tools(self) -> bool:
+        """检查当前上下文是否应启用工具调用。"""
+        return (
+            self.client.has_builtin_tools()
+            and self.config.enable_tools
+            and self._current_model_supports_tools()
+        )
+
     def _call_llm(
         self,
         message: str,
@@ -698,10 +619,7 @@ class ChatCore:
         params: Dict[str, Any],
     ) -> str:
         """同步调用 LLM，自动选择工具调用或普通聊天路径。"""
-        has_tools = self.client.has_builtin_tools()
-        model_supports_tools = self._current_model_supports_tools()
-
-        if has_tools and self.config.enable_tools and model_supports_tools:
+        if self._should_use_tools():
             tools = self.client.get_builtin_tools()
             if tools:
                 logger.info(
@@ -715,6 +633,61 @@ class ChatCore:
         return self.client.chat(
             message, history=history, system_context=system_context, **params
         )
+
+    def _call_llm_stream(
+        self,
+        message: str,
+        history: List[Dict[str, Any]],
+        system_context: Optional[str],
+        params: Dict[str, Any],
+        on_chunk: Optional[StreamCallback] = None,
+        on_tool_start: Optional[ToolCallStartCallback] = None,
+        on_tool_end: Optional[ToolCallEndCallback] = None,
+        on_context_update: Optional[Callable[[int, int], None]] = None,
+    ) -> str:
+        """流式调用 LLM，自动选择工具调用或普通聊天路径，分发 chunk 到回调。"""
+        full_text = ""
+
+        if self._should_use_tools():
+            tools = self.client.get_builtin_tools() or []
+            logger.info(
+                f"[ChatCore] 流式工具调用: "
+                f"tools={[t.get('function', {}).get('name', '?') for t in tools]}"
+            )
+            for chunk in self.client.chat_stream_with_tools(
+                message, tools, history=history,
+                system_context=system_context,
+                cancel_event=self._cancel_event, **params,
+            ):
+                if self._cancel_event and self._cancel_event.is_set():
+                    logger.info("[ChatCore] Stream cancelled by user")
+                    break
+                if isinstance(chunk, tuple):
+                    kind = chunk[0]
+                    if kind == "tool_call_start" and on_tool_start:
+                        on_tool_start(chunk[1], chunk[2])
+                    elif kind == "tool_call_end" and on_tool_end:
+                        on_tool_end(chunk[1], chunk[2], chunk[3])
+                    elif kind == "context_update" and on_context_update:
+                        on_context_update(chunk[1], chunk[2])
+                elif isinstance(chunk, str):
+                    full_text += chunk
+                    if on_chunk:
+                        on_chunk(chunk)
+        else:
+            logger.info("[ChatCore] 流式聊天 (无工具)")
+            for chunk in self.client.chat_stream(
+                message, history=history,
+                system_context=system_context, **params,
+            ):
+                if self._cancel_event and self._cancel_event.is_set():
+                    logger.info("[ChatCore] Stream cancelled by user")
+                    break
+                full_text += chunk
+                if on_chunk:
+                    on_chunk(chunk)
+
+        return full_text
 
     def _extract_pending_card(self, conversation_id: str, on_card: Optional[CardCallback] = None):
         """提取待推送的决策卡片。
