@@ -27,6 +27,8 @@ def _get_scheduler_or_exit():
         sys.exit(1)
 
     app = App(config)
+    # Scheduler 延迟初始化，需要显式调用
+    app._init_scheduler()
     scheduler = app.get_scheduler()
     if not scheduler:
         click.echo("无法初始化调度器")

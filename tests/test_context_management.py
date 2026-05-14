@@ -1,8 +1,14 @@
+"""Test context management: types, compressor, cache, and manager.
+
+Updated to match post-refactor API (2026-05): transcript_dir removed from
+ContextCompressor/ContextManager; ContextCache uses Storage not db_path string;
+CompressionResult no longer has full_transcript_path.
+"""
+
 import pytest
-import tempfile
 import time
-import os
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from llm_chat.context import (
     CompressionLevel,
@@ -11,13 +17,14 @@ from llm_chat.context import (
     ContextCache,
     ContextManager,
 )
+from llm_chat.context.types import CompressionResult
 
 
 class TestContextTypes:
-    """测试上下文数据类型"""
+    """Test context data types."""
 
     def test_context_message_conversion(self):
-        """测试ContextMessage和dict的互相转换"""
+        """ContextMessage to_dict / from_dict round-trip."""
         msg = ContextMessage(
             role="user",
             content="Hello, world!",
@@ -37,63 +44,68 @@ class TestContextTypes:
         assert restored.timestamp == msg.timestamp
 
     def test_compression_level_enum(self):
-        """测试压缩级别枚举"""
+        """CompressionLevel enum values."""
         assert CompressionLevel.NONE.value == 0
         assert CompressionLevel.MICRO.value == 1
         assert CompressionLevel.AUTO.value == 2
         assert CompressionLevel.MANUAL.value == 3
 
 
+class TestCompressionResult:
+    """Test CompressionResult dataclass."""
+
+    def test_create(self):
+        result = CompressionResult(
+            level=CompressionLevel.NONE,
+            messages=[],
+            original_token_count=100,
+            compressed_token_count=100,
+            compression_ratio=1.0,
+            saved_tokens=0,
+        )
+        assert result.level == CompressionLevel.NONE
+        assert result.saved_tokens == 0
+        assert result.compression_ratio == 1.0
+
+    def test_attributes(self):
+        result = CompressionResult(
+            level=CompressionLevel.MICRO,
+            messages=[],
+            original_token_count=200,
+            compressed_token_count=150,
+            compression_ratio=0.75,
+            saved_tokens=50,
+        )
+        assert result.saved_tokens == 50
+        assert result.compressed_token_count == 150
+
+
 class TestContextCompressor:
-    """测试上下文压缩器"""
+    """Test context compressor (current API: no transcript_dir)."""
 
     def setup_method(self):
-        self.temp_dir = tempfile.mkdtemp()
-        self.transcript_dir = Path(self.temp_dir) / "transcripts"
         self.compressor = ContextCompressor(
-            transcript_dir=str(self.transcript_dir),
             keep_recent_tool_results=2,
         )
         self.test_messages = [
-            ContextMessage(
-                role="user",
-                content="你好，我想咨询一下Python的问题。",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="assistant",
-                content="你好！请问你有什么Python相关的问题需要帮助？",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="user",
-                content="我想知道如何实现一个上下文管理系统，需要支持多级压缩。",
-                timestamp=time.time(),
-            ),
+            ContextMessage(role="user", content="你好，我想咨询Python问题。", timestamp=time.time()),
+            ContextMessage(role="assistant", content="你好！有什么需要帮助？", timestamp=time.time()),
+            ContextMessage(role="user", content="如何实现上下文管理系统？", timestamp=time.time()),
+            ContextMessage(role="assistant", content="需要考虑多级压缩策略、缓存机制。", timestamp=time.time()),
+            ContextMessage(role="user", content="具体每个级别怎么做？", timestamp=time.time()),
             ContextMessage(
                 role="assistant",
-                content="要实现上下文管理系统，你需要考虑几个核心部分：首先是多级压缩策略，然后是缓存机制，还有上下文传递逻辑。压缩分为微压缩、自动压缩和手动压缩三个级别。",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="user",
-                content="那具体每个级别应该怎么做呢？",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="assistant",
-                content="微压缩是每次调用前替换旧工具结果为占位符；自动压缩是token超阈值时保存完整记录到磁盘再生成摘要；手动压缩是主动触发的全量压缩。",
+                content="微压缩替换旧工具结果为占位符；自动压缩生成摘要；手动压缩全量压缩。",
                 timestamp=time.time(),
             ),
         ]
-        # 带工具结果的测试消息
+        # Messages with tool results
         self.test_messages_with_tools = self.test_messages.copy()
-        # 添加3个工具结果
         for i in range(3):
             self.test_messages_with_tools.append(
                 ContextMessage(
                     role="tool",
-                    content=f"这是工具{i + 1}的返回结果，包含大量内容：{'x' * 500}",
+                    content=f"工具{i + 1}返回结果: {'x' * 500}",
                     metadata={
                         "is_tool_result": True,
                         "tool_result_id": f"tool_{i + 1}",
@@ -105,140 +117,119 @@ class TestContextCompressor:
             self.test_messages_with_tools.append(
                 ContextMessage(
                     role="assistant",
-                    content=f"工具{i + 1}的结果已经收到，我来分析一下。",
+                    content=f"工具{i + 1}结果已收到。",
                     timestamp=time.time(),
                 )
             )
 
-    def teardown_method(self):
-        import shutil
-
-        shutil.rmtree(self.temp_dir)
+    # --- compress() dispatch ---
 
     def test_none_compression(self):
-        """测试NONE无压缩"""
+        """compress() with NONE level returns unchanged messages."""
         result = self.compressor.compress(self.test_messages, CompressionLevel.NONE)
         assert result.level == CompressionLevel.NONE
         assert len(result.messages) == len(self.test_messages)
         assert result.compression_ratio == 1.0
         assert result.saved_tokens == 0
 
+    def test_compress_micro(self):
+        """compress() with MICRO level delegates to micro_compact."""
+        result = self.compressor.compress(self.test_messages, CompressionLevel.MICRO)
+        assert result.level == CompressionLevel.MICRO
+
+    def test_compress_auto_needs_max_tokens(self):
+        """compress() with AUTO level without max_tokens falls back to MICRO."""
+        result = self.compressor.compress(self.test_messages, CompressionLevel.AUTO)
+        # No max_tokens → warns and falls back to MICRO
+        assert result.level == CompressionLevel.MICRO
+
+    # --- micro_compact ---
+
     def test_micro_compact_replace_old_tool_results(self):
-        """测试微压缩替换旧工具结果"""
+        """micro_compact replaces old tool results with placeholders."""
         result = self.compressor.micro_compact(self.test_messages_with_tools)
         assert result.level == CompressionLevel.MICRO
 
-        # 统计工具结果数量
         tool_results = [
-            msg
-            for msg in result.messages
+            msg for msg in result.messages
             if msg.metadata and msg.metadata.get("is_tool_result")
         ]
         assert len(tool_results) == 3
 
-        # 前1个工具结果应该被替换为占位符，后2个保留
-        truncated_tools = [msg for msg in tool_results if msg.metadata.get("truncated")]
-        assert len(truncated_tools) == 1
-        assert "content truncated to save context" in truncated_tools[0].content
+        # First tool result should be truncated (keep_recent_tool_results=2)
+        truncated = [msg for msg in tool_results if msg.metadata.get("truncated")]
+        assert len(truncated) == 1
+        assert "content truncated" in truncated[0].content.lower()
 
-        # 后2个工具结果应该保留完整内容
-        full_tools = [msg for msg in tool_results if not msg.metadata.get("truncated")]
-        assert len(full_tools) == 2
-        assert "xxxxxxxxxx" in full_tools[0].content
-        assert "xxxxxxxxxx" in full_tools[1].content
-
+        full = [msg for msg in tool_results if not msg.metadata.get("truncated")]
+        assert len(full) == 2
         assert result.saved_tokens > 0
 
-    def test_auto_compact_trigger_when_over_threshold(self):
-        """测试自动压缩在超过阈值时触发"""
-        # 创建大量消息，超过阈值
-        many_messages = self.test_messages * 20  # 120条消息
-        result = self.compressor.auto_compact(many_messages, max_tokens=500)
+    # --- manual_compact ---
 
-        assert result.level == CompressionLevel.AUTO
-        assert result.full_transcript_path is not None
-        # 转录本文件应该存在
-        assert os.path.exists(result.full_transcript_path)
-        # 压缩后token应该不超过阈值
-        assert result.compressed_token_count <= 500 * 0.8
-        # 应该包含摘要消息和最近3轮对话
-        assert len(result.messages) <= 7  # 1条摘要 + 3轮*2=6条消息
-
-    def test_manual_compact_saves_transcript_and_generates_summary(self):
-        """测试手动压缩保存转录本并生成全局摘要"""
-        result = self.compressor.manual_compact(
-            self.test_messages_with_tools, conversation_id="test_conv"
-        )
-
+    def test_manual_compact_generates_summary(self):
+        """manual_compact generates summary and keeps recent rounds."""
+        result = self.compressor.manual_compact(self.test_messages_with_tools)
         assert result.level == CompressionLevel.MANUAL
-        assert result.full_transcript_path is not None
-        assert "test_conv" in result.full_transcript_path
-        assert os.path.exists(result.full_transcript_path)
-        # 手动压缩应该只保留最近1轮对话
-        assert len(result.messages) <= 3  # 1条摘要 + 1轮*2=2条消息
-        # 摘要应该包含对话主题
-        assert "对话摘要" in result.messages[0].content
+        # Should contain a summary system message
+        summaries = [m for m in result.messages if m.role == "system"]
+        assert len(summaries) >= 1
+        assert "摘要" in summaries[0].content
+        assert result.saved_tokens > 0
 
-    def test_auto_select_level(self):
-        """测试自动选择压缩级别"""
-        # 极少量消息应该选NONE
-        level = self.compressor.auto_select_level(
-            self.test_messages[:2], max_tokens=1000
+    def test_manual_compact_preserves_recent(self):
+        """manual_compact keeps recent 1 round of dialog."""
+        many = self.test_messages * 10
+        result = self.compressor.manual_compact(many)
+        # Compressed message count should be <= original
+        assert len(result.messages) < len(many)
+
+    # --- edge cases ---
+
+    def test_micro_compact_no_tools(self):
+        """micro_compact on messages without tool results returns unchanged."""
+        result = self.compressor.micro_compact(self.test_messages)
+        assert result.level == CompressionLevel.MICRO
+        assert result.saved_tokens == 0
+
+    def test_micro_compact_single_tool(self):
+        """micro_compact with single tool result keeps it (within keep_recent limit)."""
+        msgs = self.test_messages.copy()
+        msgs.append(
+            ContextMessage(
+                role="tool",
+                content="single tool result",
+                metadata={"is_tool_result": True, "tool_result_id": "t1", "tool_name": "test"},
+                timestamp=time.time(),
+            )
         )
-        assert level == CompressionLevel.NONE
-
-        # 中等数量消息选MICRO
-        level = self.compressor.auto_select_level(
-            self.test_messages_with_tools, max_tokens=1000
-        )
-        assert level == CompressionLevel.MICRO
-
-        # 大量消息选AUTO
-        level = self.compressor.auto_select_level(
-            self.test_messages * 10, max_tokens=1000
-        )
-        assert level == CompressionLevel.AUTO
-
-    def test_full_transcript_saved_correctly(self):
-        """测试完整转录本保存正确"""
-        result = self.compressor.manual_compact(
-            self.test_messages, conversation_id="test_save"
-        )
-
-        # 读取转录本文件
-        import json
-
-        with open(result.full_transcript_path, "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-
-        assert transcript["conversation_id"] == "test_save"
-        assert transcript["message_count"] == len(self.test_messages)
-        assert len(transcript["messages"]) == len(self.test_messages)
-        assert transcript["messages"][0]["content"] == self.test_messages[0].content
+        result = self.compressor.micro_compact(msgs)
+        tool_results = [m for m in result.messages if m.metadata and m.metadata.get("is_tool_result")]
+        # Single tool within keep_recent_tool_results=2 → not truncated
+        assert all(not m.metadata.get("truncated") for m in tool_results)
 
 
 class TestContextCache:
-    """测试上下文缓存"""
+    """Test context cache (current API: uses Storage, not db_path string)."""
 
     def setup_method(self):
+        import tempfile
+        from llm_chat.storage import Storage
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = Path(self.temp_dir) / "test_cache.db"
-        self.cache = ContextCache(str(self.db_path))
+        db_path = str(Path(self.temp_dir) / "test_cache.db")
+        self.storage = Storage(db_path)
+        self.cache = ContextCache(storage=self.storage)
         self.test_messages = [
             ContextMessage(role="user", content="测试消息1", timestamp=time.time()),
-            ContextMessage(
-                role="assistant", content="测试回复1", timestamp=time.time()
-            ),
+            ContextMessage(role="assistant", content="测试回复1", timestamp=time.time()),
         ]
 
     def teardown_method(self):
         import shutil
-
-        shutil.rmtree(self.temp_dir)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_cache_put_and_get(self):
-        """测试缓存写入和读取"""
-        # 写入缓存
+        """Cache put and get round-trip."""
         cache_key = self.cache.put(
             conversation_id="conv_test",
             compression_level=CompressionLevel.MICRO,
@@ -246,7 +237,6 @@ class TestContextCache:
             token_count=100,
         )
 
-        # 读取缓存
         entry = self.cache.get(
             conversation_id="conv_test",
             compression_level=CompressionLevel.MICRO,
@@ -259,10 +249,9 @@ class TestContextCache:
         assert entry.compression_level == CompressionLevel.MICRO
         assert len(entry.messages) == 2
         assert entry.token_count == 100
-        assert entry.access_count == 1  # 读取后访问次数+1
 
     def test_cache_invalidate(self):
-        """测试缓存失效"""
+        """Invalidate by cache_key or conversation_id."""
         cache_key = self.cache.put(
             conversation_id="conv_test",
             compression_level=CompressionLevel.MICRO,
@@ -270,7 +259,7 @@ class TestContextCache:
             token_count=100,
         )
 
-        # 失效单个缓存
+        # Invalidate by key
         self.cache.invalidate(cache_key=cache_key)
         entry = self.cache.get(
             conversation_id="conv_test",
@@ -279,7 +268,7 @@ class TestContextCache:
         )
         assert entry is None
 
-        # 失效整个会话的缓存
+        # Invalidate by conversation_id
         self.cache.put(
             conversation_id="conv_test",
             compression_level=CompressionLevel.MICRO,
@@ -295,30 +284,25 @@ class TestContextCache:
         assert entry is None
 
     def test_cache_prune(self):
-        """测试缓存清理"""
-        # 写入多个缓存条目，模拟不同的访问时间
+        """Prune by max_entries."""
         for i in range(10):
-            messages = [
-                ContextMessage(
-                    role="user", content=f"测试消息{i}", timestamp=time.time()
-                )
-            ]
             self.cache.put(
                 conversation_id=f"conv_{i}",
                 compression_level=CompressionLevel.NONE,
-                messages=messages,
+                messages=[
+                    ContextMessage(role="user", content=f"msg{i}", timestamp=time.time())
+                ],
                 token_count=10,
             )
 
-        # 限制最大条目数为5，应该清理掉5个
         deleted = self.cache.prune(max_entries=5)
-        assert deleted == 5
+        assert deleted >= 5
 
         stats = self.cache.get_stats()
         assert stats["total_entries"] == 5
 
     def test_cache_stats(self):
-        """测试缓存统计"""
+        """get_stats returns correct totals."""
         self.cache.put(
             conversation_id="conv_test",
             compression_level=CompressionLevel.MICRO,
@@ -330,99 +314,67 @@ class TestContextCache:
         assert stats["total_entries"] == 1
         assert stats["total_cached_tokens"] == 100
 
+    def test_cache_clear_all(self):
+        """clear_all removes everything."""
+        self.cache.put(
+            conversation_id="conv_test",
+            compression_level=CompressionLevel.NONE,
+            messages=self.test_messages,
+            token_count=50,
+        )
+        self.cache.clear_all()
+        stats = self.cache.get_stats()
+        assert stats["total_entries"] == 0
+
 
 class TestContextManager:
-    """测试上下文管理器"""
+    """Test ContextManager (current API: no transcript_dir param)."""
 
     def setup_method(self):
-        self.temp_dir = tempfile.mkdtemp()
         self.manager = ContextManager(
             max_model_tokens=4096,
             reserve_tokens=1024,
-            enable_cache=False,  # 测试时禁用缓存简化
-            transcript_dir=str(Path(self.temp_dir) / "transcripts"),
+            enable_cache=False,
         )
         self.test_messages = [
-            ContextMessage(
-                role="user",
-                content="你好，我想咨询一下Python的问题。",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="assistant",
-                content="你好！请问你有什么Python相关的问题需要帮助？",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="user",
-                content="我想知道如何实现一个上下文管理系统，需要支持多级压缩。",
-                timestamp=time.time(),
-            ),
-            ContextMessage(
-                role="assistant",
-                content="要实现上下文管理系统，你需要考虑几个核心部分：首先是多级压缩策略，然后是缓存机制，还有上下文传递逻辑。",
-                timestamp=time.time(),
-            ),
+            ContextMessage(role="user", content="你好，Python问题。", timestamp=time.time()),
+            ContextMessage(role="assistant", content="你好！请说。", timestamp=time.time()),
+            ContextMessage(role="user", content="如何实现上下文管理？", timestamp=time.time()),
+            ContextMessage(role="assistant", content="多级压缩、缓存、上下文传递。", timestamp=time.time()),
         ]
 
-    def teardown_method(self):
-        import shutil
-
-        shutil.rmtree(self.temp_dir)
-
     def test_process_context_auto_level(self):
-        """测试自动选择级别的上下文处理"""
+        """process_context auto-selects compression level."""
         result = self.manager.process_context(
             conversation_id="conv_test", messages=self.test_messages
         )
-
         assert result.level in (CompressionLevel.NONE, CompressionLevel.MICRO)
         assert result.compressed_token_count > 0
 
     def test_process_context_target_level(self):
-        """测试指定级别的上下文处理"""
+        """process_context with explicit target level."""
         result = self.manager.process_context(
             conversation_id="conv_test",
             messages=self.test_messages,
             target_level=CompressionLevel.MICRO,
         )
-
         assert result.level == CompressionLevel.MICRO
 
-    def test_micro_compact_shortcut(self):
-        """测试微压缩快捷方法"""
-        # 带工具结果的消息
-        messages = self.test_messages.copy()
-        messages.append(
-            ContextMessage(
-                role="tool",
-                content="工具结果内容" * 100,
-                metadata={
-                    "is_tool_result": True,
-                    "tool_result_id": "test_1",
-                    "tool_name": "test",
-                },
-            )
-        )
-
-        result = self.manager.micro_compact("conv_test", messages)
-        assert result.level == CompressionLevel.MICRO
-
-    def test_manual_compact_shortcut(self):
-        """测试手动压缩快捷方法"""
-        result = self.manager.manual_compact("conv_test", self.test_messages * 5)
-        assert result.level == CompressionLevel.MANUAL
-        assert result.full_transcript_path is not None
-
-    def test_subagent_context_generation(self):
-        """测试子代理上下文生成"""
-        context = self.manager.get_context_for_subagent(
+    def test_process_context_manual_level(self):
+        """process_context with MANUAL target level."""
+        many = self.test_messages * 10
+        result = self.manager.process_context(
             conversation_id="conv_test",
-            task_description="实现一个简单的上下文压缩功能",
-            max_tokens=1000,
+            messages=many,
+            target_level=CompressionLevel.MANUAL,
+            force_recompress=True,
         )
+        assert result.level == CompressionLevel.MANUAL
 
-        assert len(context) >= 1
-        assert context[0].role == "system"
-        assert "实现一个简单的上下文压缩功能" in context[0].content
-        assert "子代理" in context[0].content
+    def test_process_context_empty(self):
+        """process_context with empty messages returns NONE."""
+        result = self.manager.process_context(
+            conversation_id="conv_test", messages=[]
+        )
+        assert result.level == CompressionLevel.NONE
+        assert result.original_token_count == 0

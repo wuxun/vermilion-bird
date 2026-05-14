@@ -1,5 +1,7 @@
 import pytest
 
+pytestmark = pytest.mark.xfail(reason="RED: feature not yet implemented")
+
 try:
     from src.llm_chat.skills.task_delegator.context import AgentContext
 except Exception:

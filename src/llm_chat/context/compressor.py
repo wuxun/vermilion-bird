@@ -98,14 +98,14 @@ class ContextCompressor:
                 tool_results.append(msg)
 
         # 需要保留的最近工具结果ID集合
-        keep_tool_ids = set()
-        if len(tool_results) > self.keep_recent_tool_results:
-            keep_tool_results = tool_results[-self.keep_recent_tool_results :]
-            keep_tool_ids = {
-                msg.metadata.get("tool_result_id")
-                for msg in keep_tool_results
-                if msg.metadata.get("tool_result_id")
-            }
+        # 工具数 ≤ 保留数时全部保留，否则保留最后 N 个
+        keep_count = min(self.keep_recent_tool_results, len(tool_results))
+        keep_tool_results = tool_results[-keep_count:] if keep_count > 0 else []
+        keep_tool_ids = {
+            msg.metadata.get("tool_result_id")
+            for msg in keep_tool_results
+            if msg.metadata.get("tool_result_id")
+        }
 
         # 替换旧工具结果为占位符
         for msg in messages:
@@ -243,12 +243,17 @@ class ContextCompressor:
             original_tokens = sum(count_tokens(msg.content) for msg in messages)
 
         logger.info(
-            f"[MANUAL_COMPACT] 手动压缩触发: 会话ID={conversation_id}, 原始消息数={len(messages)}, 原始token={original_tokens}"
+            f"[MANUAL_COMPACT] 手动压缩触发: 原始消息数={len(messages)}, 原始token={original_tokens}"
         )
+
+        # 分离最近 1 轮和历史
+        recent_messages = self._get_recent_dialog_rounds(messages, 1)
+        recent_set = set(id(m) for m in recent_messages)
+        older_messages = [m for m in messages if id(m) not in recent_set]
 
         # 生成全局摘要
         global_summary = self._generate_dialog_summary(
-            all_older_messages, is_global=True
+            older_messages, is_global=True
         )
 
         compressed = [
@@ -257,7 +262,7 @@ class ContextCompressor:
                 content=f"## 全局对话摘要\n{global_summary}",
                 metadata={
                     "global_summary": True,
-                    "original_messages": len(all_older_messages),
+                    "original_messages": len(older_messages),
                 },
                 timestamp=datetime.now().timestamp(),
             )

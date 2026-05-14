@@ -1,4 +1,8 @@
-"""测试 App 类的调度器集成功能"""
+"""Test App scheduler integration.
+
+Note: Scheduler initialization was moved from App.__init__ to
+_start_background_services (called during run()).
+"""
 
 import os
 from unittest.mock import Mock, patch, MagicMock
@@ -24,167 +28,105 @@ def teardown_module(module):
 
 
 class TestSchedulerIntegration:
-    """调度器集成测试"""
+    """Scheduler integration with App lifecycle."""
 
-    def test_app_scheduler_not_initialized_when_disabled(self):
-        """测试：当 scheduler.enabled=False 时，不初始化调度器"""
+    def test_scheduler_is_none_when_disabled(self):
+        """scheduler remains None when config.scheduler.enabled=False."""
         config = Config()
         config.scheduler = SchedulerConfig(enabled=False)
 
         with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                app = App(config=config)
-
+            app = App(config=config)
         assert app.scheduler is None
 
-    def test_app_scheduler_initialized_when_enabled(self):
+    def test_get_scheduler_none_when_disabled(self):
+        """get_scheduler() returns None when disabled."""
+        config = Config()
+        config.scheduler = SchedulerConfig(enabled=False)
+
+        with patch.object(Storage, "__init__", return_value=None):
+            app = App(config=config)
+        assert app.get_scheduler() is None
+
+    def test_scheduler_initialized_during_run(self):
+        """Scheduler is created and started during app.run()."""
         config = Config()
         config.scheduler = SchedulerConfig(enabled=True, max_workers=2)
-
-        with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                with patch(
-                    "llm_chat.scheduler.scheduler.SchedulerService"
-                ) as mock_scheduler_class:
-                    mock_scheduler = MagicMock()
-                    mock_scheduler_class.return_value = mock_scheduler
-
-                    app = App(config=config)
-
-                    mock_scheduler_class.assert_called_once()
-                    call_args = mock_scheduler_class.call_args
-                    assert call_args[0][0] == config.scheduler
-                    assert call_args[0][1] == app.storage
-                    assert call_args[0][2] == app
-
-                    assert app.scheduler == mock_scheduler
-
-    def test_app_get_scheduler_returns_instance(self):
-        config = Config()
-        config.scheduler = SchedulerConfig(enabled=True)
-
-        with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                with patch(
-                    "llm_chat.scheduler.scheduler.SchedulerService"
-                ) as mock_scheduler_class:
-                    mock_scheduler = MagicMock()
-                    mock_scheduler_class.return_value = mock_scheduler
-
-                    app = App(config=config)
-
-                    assert app.get_scheduler() == mock_scheduler
-
-    def test_app_get_scheduler_returns_none_when_disabled(self):
-        """测试：当调度器禁用时，get_scheduler() 返回 None"""
-        config = Config()
-        config.scheduler = SchedulerConfig(enabled=False)
-
-        with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                app = App(config=config)
-
-                assert app.get_scheduler() is None
-
-    def test_app_run_starts_scheduler_when_enabled(self):
-        config = Config()
-        config.scheduler = SchedulerConfig(enabled=True)
         config.enable_tools = False
 
         with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                with patch(
-                    "llm_chat.scheduler.scheduler.SchedulerService"
-                ) as mock_scheduler_class:
-                    mock_scheduler = MagicMock()
-                    mock_scheduler_class.return_value = mock_scheduler
+            with patch("llm_chat.scheduler.SchedulerService") as m_cls:
+                # Also clear lazy cache
+                import llm_chat.scheduler as sched_mod
+                sched_mod._SchedulerService = None
 
-                    app = App(config=config)
+                mock_sched = MagicMock()
+                m_cls.return_value = mock_sched
 
-                    mock_frontend = MagicMock()
-                    mock_frontend.start = MagicMock()
-
-                    app.run(mock_frontend)
-
-                    mock_scheduler.start.assert_called_once()
-
-    def test_app_run_does_not_start_scheduler_when_disabled(self):
-        config = Config()
-        config.scheduler = SchedulerConfig(enabled=False)
-        config.enable_tools = False
-
-        with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
                 app = App(config=config)
+                assert app.scheduler is None
 
                 mock_frontend = MagicMock()
-                mock_frontend.start = MagicMock()
-
+                mock_frontend.start = lambda **kw: kw.get("post_init", lambda: None)()
                 app.run(mock_frontend)
 
-                assert app.scheduler is None
+                m_cls.assert_called_once()
+                assert app.scheduler == mock_sched
+                mock_sched.start.assert_called_once()
 
-    def test_app_stop_shuts_down_scheduler(self):
+    def test_scheduler_shutdown_during_stop(self):
+        """Scheduler.shutdown is called via ServiceManager during app.stop()."""
         config = Config()
         config.scheduler = SchedulerConfig(enabled=True)
 
         with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                with patch(
-                    "llm_chat.scheduler.scheduler.SchedulerService"
-                ) as mock_scheduler_class:
-                    mock_scheduler = MagicMock()
-                    mock_scheduler_class.return_value = mock_scheduler
+            app = App(config=config)
+            mock_sched = MagicMock()
+            mock_sched.name = "SchedulerService"
+            app.scheduler = mock_sched
+            # Register and mark as started so stop_all() finds it
+            app.service_manager._services[mock_sched.name] = mock_sched
+            app.service_manager._started_services.append(mock_sched.name)
+            app.current_frontend = MagicMock()
 
-                    app = App(config=config)
-                    app.current_frontend = MagicMock()
+            app.stop()
+            mock_sched.shutdown.assert_called_once()
 
-                    app.stop()
-
-                    mock_scheduler.shutdown.assert_called_once()
-
-    def test_app_stop_does_not_fail_when_scheduler_disabled(self):
+    def test_stop_no_fail_when_scheduler_disabled(self):
+        """stop() doesn't crash when scheduler is None."""
         config = Config()
         config.scheduler = SchedulerConfig(enabled=False)
 
         with patch.object(Storage, "__init__", return_value=None):
-            with patch.object(Storage, "_init_db"):
-                app = App(config=config)
-                app.current_frontend = MagicMock()
-
-                app.stop()
-
-                assert app.scheduler is None
+            app = App(config=config)
+            app.current_frontend = MagicMock()
+            app.stop()  # should not raise
+            assert app.scheduler is None
 
 
 def test_scheduler_integration():
+    """End-to-end: init → run → stop."""
     config = Config()
     config.scheduler = SchedulerConfig(enabled=True, max_workers=2)
     config.enable_tools = False
 
     with patch.object(Storage, "__init__", return_value=None):
-        with patch.object(Storage, "_init_db"):
-            with patch(
-                "llm_chat.scheduler.scheduler.SchedulerService"
-            ) as mock_scheduler_class:
-                mock_scheduler = MagicMock()
-                mock_scheduler_class.return_value = mock_scheduler
+        with patch("llm_chat.scheduler.SchedulerService") as m_cls:
+            import llm_chat.scheduler as sched_mod
+            sched_mod._SchedulerService = None
 
-                app = App(config=config)
+            mock_sched = MagicMock()
+            m_cls.return_value = mock_sched
 
-                assert app.scheduler is not None
-                assert app.get_scheduler() == mock_scheduler
+            app = App(config=config)
+            assert app.scheduler is None  # deferred
 
-                mock_frontend = MagicMock()
-                mock_frontend.start = MagicMock()
+            mock_frontend = MagicMock()
+            mock_frontend.start = lambda **kw: kw.get("post_init", lambda: None)()
+            app.run(mock_frontend)
 
-                with patch.object(app.storage, "migrate_from_json"):
-                    with patch.object(app, "conversation_manager") as mock_conv_mgr:
-                        mock_conv_mgr.list_conversations.return_value = []
-                        app.run(mock_frontend)
+            m_cls.assert_called_once()
+            mock_sched.start.assert_called_once()
 
-                mock_scheduler.start.assert_called_once()
-
-                app.stop()
-
-                mock_scheduler.shutdown.assert_called_once()
+            app.stop()
+            mock_sched.shutdown.assert_called_once()

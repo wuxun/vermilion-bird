@@ -74,7 +74,6 @@ class TestCompressionResult:
             compressed_token_count=700,
             compression_ratio=0.7,
             saved_tokens=300,
-            full_transcript_path="/tmp/transcript.json",
         )
         assert result.level == CompressionLevel.MICRO
         assert len(result.messages) == 1
@@ -82,9 +81,8 @@ class TestCompressionResult:
         assert result.compressed_token_count == 700
         assert result.compression_ratio == 0.7
         assert result.saved_tokens == 300
-        assert result.full_transcript_path == "/tmp/transcript.json"
 
-    def test_default_full_transcript_path(self):
+    def test_minimal_result(self):
         msgs = [ContextMessage(role="user", content="hi")]
         result = CompressionResult(
             level=CompressionLevel.NONE,
@@ -94,7 +92,8 @@ class TestCompressionResult:
             compression_ratio=1.0,
             saved_tokens=0,
         )
-        assert result.full_transcript_path is None
+        assert result.compressed_token_count == 100
+        assert result.saved_tokens == 0
 
 
 class TestContextCacheEntry:
