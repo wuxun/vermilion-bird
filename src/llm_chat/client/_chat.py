@@ -116,6 +116,9 @@ class LLMClientChatMixin:
         log_request_details(url, data, messages, kwargs)
         logger.info("(流式请求)")
 
+        stream_usage = None  # API 返回的真实 usage（最后 chunk）
+        total_output_chars = 0
+
         try:
             response = self.session.post(
                 url, json=data, headers=headers, stream=True
@@ -140,12 +143,19 @@ class LLMClientChatMixin:
 
                     try:
                         chunk = json.loads(data_str)
+                        # 捕获 API 返回的真实 usage
+                        if "usage" in chunk and chunk["usage"]:
+                            stream_usage = chunk["usage"]
                         content = self.protocol.parse_stream_chunk(chunk)
                         if content:
                             chunk_count += 1
+                            total_output_chars += len(content)
                             yield content
                     except json.JSONDecodeError:
                         continue
+
+            # 流式完成：记录 token 消耗
+            self._record_stream_tokens(stream_usage, total_output_chars, messages)
 
         except requests.RequestException as e:
             error_msg = str(e)
@@ -157,3 +167,35 @@ class LLMClientChatMixin:
                     error_msg = f"{error_msg}\n响应内容: {e.response.text}"
             logger.error(f"流式请求失败: {error_msg}")
             raise LLMError(f"API 请求失败: {error_msg}")
+
+    def _record_stream_tokens(
+        self, stream_usage: Optional[dict], total_output_chars: int,
+        messages: List[Dict[str, str]]
+    ) -> None:
+        """记录流式 token 消耗，优先使用 API 返回的真实 usage。"""
+        try:
+            from llm_chat.utils.observability import get_observability
+            from llm_chat.utils.token_counter import count_messages_tokens
+            obs = get_observability()
+            if stream_usage and isinstance(stream_usage, dict):
+                prompt_tokens = stream_usage.get("prompt_tokens", 0)
+                completion_tokens = stream_usage.get("completion_tokens", 0)
+                total_tokens = stream_usage.get("total_tokens", prompt_tokens + completion_tokens)
+                logger.debug(
+                    f"使用 API 返回的真实 usage: prompt={prompt_tokens} "
+                    f"completion={completion_tokens} total={total_tokens}"
+                )
+            else:
+                prompt_tokens = count_messages_tokens(messages, self.config.llm.model)
+                completion_tokens = max(total_output_chars // 2, 1)
+                total_tokens = prompt_tokens + completion_tokens
+                logger.debug(
+                    f"使用估算 usage: prompt={prompt_tokens} "
+                    f"completion={completion_tokens} (chars={total_output_chars})"
+                )
+            obs.increment("tokens.prompt", prompt_tokens)
+            obs.increment("tokens.completion", completion_tokens)
+            obs.increment("tokens.total", total_tokens)
+            obs.increment(f"tokens.{self.config.llm.model}", total_tokens)
+        except Exception:
+            logger.debug("token observability increment failed", exc_info=True)

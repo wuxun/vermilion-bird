@@ -44,7 +44,7 @@ class MCPManager:
             try:
                 callback(server_name, status)
             except Exception:
-                pass
+                logger.debug("MCP status callback failed", exc_info=True)
 
     def _ensure_event_loop(self):
         if self._loop is None or not self._loop.is_running():

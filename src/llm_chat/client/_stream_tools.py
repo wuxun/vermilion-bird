@@ -61,6 +61,7 @@ class LLMClientStreamToolsMixin:
         )
 
         total_output_chars = 0  # 累计输出字符数，用于 token 估算
+        stream_usage = None  # 从流式最后 chunk 提取的真实 usage（优先）
 
         for iteration in range(max_iterations):
             if cancel_event and cancel_event.is_set():
@@ -105,6 +106,9 @@ class LLMClientStreamToolsMixin:
 
                         try:
                             chunk = json.loads(data_str)
+                            # 捕获 API 返回的真实 usage（通常出现在最后 chunk）
+                            if "usage" in chunk and chunk["usage"]:
+                                stream_usage = chunk["usage"]
                             content = self.protocol.parse_stream_chunk(chunk)
                             if content:
                                 full_text += content
@@ -238,18 +242,8 @@ class LLMClientStreamToolsMixin:
             context_limit = get_context_limit(self.config.llm.model)
             yield ("context_update", current_tokens, context_limit)
 
-        # 流式完成：估算并记录 token 消耗
-        try:
-            from llm_chat.utils.observability import get_observability
-            obs = get_observability()
-            input_tokens = count_messages_tokens(current_messages, self.config.llm.model)
-            output_est = max(total_output_chars // 2, 1)
-            obs.increment("tokens.prompt", input_tokens)
-            obs.increment("tokens.completion", output_est)
-            obs.increment("tokens.total", input_tokens + output_est)
-            obs.increment(f"tokens.{self.config.llm.model}", input_tokens + output_est)
-        except Exception:
-            pass
+        # 流式完成：记录 token 消耗（委托给共享 helper）
+        self._record_stream_tokens(stream_usage, total_output_chars, current_messages)
 
     # ------------------------------------------------------------------
     # 流式工具调用解析 helpers

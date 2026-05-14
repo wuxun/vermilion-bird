@@ -105,6 +105,11 @@ class LLMClientBase:
             logger.debug("LLMClient session closed")
         except Exception as e:
             logger.warning(f"Error closing LLMClient session: {e}")
+        try:
+            self._tool_executor_instance.shutdown()
+            logger.debug("ToolExecutor thread pool shut down")
+        except Exception as e:
+            logger.warning(f"Error shutting down ToolExecutor: {e}")
 
     # ------------------------------------------------------------------
     # 技能设置

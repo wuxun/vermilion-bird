@@ -160,7 +160,7 @@ class LLMClientToolsMixin:
                         args_safe = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
                         self._tool_call_hook(tool_call.name, args_safe, tool_result or "")
                     except Exception:
-                        pass
+                        logger.debug("tool_call_hook failed", exc_info=True)
 
                 tool_message = self.protocol.build_tool_result_message(
                     tool_call, tool_result, is_error

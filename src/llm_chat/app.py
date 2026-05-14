@@ -369,14 +369,14 @@ class App:
                         f"MCP 工具已就绪: {', '.join(tool_names) if tool_names else '无'}"
                     )
                 except Exception:
-                    pass
+                    logger.debug("display_info failed during MCP connect", exc_info=True)
         except Exception as e:
             logger.error(f"MCP 连接失败: {e}", exc_info=True)
             if self.current_frontend:
                 try:
                     self.current_frontend.display_error(f"MCP 连接失败: {e}")
                 except Exception:
-                    pass
+                    logger.debug("display_error failed during MCP connect", exc_info=True)
         finally:
             self._tools_enabled = True
             self._mcp_connecting = False

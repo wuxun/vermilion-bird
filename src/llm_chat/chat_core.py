@@ -576,6 +576,25 @@ class ChatCore:
             )
 
             total_sent_tokens = sum(count_tokens(m.content) for m in result.messages)
+
+            # 验证压缩结果与模型上限一致（处理意图路由切换模型场景）
+            from llm_chat.utils.token_counter import get_context_limit
+            model_name = self.config.llm.model
+            actual_limit = get_context_limit(model_name) if model_name else context_manager.max_model_tokens
+            if total_sent_tokens > actual_limit * 0.9:
+                logger.warning(
+                    f"[ChatCore] 压缩后仍超限 ({total_sent_tokens}/{actual_limit}), "
+                    f"强制 MANUAL 重压缩"
+                )
+                from llm_chat.context import CompressionLevel
+                result = context_manager.process_context(
+                    conversation_id=conv.conversation_id,
+                    messages=context_messages,
+                    target_level=CompressionLevel.MANUAL,
+                    force_recompress=True,
+                )
+                total_sent_tokens = sum(count_tokens(m.content) for m in result.messages)
+
             logger.info(
                 f"[ChatCore] 上下文压缩完成: token={total_sent_tokens}, "
                 f"级别={result.level.name}, 节省={result.saved_tokens}"

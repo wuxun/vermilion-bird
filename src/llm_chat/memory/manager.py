@@ -1,4 +1,6 @@
+import json
 import logging
+import re
 import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
@@ -133,7 +135,6 @@ class MemoryManager:
     
     def _update_section(self, content: str, section_header: str, new_content: str) -> str:
         """更新Markdown文件的特定章节"""
-        import re
         
         pattern = rf'({re.escape(section_header)}\n)(.*?)(?=\n##|\Z)'
         match = re.search(pattern, content, re.DOTALL)
@@ -151,7 +152,6 @@ class MemoryManager:
         """压缩中期记忆：删除过期条目 + 合并相似摘要。"""
         content = self.storage.load_mid_term()
 
-        import re
         summary_section = re.search(r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
 
         if summary_section:
@@ -190,7 +190,6 @@ class MemoryManager:
 
         content = self.storage.load_mid_term()
 
-        import re
         # 提取所有每日摘要
         summary_section = re.search(
             r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL
@@ -242,7 +241,6 @@ class MemoryManager:
             if not response:
                 return 0
 
-            import json
             # 提取 JSON (LLM 可能包裹在 markdown code block 中)
             json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
             if json_match:
@@ -353,7 +351,6 @@ class MemoryManager:
 
         返回聚合的日摘要文本，最近的排在前面。
         """
-        import re
         if not mid_term_content:
             return ""
 
@@ -461,7 +458,6 @@ class MemoryManager:
 
     def _write_behavioral_section(self, directives: str):
         """将 LLM 生成的行为指引写入 long_term.md 的「## 行为指引」章节。"""
-        import re
         content = self.storage.load_long_term()
 
         # 替换或追加 ## 行为指引 章节
@@ -483,102 +479,127 @@ class MemoryManager:
         """粗略估算文本 token 数（中文约 1 字 = 1 token，英文约 4 字符 = 1 token）"""
         if not text:
             return 0
-        import re
         # 中文字符、日韩字符
         cjk_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]', text))
         # 其余字符按 4 字符 ≈ 1 token 估算
         other_chars = len(text) - cjk_chars
         return cjk_chars + (other_chars // 4)
 
+    # token 预算分配权重（总计 100%）
+    _BUDGET_WEIGHTS = {
+        "soul": 0.25,       # 人格设定 — 最高优先，但设上限
+        "behavioral": 0.10,  # 行为指引
+        "long_term": 0.30,   # 用户画像 + 事实
+        "mid_term": 0.20,    # 近期上下文摘要
+        "short_term": 0.15,  # 当前任务
+    }
+
+    def _safe_tokens(self, text: str) -> int:
+        """估算 token 数并加 1.2x 安全系数，防止低估导致截断。"""
+        return int(self._estimate_tokens(text) * 1.2)
+
+    def _inject_section(
+        self, sections: list, header: str, content: str,
+        cap: int, budget_remaining: int
+    ) -> int:
+        """将 content 注入 sections，不超过 cap 和 budget_remaining 的最小值。
+
+        Returns: 实际消耗的 token 数。
+        """
+        limit = min(cap, budget_remaining) if budget_remaining > 0 else 0
+        if limit <= 0 or not content:
+            return 0
+
+        content_tokens = self._safe_tokens(content)
+        if content_tokens <= limit:
+            sections.append(f"{header}\n{content}")
+            return content_tokens
+        else:
+            truncated = self._truncate_by_tokens(content, max(1, limit))
+            if truncated:
+                sections.append(f"{header}\n{truncated}")
+                return limit
+            return 0
+
     def build_system_prompt(self) -> str:
-        """构建注入到LLM的系统提示，按 soul > behavioral > long_term > mid_term > short_term 优先级控制在 token 预算内"""
+        """构建注入到LLM的系统提示。
+
+        按优先级加权分配 token 预算，确保各层级都能获得合理空间，
+        而非高端记忆独占预算导致低端记忆全部被截断。
+
+        分配权重 (总预算 100%):
+          soul 25% | behavioral 10% | long_term 30% | mid_term 20% | short_term 15%
+        未使用的配额自动顺延给后续层级。
+        """
         budget = self._max_memory_tokens
         if budget <= 0:
             return ""
 
-        import re
-        sections = []  # List of (priority, header, content)
-        budget_remaining = budget
+        # 为每层计算配额（整数）
+        quotas = {
+            k: max(1, int(budget * w))
+            for k, w in self._BUDGET_WEIGHTS.items()
+        }
 
-        # 优先级 0: 人格设定（最高，不可截断）
+        sections = []
+        unused = 0  # 累积未使用的配额，顺延给后续层级
+
+        # 层级 0: 人格设定
         soul = self.storage.load_soul()
         if soul:
             soul_content = self._extract_soul_content(soul)
-            soul_tokens = self._estimate_tokens(soul_content)
-            if soul_tokens > 0 and soul_tokens <= budget_remaining:
-                sections.append("## 你的人格设定\n" + soul_content)
-                budget_remaining -= soul_tokens
+            cap = quotas["soul"] + unused
+            used = self._inject_section(sections, "## 你的人格设定", soul_content, cap, budget)
+            unused += max(0, cap - used)
 
-        # 优先级 1: 长期记忆 — 一次加载，拆分使用
+        # 层级 1: 长期记忆 — 一次加载，拆分使用
         long_term = self.storage.load_long_term()
 
-        # 优先级 0.5: 行为指引
-        # LLM 在 evolve_understanding() 时写入 long_term.md 的「## 行为指引」章节。
-        # 这里直接读取——不解析、不转换，LLM 写什么就注入什么。
-        if long_term and budget_remaining > 0:
-            behavioral_match = re.search(
+        # 层级 0.5: 行为指引（从长期记忆中提取）
+        if long_term:
+            b_match = re.search(
                 r'## 行为指引\n(.*?)(?=\n##|\Z)', long_term, re.DOTALL
             )
-            if behavioral_match:
-                behavioral = behavioral_match.group(1).strip()
+            if b_match:
+                behavioral = b_match.group(1).strip()
                 if behavioral and "待生成" not in behavioral and "待填写" not in behavioral:
-                    b_tokens = self._estimate_tokens(behavioral)
-                    if b_tokens <= budget_remaining:
-                        sections.append("## 行为指引\n" + behavioral)
-                        budget_remaining -= b_tokens
-                    else:
-                        truncated = self._truncate_by_tokens(behavioral, budget_remaining)
-                        if truncated:
-                            sections.append("## 行为指引\n" + truncated)
-                            budget_remaining = 0
+                    cap = quotas["behavioral"] + unused
+                    used = self._inject_section(sections, "## 行为指引", behavioral, cap, budget)
+                    unused += max(0, cap - used)
 
-        # 优先级 2: 长期记忆（用户画像 + 重要事实 — 不含行为指引）
-        if long_term and budget_remaining > 0:
+        # 层级 2: 长期记忆（用户画像 + 事实）
+        if long_term:
             lt_content = self._extract_relevant_sections(long_term)
-            lt_tokens = self._estimate_tokens(lt_content)
-            if lt_tokens > 0:
-                if lt_tokens <= budget_remaining:
-                    sections.append("## 关于用户\n" + lt_content)
-                    budget_remaining -= lt_tokens
-                else:
-                    # 截断到剩余预算
-                    truncated = self._truncate_by_tokens(lt_content, budget_remaining)
-                    if truncated:
-                        sections.append("## 关于用户\n" + truncated)
-                        budget_remaining = 0
+            if lt_content:
+                cap = quotas["long_term"] + unused
+                used = self._inject_section(sections, "## 关于用户", lt_content, cap, budget)
+                unused += max(0, cap - used)
 
-        # 优先级 2: 中期记忆（近期上下文摘要）
+        # 层级 3: 中期记忆（近期上下文摘要）
         mid_term = self.storage.load_mid_term()
-        if mid_term and budget_remaining > 0:
+        if mid_term:
             recent_summary = self._extract_recent_summary(mid_term)
             if recent_summary:
-                ms_tokens = self._estimate_tokens(recent_summary)
-                if ms_tokens <= budget_remaining:
-                    sections.append("## 近期上下文\n" + recent_summary)
-                    budget_remaining -= ms_tokens
-                else:
-                    truncated = self._truncate_by_tokens(recent_summary, budget_remaining)
-                    if truncated:
-                        sections.append("## 近期上下文\n" + truncated)
-                        budget_remaining = 0
+                cap = quotas["mid_term"] + unused
+                used = self._inject_section(sections, "## 近期上下文", recent_summary, cap, budget)
+                unused += max(0, cap - used)
 
-        # 优先级 3: 短期记忆（当前任务）
+        # 层级 4: 短期记忆（当前任务）
         short_term = self.storage.load_short_term()
-        if short_term and budget_remaining > 0:
+        if short_term:
             current_task = self._extract_current_task(short_term)
             if current_task:
-                ct_tokens = self._estimate_tokens(current_task)
-                if ct_tokens <= budget_remaining:
-                    sections.append("## 当前任务\n" + current_task)
-                    budget_remaining -= ct_tokens
-                else:
-                    truncated = self._truncate_by_tokens(current_task, budget_remaining)
-                    if truncated:
-                        sections.append("## 当前任务\n" + truncated)
+                cap = quotas["short_term"] + unused
+                self._inject_section(sections, "## 当前任务", current_task, cap, budget)
 
         if sections:
             result = "\n\n".join(sections)
-            logger.debug(f"构建系统提示: {self._estimate_tokens(result)} tokens (预算 {budget})")
+            logger.debug(
+                f"构建系统提示: {self._estimate_tokens(result)} tokens (预算 {budget}, "
+                f"soul={quotas['soul']} behavioral={quotas['behavioral']} "
+                f"long={quotas['long_term']} mid={quotas['mid_term']} "
+                f"short={quotas['short_term']})"
+            )
             return result
         return ""
 
@@ -603,7 +624,6 @@ class MemoryManager:
     
     def _extract_soul_content(self, content: str) -> str:
         """提取人格设定内容"""
-        import re
         
         sections = []
         
@@ -634,7 +654,6 @@ class MemoryManager:
         """更新人格设定的特定章节"""
         soul = self.storage.load_soul() or ""
         
-        import re
         pattern = rf'(## {re.escape(section)}\n)(.*?)(?=\n##|\Z)'
         match = re.search(pattern, soul, re.DOTALL)
         
@@ -645,7 +664,6 @@ class MemoryManager:
     
     def _extract_relevant_sections(self, content: str) -> str:
         """提取长期记忆中的相关章节"""
-        import re
         
         sections = []
         
@@ -661,7 +679,6 @@ class MemoryManager:
     
     def _extract_recent_summary(self, content: str) -> str:
         """提取最近的摘要"""
-        import re
         
         today = datetime.now()
         recent_summaries = []
@@ -677,7 +694,6 @@ class MemoryManager:
     
     def _extract_current_task(self, content: str) -> str:
         """提取当前任务"""
-        import re
         
         task_match = re.search(r'## 当前任务\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
         if task_match:
@@ -782,7 +798,6 @@ class MemoryManager:
         if not content:
             return
 
-        import re
 
         # 提取「用户主动告知」事实
         user_told_match = re.search(
@@ -866,7 +881,6 @@ class MemoryManager:
                 logger.warning("长期记忆整理：LLM 无响应，跳过")
                 return
 
-            import json
             json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response, re.DOTALL)
             if json_match:
                 clusters = json.loads(json_match.group(1))
@@ -932,7 +946,6 @@ class MemoryManager:
         original_count: int,
     ):
         """用整理后的事实重建长期记忆的「用户画像」和「重要事实」章节。"""
-        import re
 
         # 构建分类后的事实块
         label_map = {
@@ -1069,7 +1082,6 @@ class MemoryManager:
         """修剪短期记忆条目，保持最大数量"""
         content = self.storage.load_short_term()
         
-        import re
         dialog_section = re.search(r'## 最近对话\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
         
         if dialog_section:
