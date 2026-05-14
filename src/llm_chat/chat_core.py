@@ -368,7 +368,7 @@ class ChatCore:
         effective_message: str,
         model_params: dict,
     ):
-        """管道前段：步骤 1-5（持久化用户消息 → 系统上下文 → 压缩 → 模型参数）。
+        """管道前段：步骤 1-4（持久化 → 系统上下文 → 模型路由 → 压缩）。
 
         Returns:
             (system_context, processed_history, processed_message, params)
@@ -385,12 +385,7 @@ class ChatCore:
         history = conv.get_history()
         history = history[:-1] if history else []
 
-        # 4. 上下文压缩
-        processed_history, processed_message = self._compress_context(
-            conv, history, effective_message, system_context
-        )
-
-        # 5. 合并模型参数
+        # 4. 模型路由（必须在压缩前计算，压缩验证需要最终模型上限）
         params = {**conv.get_model_params(), **model_params}
         if decision.suggested_model:
             from llm_chat.intent.classifier import IntentClassifier
@@ -403,6 +398,12 @@ class ChatCore:
                     logger.info(
                         f"[INTENT] 模型路由: {decision.intent.value} → {suggested} (hint={model_hint})"
                     )
+
+        # 5. 上下文压缩（传入最终模型名用于验证）
+        final_model = params.get("model", self.config.llm.model)
+        processed_history, processed_message = self._compress_context(
+            conv, history, effective_message, system_context, model=final_model
+        )
 
         return system_context, processed_history, processed_message, params
 
@@ -542,8 +543,13 @@ class ChatCore:
         history: List[Dict[str, Any]],
         message: str,
         system_context: Optional[str],
+        model: Optional[str] = None,
     ) -> tuple:
         """使用 ContextManager 压缩上下文。
+
+        Args:
+            model: 最终使用的模型名（用于验证压缩后 token 上限）。
+                   若为 None 则使用 config 默认模型。
 
         Returns:
             (processed_history, processed_message) - history 不含当前消息
@@ -577,9 +583,9 @@ class ChatCore:
 
             total_sent_tokens = sum(count_tokens(m.content) for m in result.messages)
 
-            # 验证压缩结果与模型上限一致（处理意图路由切换模型场景）
+            # 验证压缩结果与模型上限一致（传入最终模型名，处理意图路由场景）
             from llm_chat.utils.token_counter import get_context_limit
-            model_name = self.config.llm.model
+            model_name = model or self.config.llm.model
             actual_limit = get_context_limit(model_name) if model_name else context_manager.max_model_tokens
             if total_sent_tokens > actual_limit * 0.9:
                 logger.warning(
