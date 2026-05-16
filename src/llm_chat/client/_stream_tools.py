@@ -281,6 +281,7 @@ class LLMClientStreamToolsMixin:
 
             # 从 submit_decision_card 的调用参数直接构建卡片
             # （不依赖 tool execute，避免被 MCP 同名工具覆盖）
+            card_submitted = False
             for tc in tool_calls:
                 if tc["function"]["name"] == "submit_decision_card":
                     try:
@@ -305,6 +306,7 @@ class LLMClientStreamToolsMixin:
                             )
                             st.submit_card(card)
                             tool_result_text = f"卡片已提交: {card.title}"
+                            card_submitted = True
                         else:
                             missing = []
                             if not args.get("title"):
@@ -363,6 +365,11 @@ class LLMClientStreamToolsMixin:
             )
             context_limit = get_context_limit(self.config.llm.model)
             yield ("context_update", current_tokens, context_limit)
+
+            # submit_decision_card 提交成功后终止迭代
+            if card_submitted:
+                logger.info(f"卡片已提交，终止工具循环 (迭代 {iteration + 1})")
+                break
 
         # 流式完成：记录 token 消耗（委托给共享 helper）
         self._record_stream_tokens(stream_usage, total_output_chars, current_messages)

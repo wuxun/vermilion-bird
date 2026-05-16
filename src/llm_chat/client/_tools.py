@@ -100,6 +100,10 @@ class LLMClientToolsMixin:
                 f"迭代 {iteration + 1}: 检测到 {len(tool_calls)} 个工具调用"
             )
 
+            # ── 处理工具调用 ──
+            # submit_decision_card 成功后设置此标志，终止迭代循环
+            card_submitted = False
+
             for tool_call in tool_calls:
                 logger.info(
                     f"工具调用: {tool_call.name}, "
@@ -131,6 +135,7 @@ class LLMClientToolsMixin:
                             )
                             st.submit_card(card)
                             tool_result_text = f"卡片已提交: {card.title}"
+                            card_submitted = True
                         else:
                             missing = []
                             if not args_dict.get("title"):
@@ -190,6 +195,11 @@ class LLMClientToolsMixin:
                     tool_call, tool_result, is_error
                 )
                 current_messages.append(tool_message)
+
+            # submit_decision_card 提交成功后终止迭代，避免 LLM 继续空调用
+            if card_submitted:
+                logger.info(f"卡片已提交，终止工具循环 (迭代 {iteration + 1})")
+                return self.protocol.parse_chat_response(result)
 
         logger.warning(f"达到最大迭代次数 {max_iterations}")
         return self.protocol.parse_chat_response(result)
