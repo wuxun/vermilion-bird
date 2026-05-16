@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional, Generator
 
 import requests
@@ -11,6 +12,96 @@ from llm_chat.utils.token_counter import count_messages_tokens, get_context_limi
 from llm_chat.client._logging import log_request_details
 
 logger = logging.getLogger(__name__)
+
+
+def _repair_json(args_str: str) -> str:
+    """修复流式响应中被截断的 JSON 参数。
+
+    流式 tool call 的 arguments 按 chunk 拼接，但可能因 max_tokens
+    限制而被截断。此函数尝试修复常见的截断模式。
+
+    返回修复后的 JSON 字符串，若无法修复则返回 '{}'。
+    """
+    if not args_str or not args_str.strip():
+        return "{}"
+
+    original = args_str.strip()
+
+    # ── 策略 1：补全括号和引号 ──
+    repaired = original
+
+    # 计数未闭合的字符串（奇数个引号意味着有未闭合字符串）
+    # 简化：计算 " 的奇偶性
+    in_string = False
+    escaped = False
+    for ch in repaired:
+        if escaped:
+            escaped = False
+            continue
+        if ch == '\\':
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+
+    # 如果卡在字符串中间，闭合它
+    if in_string:
+        repaired += '"'
+
+    # 补全缺失的 ] 和 }
+    open_brackets = repaired.count('[') - repaired.count(']')
+    open_braces = repaired.count('{') - repaired.count('}')
+
+    # 先闭合数组，再闭合对象
+    repaired += ']' * max(0, open_brackets)
+    repaired += '}' * max(0, open_braces)
+
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError:
+        pass
+
+    # ── 策略 2：截断到最后完整键值对 ──
+    # 找到最后一个完整的 ", 对
+    # 正则匹配: "key": value (value 可以是字符串/数字/对象/数组)
+    last_complete = None
+    # 简单方法：从后往前找最后一个 "key": 后面跟合法 JSON 值的模式
+    # 更稳健：找最后一个后面跟着完整 JSON 值的 :
+    idx = len(original)
+    while idx > 0:
+        idx = original.rfind(',', 0, idx)
+        if idx == -1:
+            break
+        # 看从开头到 idx 的部分，加上闭合括号
+        candidate = original[:idx]
+        # 补括号
+        c_open_brackets = candidate.count('[') - candidate.count(']')
+        c_open_braces = candidate.count('{') - candidate.count('}')
+        candidate += ']' * max(0, c_open_brackets)
+        candidate += '}' * max(0, c_open_braces)
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            continue
+
+    # ── 策略 3：只保留第一个完整键值对（对 submit_decision_card 至少保留 title） ──
+    # 找第一个 , 处截断
+    first_comma = original.find(',')
+    if first_comma > 0:
+        candidate = original[:first_comma]
+        c_open_brackets = candidate.count('[') - candidate.count(']')
+        c_open_braces = candidate.count('{') - candidate.count('}')
+        candidate += ']' * max(0, c_open_brackets)
+        candidate += '}' * max(0, c_open_braces)
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            pass
+
+    return "{}"
 
 
 class LLMClientStreamToolsMixin:
@@ -151,10 +242,17 @@ class LLMClientStreamToolsMixin:
                 try:
                     json.loads(args_str)
                 except json.JSONDecodeError:
-                    logger.warning(
-                        f"流式工具调用参数不完整，尝试修复: {args_str[:100]}..."
-                    )
-                    tc["function"]["arguments"] = "{}"
+                    repaired = _repair_json(args_str)
+                    if repaired != "{}":
+                        logger.info(
+                            f"流式工具调用 JSON 已修复: "
+                            f"{args_str[:80]}... → {repaired[:80]}..."
+                        )
+                    else:
+                        logger.warning(
+                            f"流式工具调用参数不完整，无法修复: {args_str[:100]}..."
+                        )
+                    tc["function"]["arguments"] = repaired
 
             logger.info(f"检测到 {len(tool_calls)} 个工具调用")
 
