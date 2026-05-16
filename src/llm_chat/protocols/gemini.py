@@ -48,8 +48,7 @@ class GeminiProtocol(BaseProtocol):
         if kwargs.get("temperature") is not None:
             generation_config["temperature"] = kwargs["temperature"]
         
-        if kwargs.get("max_tokens"):
-            generation_config["maxOutputTokens"] = kwargs["max_tokens"]
+        generation_config["maxOutputTokens"] = kwargs.get("max_tokens", 8192)
         
         if kwargs.get("top_p") is not None:
             generation_config["topP"] = kwargs["top_p"]
