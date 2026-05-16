@@ -304,8 +304,30 @@ class LLMClientStreamToolsMixin:
                                 sources=args.get("sources", []),
                             )
                             st.submit_card(card)
+                            tool_result_text = f"卡片已提交: {card.title}"
+                        else:
+                            missing = []
+                            if not args.get("title"):
+                                missing.append("title")
+                            if not args.get("options"):
+                                missing.append("options")
+                            tool_result_text = (
+                                f"卡片参数不完整，缺少: {', '.join(missing)}。"
+                                f"请重新调用 submit_decision_card 并填写完整的 title 和 options 参数。"
+                                f"options 至少需要 2 个选项，每个选项需包含 id, label, confidence 字段。"
+                            )
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败: {e}")
+                        tool_result_text = (
+                            f"卡片构建失败: {e}。"
+                            f"请重新调用 submit_decision_card 并确保参数格式正确。"
+                        )
+                    # 将结果反馈给 LLM
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": tool_result_text,
+                    })
 
             for result in tool_results:
                 logger.info(

@@ -108,6 +108,7 @@ class LLMClientToolsMixin:
 
                 # 从 submit_decision_card 参数直接构建卡片
                 if tool_call.name == "submit_decision_card":
+                    tool_call_id = tool_call.id if hasattr(tool_call, 'id') else f"tc_{tool_call.name}"
                     try:
                         args_dict = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
                         if args_dict.get("title") and args_dict.get("options"):
@@ -129,9 +130,30 @@ class LLMClientToolsMixin:
                                 sources=args_dict.get("sources", []),
                             )
                             st.submit_card(card)
+                            tool_result_text = f"卡片已提交: {card.title}"
+                        else:
+                            missing = []
+                            if not args_dict.get("title"):
+                                missing.append("title")
+                            if not args_dict.get("options"):
+                                missing.append("options")
+                            tool_result_text = (
+                                f"卡片参数不完整，缺少: {', '.join(missing)}。"
+                                f"请重新调用 submit_decision_card 并填写完整的 title 和 options 参数。"
+                                f"options 至少需要 2 个选项，每个选项需包含 id, label, confidence 字段。"
+                            )
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
-                    # submit_decision_card 已处理（无论成功或数据不足），跳过正常工具执行
+                        tool_result_text = (
+                            f"卡片构建失败: {e}。"
+                            f"请重新调用 submit_decision_card 并确保参数格式正确。"
+                        )
+                    # 将结果反馈给 LLM
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": tool_result_text,
+                    })
                     continue
 
                 tool_result = None
