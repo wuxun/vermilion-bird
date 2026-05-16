@@ -25,7 +25,7 @@ class OpenAIProtocol(BaseProtocol):
         
         # max_tokens 始终发送默认值，避免依赖 API 提供方不确定的默认值
         # 4096 覆盖绝大多数场景；调用方可通过传参覆盖
-        data["max_tokens"] = kwargs.get("max_tokens", 4096)
+        data["max_tokens"] = kwargs.get("max_tokens", 8192)
         
         if kwargs.get("top_p") is not None:
             data["top_p"] = kwargs["top_p"]
@@ -49,7 +49,7 @@ class OpenAIProtocol(BaseProtocol):
             "model": self.model,
             "prompt": prompt,
             "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 4096),
+            "max_tokens": kwargs.get("max_tokens", 8192),
         }
         return data
     

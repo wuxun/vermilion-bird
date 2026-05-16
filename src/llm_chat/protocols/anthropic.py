@@ -31,7 +31,7 @@ class AnthropicProtocol(BaseProtocol):
         data = {
             "model": self.model,
             "messages": chat_messages,
-            "max_tokens": kwargs.get("max_tokens", 4096),
+            "max_tokens": kwargs.get("max_tokens", 8192),
         }
         if system_prompt:
             data["system"] = system_prompt
@@ -69,7 +69,7 @@ class AnthropicProtocol(BaseProtocol):
         data = {
             "model": self.model,
             "prompt": prompt,
-            "max_tokens_to_sample": kwargs.get("max_tokens", 1000),
+            "max_tokens_to_sample": kwargs.get("max_tokens", 8192),
         }
         return data
     
