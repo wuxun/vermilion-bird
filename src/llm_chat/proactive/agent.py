@@ -308,16 +308,21 @@ class ProactiveAgent:
                 return None
 
             # 使用 chat_with_tools，LLM 自行调用 submit_decision_card
-            self._app.client.chat_with_tools(
-                message=user_message,
-                tools=card_tool,
-                history=[{"role": "system", "content": SYSTEM_PROMPT}],
-                temperature=0.8,
-                max_tokens=2000,
-            )
-
-            # 从 thread-local 提取卡片
-            card = get_pending_card()
+            from llm_chat.decision.submit_tool import init_card_context, clear_card_context
+            init_card_context()
+            card = None
+            try:
+                self._app.client.chat_with_tools(
+                    message=user_message,
+                    tools=card_tool,
+                    history=[{"role": "system", "content": SYSTEM_PROMPT}],
+                    temperature=0.8,
+                    max_tokens=2000,
+                )
+                # 提取卡片（必须在 clear_card_context 之前，它读取 contextvar）
+                card = get_pending_card()
+            finally:
+                clear_card_context()
             if card:
                 logger.info(f"ProactiveAgent 生成卡片: {card.id} -> {card.title}")
                 return card
