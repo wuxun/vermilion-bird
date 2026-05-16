@@ -270,10 +270,12 @@ class LLMClientStreamToolsMixin:
             for tc in tool_calls:
                 tool_name = tc["function"]["name"]
                 tool_args = tc["function"].get("arguments", "{}")
-                yield ("tool_call_start", tool_name, tool_args)
+                # submit_decision_card 不走正常 tool execute，由卡片构建逻辑处理
+                if tool_name != "submit_decision_card":
+                    yield ("tool_call_start", tool_name, tool_args)
 
             tool_results = self._tool_executor_instance.execute_tools_parallel(
-                tool_calls
+                [tc for tc in tool_calls if tc["function"]["name"] != "submit_decision_card"]
             )
             logger.info(f"工具执行结果数量: {len(tool_results)}")
 

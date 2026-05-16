@@ -131,6 +131,8 @@ class LLMClientToolsMixin:
                             st.submit_card(card)
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
+                    # submit_decision_card 已处理（无论成功或数据不足），跳过正常工具执行
+                    continue
 
                 tool_result = None
                 # 使用 ToolExecutor 统一执行（含重试+超时），与流式路径一致
