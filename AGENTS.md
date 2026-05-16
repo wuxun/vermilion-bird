@@ -1,12 +1,12 @@
 # Vermilion Bird - 项目知识库
 
-**更新时间**: 2026-05-03
-**评分**: A (综合) | 35 项审计修复完成
+**更新时间**: 2026-05-16
+**评分**: A (综合) | 35 项审计修复完成 + 8 项增量优化
 **Branch**: main
 
 ## 概述
 
-大模型对话客户端，支持多协议（OpenAI/Anthropic/Gemini）、MCP 工具调用、容器化沙箱执行、意图识别路由、事件驱动触发器、多层记忆系统。
+大模型对话客户端，支持多协议（OpenAI/Anthropic/Gemini）、MCP 工具调用、容器化沙箱执行、意图识别路由、事件驱动触发器、多层记忆系统、Decision-First 交互范式、ProactiveAgent 主动推送。
 核心栈：Python 3.9+ / Poetry / PyQt6 / MCP / APScheduler / Docker。
 
 ## 项目结构
@@ -94,6 +94,18 @@ vermilion-bird/
 │   │   ├── compressor.py      # ContextCompressor (system_context 摘要)
 │   │   └── cache.py           # ContextCache (Storage 连接)
 │   │
+│   ├── decision/              # 🆕 Decision-First 决策卡片
+│   │   ├── __init__.py
+│   │   ├── schema.py          # DecisionCard/DecisionOption Pydantic 模型
+│   │   ├── submit_tool.py     # SubmitDecisionCardTool + contextvar 卡片通道
+│   │   ├── card_panel.py      # GUI 卡片渲染 (QFrame)
+│   │   ├── log.py             # 决策日志持久化 (SQLite)
+│   │   └── action_executor.py # 卡片选项确认文本
+│   │
+│   ├── proactive/             # 🆕 ProactiveAgent 主动推送
+│   │   ├── __init__.py
+│   │   └── agent.py           # ProactiveAgent (每日话题生成 + 飞书/GUI 推送)
+│   │
 │   ├── skills/                # 技能插件系统
 │   │   ├── base.py            # BaseSkill 抽象基类
 │   │   ├── manager.py         # SkillManager (hash 前缀防冲突)
@@ -116,6 +128,12 @@ vermilion-bird/
 │   │   ├── web_fetch/         # 网页抓取 (trafilatura + playwright)
 │   │   └── web_search/        # 网页搜索 (DuckDuckGo)
 │   │
+│   └── utils/                 # 工具类
+│       ├── token_counter.py   # tiktoken 封装 + 模型上下文限制
+│       ├── secure_storage.py  # 🆕 keyring API Key 安全存储
+│       ├── observability.py   # span/counter/gauge
+│       └── retry.py           # 重试工具
+│   │
 │   ├── tools/                 # 工具基础设施
 │   │   ├── base.py            # BaseTool 抽象基类
 │   │   ├── registry.py        # ToolRegistry (单例)
@@ -123,12 +141,6 @@ vermilion-bird/
 │   │
 │   ├── services/              # 业务服务层
 │   │   └── conversation_service.py
-│   │
-│   └── utils/                 # 工具类
-│       ├── token_counter.py   # tiktoken 封装 + 模型上下文限制
-│       ├── secure_storage.py  # 🆕 keyring API Key 安全存储
-│       ├── observability.py   # span/counter/gauge
-│       └── retry.py           # 重试工具
 │
 ├── tests/                     # pytest 测试
 ├── docs/                      # 项目文档
@@ -193,8 +205,14 @@ vermilion-bird/
 | `ServiceManager` | Class | service_manager.py | 通用服务生命周期 |
 | `AgentContext` | Class | skills/task_delegator/context.py | 子 agent 运行时上下文 |
 | `WorkflowExecutor` | Class | skills/task_delegator/workflow.py | 工作流引擎 |
+| `DecisionCard` | Class | decision/schema.py | 决策卡片 Pydantic 模型 |
+| `SubmitDecisionCardTool` | Class | decision/submit_tool.py | LLM tool-call 提交卡片 |
+| `ProactiveAgent` | Class | proactive/agent.py | 每日主动话题推送 |
+| `_repair_json` | Func | client/_stream_tools.py | 流式截断 JSON 修复 |
 
 ## 核心数据流
+
+### 主对话管道
 
 ```
 用户输入 (CLI/GUI/飞书/Webhook)
@@ -211,16 +229,21 @@ ChatCore.send_message()
     ├── 2. _build_system_context()
     │       ├── MemoryManager.build_system_prompt()  # 四层记忆 + 风格注入
     │       ├── FTS5 相关历史搜索 (jieba 分词)
-    │       └── Prompt skills 上下文
+    │       ├── Prompt skills 上下文
+    │       └── Decision card prompt (决策卡片触发规则)
     ├── 3. ContextManager.process_context()          # 三级压缩 + 缓存
     │
     ▼
 LLMClient (chat / chat_with_tools / chat_stream_with_tools)
     │
     ├── BaseProtocol.build_chat_request()
+    │   └── max_tokens 默认 8192 (可传参覆盖)
     ├── HTTP POST (指数退避重试: min(2^n,60) + 10% jitter)
     │
     ├── [如有 tool_calls]
+    │   ├── submit_decision_card → 卡片构建 (跳过 execute)
+    │   │   ├── 成功 → card_submitted=True → break 迭代
+    │   │   └── 失败 → 错误反馈给 LLM 重试
     │   ├── ToolExecutor.execute_tools_parallel()
     │   │   ├── ToolRegistry (内置技能工具)
     │   │   ├── MCPManager (MCP 工具, 优先 Tavily/Brave)
@@ -228,9 +251,37 @@ LLMClient (chat / chat_with_tools / chat_stream_with_tools)
     │   └── 结果注入 messages，继续迭代
     │
     ▼
+ChatCore._extract_pending_card()  # contextvar 提取卡片
+    ├── on_card 回调 → GUI DecisionCardWidget 渲染
+    └── 飞书端纯文本摘要推送
+
 Conversation.add_assistant_message()
     ├── Storage 持久化 → SQLite
     └── MemoryManager 异步提取 → 多层记忆
+```
+
+### ProactiveAgent 主动推送管道
+
+```
+SchedulerService (cron 每日触发)
+    │
+    ▼
+ProactiveAgent.generate_and_push()
+    │
+    ├── _build_context()
+    │   ├── 🌐 网络搜索 (DDGS, 按星期轮换主题, 3词×4条 + 兴趣2维×3条)
+    │   └── 📝 用户记忆 (辅助, 判断相关性)
+    │
+    ├── _generate_card()
+    │   ├── init_card_context()  # 设置 contextvar
+    │   ├── client.chat_with_tools(submit_decision_card)
+    │   ├── get_pending_card()   # 提取卡片
+    │   └── clear_card_context()
+    │
+    ▼
+DecisionCard
+    ├──→ GUI: card_created signal → DecisionCardWidget
+    └──→ 飞书: 纯文本摘要 + 独立会话
 ```
 
 ## 配置体系
@@ -283,6 +334,19 @@ skills:
 # 推荐: keyring 系统密钥链
 # vermilion-bird keyring set openai default
 ```
+
+## 🆕 增量优化 (2026-05-16, 8 项)
+
+| 能力 | 位置 | 说明 |
+|------|------|------|
+| **ProactiveAgent web-first** | `proactive/agent.py` | 网络搜索为主要话题燃料, 记忆退为辅助; 搜索深度 3×4+兴趣×2×3 |
+| **决策卡片节流** | `chat_core.py` | 新增"默认不用卡片"原则 + 3 问自检清单 + 严格约束文本回复为 1 句 |
+| **流式 JSON 修复** | `client/_stream_tools.py` | `_repair_json()` 三层策略: 补全括号→截断到尾键值→保留首键值 |
+| **max_tokens 默认 8192** | `protocols/` | 三个协议统一默认 8192 (原 4096/1000)，防止 API 默认值过小截断 |
+| **submit_decision_card 失败重试** | `client/_tools.py`, `_stream_tools.py` | 参数缺失时反馈 LLM 具体缺失字段, LLM 自行修复重试 |
+| **卡片提交后终止迭代** | `client/_tools.py`, `_stream_tools.py` | `card_submitted` 标志, 成功后 break 外层循环, 避免空调用浪费 token |
+| **卡片 contextvar 修复** | `proactive/agent.py` | ProactiveAgent 对齐 ChatCore 模式: init→LLM→get→clear |
+| **卡片拦截 skip execute** | `client/_tools.py`, `_stream_tools.py` | submit_decision_card 不进入正常 tool execute, 避免空参数 crash |
 
 ## 🆕 新增能力 (本轮 35 项修复)
 
