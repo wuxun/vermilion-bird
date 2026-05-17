@@ -462,7 +462,8 @@ class HistoryStage(PipelineStage):
     """获取对话历史并剥离当前消息。
 
     必须在 PersistUserStage 之后执行（新增的消息已写入 SQLite）。
-    剥离 history[:-1] 以排除刚持久化的当前消息。
+    用内容精确匹配排除当前用户消息（而非 history[:-1]），
+    避免因时序/排序问题导致剥离错误的消息。
     """
 
     name = "History"
@@ -475,13 +476,22 @@ class HistoryStage(PipelineStage):
         conv = self._conversation_manager.get_conversation(ctx.conversation_id)
         history = conv.get_history()
 
-        # 剥离刚写入的用户消息（PersistUserStage 写入）
-        # 保留 history[:-1] — 当前消息在 CompressStage 单独加入
-        ctx.processed_history = history[:-1] if history else []
+        # 用内容精确匹配排除刚写入的当前用户消息
+        # 比 history[:-1] 更鲁棒：不依赖 DB 排序，且正确处理内容相同但角色不同的消息
+        current_msg = ctx.user_message
+        filtered = []
+        found_current = False
+        for msg in reversed(history):
+            if not found_current and msg.get("role") == "user" and msg.get("content") == current_msg:
+                found_current = True
+                continue
+            filtered.append(msg)
+        filtered.reverse()
+        ctx.processed_history = filtered
 
         logger.debug(
             f"[HistoryStage] loaded {len(history)} messages, "
-            f"stripped to {len(ctx.processed_history)}"
+            f"stripped current user message, remaining {len(ctx.processed_history)}"
         )
         return ctx
 
