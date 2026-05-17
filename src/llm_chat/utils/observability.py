@@ -8,6 +8,7 @@
 - get_observability(): 获取全局单例
 """
 
+import asyncio
 import time
 import functools
 import threading
@@ -216,6 +217,31 @@ def observe(
     def decorator(func):
         op_name = operation or func.__qualname__
 
+        # Async branch: wrap coroutine functions with await
+        if asyncio.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                meta = {}
+                if extra_tags:
+                    meta.update(extra_tags)
+                if track_args:
+                    meta["arg_types"] = [type(a).__name__ for a in args]
+                    meta["kwarg_keys"] = list(kwargs.keys())
+
+                span = _observability.start_span(op_name, **meta)
+                try:
+                    result = await func(*args, **kwargs)
+                    _observability.end_span(span)
+                    _observability.increment(f"{op_name}.success")
+                    return result
+                except Exception as e:
+                    _observability.end_span(span, error=str(e))
+                    _observability.increment(f"{op_name}.error")
+                    raise
+
+            return async_wrapper
+
+        # Sync branch (existing, unchanged)
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             meta = {}
