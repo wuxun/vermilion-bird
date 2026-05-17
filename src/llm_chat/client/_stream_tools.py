@@ -320,11 +320,12 @@ class LLMClientStreamToolsMixin:
                             from llm_chat.decision.schema import DecisionCard, DecisionOption
                             import llm_chat.decision.submit_tool as st
                             option_ids = ["A", "B", "C", "D"]
+                            rec = args.get("recommendation")
                             opts = [DecisionOption(
                                 id=o.get("id") or (option_ids[i] if i < len(option_ids) else f"O{i+1}"),
                                 label=o.get("label", ""),
                                 description=o.get("description"),
-                                confidence=0.7,
+                                confidence=0.85 if rec and (o.get("id") or option_ids[i]) == rec else 0.7,
                             ) for i, o in enumerate(args["options"])]
                             card = DecisionCard(
                                 title=args["title"],

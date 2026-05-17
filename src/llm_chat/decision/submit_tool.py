@@ -181,13 +181,15 @@ class SubmitDecisionCardTool(BaseTool):
 
         try:
             option_ids = ["A", "B", "C", "D"]
+            rec = recommendation  # 推荐选项 id
             option_objs = []
             for i, o in enumerate(options):
+                oid = o.get("id") or (option_ids[i] if i < len(option_ids) else f"O{i+1}")
                 option_objs.append(DecisionOption(
-                    id=o.get("id") or option_ids[i] if i < len(option_ids) else f"O{i+1}",
+                    id=oid,
                     label=o.get("label", ""),
                     description=o.get("description"),
-                    confidence=0.7,
+                    confidence=0.85 if rec and oid == rec else 0.7,
                 ))
 
             card = DecisionCard(
