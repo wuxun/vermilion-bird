@@ -28,12 +28,16 @@ class LLMClientToolsMixin:
         message: str,
         tools: List[Dict[str, Any]],
         history: Optional[List[Dict[str, Any]]] = None,
+        system_context: Optional[str] = None,
         **kwargs,
     ) -> str:
         if history is None:
             history = []
 
-        messages = history.copy()
+        messages = []
+        if system_context:
+            messages.append({"role": "system", "content": system_context})
+        messages.extend(history)
         messages.append({"role": "user", "content": message})
 
         logger.info(
@@ -71,15 +75,6 @@ class LLMClientToolsMixin:
             result = self._http_post_json_with_retry(
                 url, data, headers, label=f"tools iter {iteration+1}"
             )
-            # Track token usage
-            usage = result.get("usage", {})
-            if usage:
-                from llm_chat.utils.observability import get_observability
-                obs = get_observability()
-                obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
-                obs.increment("tokens.completion", usage.get("completion_tokens", 0))
-                obs.increment("tokens.total", usage.get("total_tokens", 0))
-                obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
 
             if not self.protocol.has_tool_calls(result):
                 response_text = self.protocol.parse_chat_response(result)

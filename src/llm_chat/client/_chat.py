@@ -61,16 +61,6 @@ class LLMClientChatMixin:
 
         result = self._http_post_json_with_retry(url, data, headers, label="chat")
 
-        # Track token usage
-        usage = result.get("usage", {})
-        if usage:
-            from llm_chat.utils.observability import get_observability
-            obs = get_observability()
-            obs.increment("tokens.prompt", usage.get("prompt_tokens", 0))
-            obs.increment("tokens.completion", usage.get("completion_tokens", 0))
-            obs.increment("tokens.total", usage.get("total_tokens", 0))
-            obs.increment(f"tokens.{self.config.llm.model}", usage.get("total_tokens", 0))
-
         response_text = self.protocol.parse_chat_response(result)
         logger.info(f"聊天响应: length={len(response_text)}")
         return response_text
