@@ -121,53 +121,36 @@ class SubmitDecisionCardTool(BaseTool):
                 },
                 "context": {
                     "type": "string",
-                    "description": "背景摘要，1-3 行说明为什么需要决策",
+                    "description": "背景摘要，1-2 句话说明为什么需要决策",
                 },
                 "options": {
                     "type": "array",
-                    "description": "选项列表，至少 2 个",
+                    "description": "选项列表（2-3 个），id 自动分配为 A/B/C",
                     "minItems": 2,
+                    "maxItems": 4,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {
-                                "type": "string",
-                                "description": "选项 ID，依次为 A, B, C...",
-                            },
                             "label": {
                                 "type": "string",
-                                "description": "选项名称，简短如 '连接池扩容（推荐）'",
+                                "description": "选项名称，如 '连接池扩容（推荐）'",
                             },
                             "description": {
                                 "type": "string",
-                                "description": "选项的详细说明",
-                            },
-                            "expected_effect": {
-                                "type": "string",
-                                "description": "预期效果摘要",
-                            },
-                            "risk": {
-                                "type": "string",
-                                "description": "风险描述",
-                            },
-                            "confidence": {
-                                "type": "number",
-                                "description": "置信度，0.0~1.0",
-                                "minimum": 0.0,
-                                "maximum": 1.0,
+                                "description": "选项的详细说明（可选包含预期效果和风险）",
                             },
                         },
-                        "required": ["id", "label", "confidence"],
+                        "required": ["label"],
                     },
                 },
                 "recommendation": {
                     "type": "string",
-                    "description": "推荐选项的 id，应为 confidence 最高的选项",
+                    "description": "推荐选项的 id (A/B/C)，可选",
                 },
                 "sources": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "信息来源引用，如子 agent 名称、文档路径",
+                    "description": "信息来源引用，可选",
                 },
             },
             "required": ["title", "options"],
@@ -197,15 +180,14 @@ class SubmitDecisionCardTool(BaseTool):
         from llm_chat.decision.schema import DecisionCard, DecisionOption
 
         try:
+            option_ids = ["A", "B", "C", "D"]
             option_objs = []
-            for o in options:
+            for i, o in enumerate(options):
                 option_objs.append(DecisionOption(
-                    id=o.get("id", ""),
+                    id=o.get("id") or option_ids[i] if i < len(option_ids) else f"O{i+1}",
                     label=o.get("label", ""),
                     description=o.get("description"),
-                    expected_effect=o.get("expected_effect"),
-                    risk=o.get("risk"),
-                    confidence=float(o.get("confidence", 0.5)),
+                    confidence=0.7,
                 ))
 
             card = DecisionCard(

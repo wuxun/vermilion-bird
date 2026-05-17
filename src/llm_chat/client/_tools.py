@@ -145,14 +145,13 @@ class LLMClientToolsMixin:
                         if args_dict.get("title") and args_dict.get("options"):
                             from llm_chat.decision.schema import DecisionCard, DecisionOption
                             import llm_chat.decision.submit_tool as st
+                            option_ids = ["A", "B", "C", "D"]
                             opts = [DecisionOption(
-                                id=o.get("id", ""),
+                                id=o.get("id") or (option_ids[i] if i < len(option_ids) else f"O{i+1}"),
                                 label=o.get("label", ""),
                                 description=o.get("description"),
-                                expected_effect=o.get("expected_effect"),
-                                risk=o.get("risk"),
-                                confidence=float(o.get("confidence", 0.5)),
-                            ) for o in args_dict["options"]]
+                                confidence=0.7,
+                            ) for i, o in enumerate(args_dict["options"])]
                             card = DecisionCard(
                                 title=args_dict["title"],
                                 context=args_dict.get("context") or None,
@@ -172,18 +171,18 @@ class LLMClientToolsMixin:
                             if missing:
                                 tool_result_text = (
                                     f"卡片参数不完整，缺少: {', '.join(missing)}。"
-                                    f"\n\n正确的参数格式示例：\n"
+                                    f"\n\n正确的参数格式：\n"
                                     f'{{"title": "🎯 卡片标题", "context": "背景说明", '
-                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
-                                    f'"recommendation": "A"}}'
-                                    f"\n\noptions 至少需要 2 个选项。请严格按照此格式重新调用 submit_decision_card。"
+                                    f'"options": [{{"label": "选项A", "description": "说明"}}, '
+                                    f'{{"label": "选项B", "description": "说明"}}]}}'
+                                    f"\n\n每个选项只需要 label（必填）和 description（可选）。"
+                                    f"id 自动分配为 A/B/C。请严格按照此格式重新调用 submit_decision_card。"
                                 )
                             else:
                                 tool_result_text = (
                                     f"卡片参数格式有误。正确的参数格式：\n"
                                     f'{{"title": "🎯 卡片标题", "context": "背景说明", '
-                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
-                                    f'"recommendation": "A"}}'
+                                    f'"options": [{{"label": "选项A"}}, {{"label": "选项B"}}]}}'
                                 )
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
