@@ -123,7 +123,7 @@ class LLMClientStreamToolsMixin:
         tools: List[Dict[str, Any]],
         history: Optional[List[Dict[str, Any]]] = None,
         system_context: Optional[str] = None,
-        max_iterations: int = 100,
+        max_iterations: int = 10,
         cancel_event=None,
         **kwargs,
     ) -> Generator[Any, None, None]:
@@ -153,6 +153,7 @@ class LLMClientStreamToolsMixin:
 
         total_output_chars = 0  # 累计输出字符数，用于 token 估算
         stream_usage = None  # 从流式最后 chunk 提取的真实 usage（优先）
+        empty_call_streak = 0  # 连续空参数调用计数
 
         for iteration in range(max_iterations):
             if cancel_event and cancel_event.is_set():
@@ -256,6 +257,35 @@ class LLMClientStreamToolsMixin:
 
             logger.info(f"检测到 {len(tool_calls)} 个工具调用")
 
+            # ── 卡死检测：同一工具连续空参数调用 ≥3 次 → 终止 ──
+            all_empty = all(
+                tc["function"].get("arguments", "{}") == "{}"
+                for tc in tool_calls
+            )
+            if all_empty and len(tool_calls) == 1:
+                empty_call_streak += 1
+                if empty_call_streak >= 3:
+                    logger.warning(
+                        f"工具调用卡死：{tool_calls[0]['function']['name']} 连续 {empty_call_streak} 次空参数，终止循环"
+                    )
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_calls[0].get("id", ""),
+                        "content": (
+                            f"你已连续 {empty_call_streak} 次调用 {tool_calls[0]['function']['name']} 但未提供任何参数。"
+                            f"请直接用文字回复，不要再调用工具。"
+                        ),
+                    })
+                    data = self.protocol.build_chat_request_with_tools(
+                        current_messages, tools, stream=True, **kwargs
+                    )
+                    result = self._http_post_json_with_retry(
+                        url, data, headers, label=f"stream stuck recovery"
+                    )
+                    return self.protocol.parse_chat_response(result)
+            else:
+                empty_call_streak = 0
+
             assistant_message = {
                 "role": "assistant",
                 "content": full_text if full_text else "",
@@ -313,11 +343,22 @@ class LLMClientStreamToolsMixin:
                                 missing.append("title")
                             if not args.get("options"):
                                 missing.append("options")
-                            tool_result_text = (
-                                f"卡片参数不完整，缺少: {', '.join(missing)}。"
-                                f"请重新调用 submit_decision_card 并填写完整的 title 和 options 参数。"
-                                f"options 至少需要 2 个选项，每个选项需包含 id, label, confidence 字段。"
-                            )
+                            if missing:
+                                tool_result_text = (
+                                    f"卡片参数不完整，缺少: {', '.join(missing)}。"
+                                    f"\n\n正确的参数格式示例：\n"
+                                    f'{{"title": "🎯 卡片标题", "context": "背景说明", '
+                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
+                                    f'"recommendation": "A"}}'
+                                    f"\n\noptions 至少需要 2 个选项。请严格按照此格式重新调用 submit_decision_card。"
+                                )
+                            else:
+                                tool_result_text = (
+                                    f"卡片参数格式有误。正确的参数格式：\n"
+                                    f'{{"title": "🎯 卡片标题", "context": "背景说明", '
+                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
+                                    f'"recommendation": "A"}}'
+                                )
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败: {e}")
                         tool_result_text = (

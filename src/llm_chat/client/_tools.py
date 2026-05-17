@@ -51,7 +51,7 @@ class LLMClientToolsMixin:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        max_iterations: int = 100,
+        max_iterations: int = 10,
         **kwargs,
     ) -> str:
         if not self.protocol.supports_tools():
@@ -62,6 +62,8 @@ class LLMClientToolsMixin:
         headers = self.protocol.get_headers()
 
         current_messages = messages.copy()
+
+        empty_call_streak = 0  # 连续空参数调用计数
 
         logger.info(f"开始带工具的聊天迭代: max_iterations={max_iterations}")
 
@@ -94,6 +96,36 @@ class LLMClientToolsMixin:
             logger.info(
                 f"迭代 {iteration + 1}: 检测到 {len(tool_calls)} 个工具调用"
             )
+
+            # ── 卡死检测：同一工具连续空参数调用 ≥3 次 → 终止 ──
+            all_empty = all(
+                not (isinstance(tc.arguments, dict) and tc.arguments)
+                for tc in tool_calls
+            )
+            if all_empty and len(tool_calls) == 1:
+                empty_call_streak += 1
+                if empty_call_streak >= 3:
+                    logger.warning(
+                        f"工具调用卡死：{tool_calls[0].name} 连续 {empty_call_streak} 次空参数，终止循环"
+                    )
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": getattr(tool_calls[0], 'id', f"tc_{tool_calls[0].name}"),
+                        "content": (
+                            f"你已连续 {empty_call_streak} 次调用 {tool_calls[0].name} 但未提供任何参数。"
+                            f"请直接用文字回复，不要再调用工具。"
+                        ),
+                    })
+                    # 最后再给 LLM 一次机会输出文字
+                    data = self.protocol.build_chat_request_with_tools(
+                        current_messages, tools, **kwargs
+                    )
+                    result = self._http_post_json_with_retry(
+                        url, data, headers, label=f"tools stuck recovery"
+                    )
+                    return self.protocol.parse_chat_response(result)
+            else:
+                empty_call_streak = 0  # 有参数或不同工具 → 重置
 
             # ── 处理工具调用 ──
             # submit_decision_card 成功后设置此标志，终止迭代循环
@@ -137,11 +169,22 @@ class LLMClientToolsMixin:
                                 missing.append("title")
                             if not args_dict.get("options"):
                                 missing.append("options")
-                            tool_result_text = (
-                                f"卡片参数不完整，缺少: {', '.join(missing)}。"
-                                f"请重新调用 submit_decision_card 并填写完整的 title 和 options 参数。"
-                                f"options 至少需要 2 个选项，每个选项需包含 id, label, confidence 字段。"
-                            )
+                            if missing:
+                                tool_result_text = (
+                                    f"卡片参数不完整，缺少: {', '.join(missing)}。"
+                                    f"\n\n正确的参数格式示例：\n"
+                                    f'{{"title": "🎯 卡片标题", "context": "背景说明", '
+                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
+                                    f'"recommendation": "A"}}'
+                                    f"\n\noptions 至少需要 2 个选项。请严格按照此格式重新调用 submit_decision_card。"
+                                )
+                            else:
+                                tool_result_text = (
+                                    f"卡片参数格式有误。正确的参数格式：\n"
+                                    f'{{"title": "🎯 卡片标题", "context": "背景说明", '
+                                    f'"options": [{{"id": "A", "label": "选项A", "confidence": 0.8}}], '
+                                    f'"recommendation": "A"}}'
+                                )
                     except Exception as e:
                         logger.warning(f"从 submit_decision_card 参数构建卡片失败(同步): {e}")
                         tool_result_text = (

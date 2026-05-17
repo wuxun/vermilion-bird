@@ -318,6 +318,7 @@ class ProactiveAgent:
                     history=[{"role": "system", "content": SYSTEM_PROMPT}],
                     temperature=0.8,
                     max_tokens=2000,
+                    model=self._config.llm.model,
                 )
                 # 提取卡片（必须在 clear_card_context 之前，它读取 contextvar）
                 card = get_pending_card()
