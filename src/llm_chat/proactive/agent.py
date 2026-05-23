@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Optional, List
 
 from llm_chat.decision.schema import DecisionCard
-from llm_chat.decision.submit_tool import get_pending_card
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +253,10 @@ class ProactiveAgent:
     # ----------------------------------------------------------------
 
     def _generate_card(self) -> Optional[DecisionCard]:
-        """通过 tool-call 路径生成话题建议卡。
+        """通过 tool-call 路径生成话题建议卡，带 3 次重试和递增式提示。
 
-        LLM 使用 submit_decision_card 工具提交卡片，与 ChatCore 保持一致。
+        若 LLM 未调用 submit_decision_card 工具（空响应、纯文本等），
+        自动重试，每次追加更强的工具调用指令。
         """
         ctx = self._build_context()
 
@@ -264,74 +264,110 @@ class ProactiveAgent:
             logger.warning("无记忆和资讯信息，跳过主动聊天")
             return None
 
-        # 构建用户消息（背景信息作为 user message 传入）
-        sections = ["## 背景信息", f"当前时间：{ctx['time']}"]
+        # 获取 SubmitDecisionCardTool schema（只需一次）
+        from llm_chat.tools.registry import ToolRegistry
+        registry = ToolRegistry()
+        all_tools = registry.get_tools_for_openai()
+        card_tool = [t for t in all_tools if t.get("function", {}).get("name") == "submit_decision_card"]
+        if not card_tool:
+            logger.warning("submit_decision_card 工具未注册，跳过卡片生成")
+            return None
 
-        # 网络资讯放在最前面——这是你的主要信息燃料
+        from llm_chat.decision.submit_tool import init_card_context, clear_card_context, get_pending_card
+
+        # 预建 user_message（不含重试指令，重试时追加）
+        base_sections = ["## 背景信息", f"当前时间：{ctx['time']}"]
+
         if ctx["web_news"].strip():
-            sections.append("\n### 🌐 网络资讯（主要素材——今天的新闻、发现、趋势）")
-            sections.append(ctx["web_news"])
-
-        # 记忆作为"用户画像"辅助，排在资讯之后
+            base_sections.append("\n### 🌐 网络资讯（主要素材——今天的新闻、发现、趋势）")
+            base_sections.append(ctx["web_news"])
         if ctx["memory"].strip():
-            sections.append("\n### 关于用户的背景（辅助——帮助判断哪些资讯跟用户有关）")
-            sections.append(ctx["memory"])
-
+            base_sections.append("\n### 关于用户的背景（辅助——帮助判断哪些资讯跟用户有关）")
+            base_sections.append(ctx["memory"])
         if ctx["recent_topics"].strip():
-            sections.append("\n### 近期讨论（辅助——避免重复推荐已聊过的话题）")
-            sections.append(ctx["recent_topics"])
-
+            base_sections.append("\n### 近期讨论（辅助——避免重复推荐已聊过的话题）")
+            base_sections.append(ctx["recent_topics"])
         if ctx["current_project"]:
-            sections.append(f"\n### 当前项目（辅助）\n{ctx['current_project']}")
+            base_sections.append(f"\n### 当前项目（辅助）\n{ctx['current_project']}")
 
-        sections.append("\n---")
-        sections.append(
+        base_sections.append("\n---")
+        base_sections.append(
             "请基于以上信息生成一张话题建议卡。\n\n"
             "核心原则：从网络资讯中找出最值得聊的东西。"
             "用户背景和近期讨论只用来判断'这个资讯跟用户有没有关系'，"
-            "不要把它们当作话题本身。如果网络资讯充足且有趣，"
-            "用户记忆可以完全不体现在卡片中。"
+            "不要把它们当作话题本身。"
         )
+        base_message = "\n".join(base_sections)
 
-        user_message = "\n".join(sections)
+        # ── 递增式重试指令 ──
+        RETRY_HINTS = [
+            # attempt 0: 无额外提示，prompt 本身已够
+            "",
+            # attempt 1: 温和提醒
+            (
+                "\n\n⚠️ 注意：请使用 submit_decision_card 工具提交卡片。"
+                "不要只回复文本——必须通过工具调用来提交。"
+            ),
+            # attempt 2: 强制指令 + 示例
+            (
+                "\n\n🔴 重要：你必须立即调用 submit_decision_card 工具！\n"
+                "即使资讯有限也要生成卡片。示例参数格式：\n"
+                'submit_decision_card({"title": "🎯 话题标题", '
+                '"context": "一句话背景", '
+                '"options": [{"label": "方向A", "description": "说明"}, '
+                '{"label": "方向B", "description": "说明"}]})'
+            ),
+        ]
 
-        try:
-            # 获取 SubmitDecisionCardTool 的 schema
-            from llm_chat.tools.registry import ToolRegistry
-            registry = ToolRegistry()
-            all_tools = registry.get_tools_for_openai()
-            card_tool = [t for t in all_tools if t.get("function", {}).get("name") == "submit_decision_card"]
-            if not card_tool:
-                logger.warning("submit_decision_card 工具未注册，跳过卡片生成")
-                return None
+        for attempt in range(len(RETRY_HINTS)):
+            hint = RETRY_HINTS[attempt]
+            user_message = base_message + hint
 
-            # 使用 chat_with_tools，LLM 自行调用 submit_decision_card
-            from llm_chat.decision.submit_tool import init_card_context, clear_card_context
-            init_card_context()
-            card = None
             try:
-                self._app.client.chat_with_tools(
-                    message=user_message,
-                    tools=card_tool,
-                    history=[{"role": "system", "content": SYSTEM_PROMPT}],
-                    temperature=0.8,
-                    max_tokens=2000,
-                    model=self._config.llm.model,
-                )
-                # 提取卡片（必须在 clear_card_context 之前，它读取 contextvar）
-                card = get_pending_card()
-            finally:
-                clear_card_context()
-            if card:
-                logger.info(f"ProactiveAgent 生成卡片: {card.id} -> {card.title}")
-                return card
-            else:
-                logger.warning("chat_with_tools 完成但未提取到卡片")
-                return None
+                init_card_context()
+                response_text = ""
+                try:
+                    response_text = self._app.client.chat_with_tools(
+                        message=user_message,
+                        tools=card_tool,
+                        history=[{"role": "system", "content": SYSTEM_PROMPT}],
+                        temperature=0.8,
+                        max_tokens=2000,
+                        model=self._config.llm.model,
+                    ) or ""
+                    card = get_pending_card()
+                finally:
+                    clear_card_context()
 
-        except Exception as e:
-            logger.error(f"生成话题卡片失败: {e}", exc_info=True)
-            return None
+                if card:
+                    logger.info(
+                        f"ProactiveAgent 生成卡片 (attempt {attempt + 1}): "
+                        f"{card.id} -> {card.title}"
+                    )
+                    return card
+
+                # 卡片未生成 → 分析失败原因并决定是否重试
+                resp_preview = response_text[:200].replace("\n", " ") if response_text else "<empty>"
+                if attempt < len(RETRY_HINTS) - 1:
+                    logger.warning(
+                        f"卡片生成失败 (attempt {attempt + 1}/{len(RETRY_HINTS)}), "
+                        f"response 预览: {resp_preview}"
+                    )
+                else:
+                    logger.warning(
+                        f"卡片生成最终失败 ({len(RETRY_HINTS)} 次尝试均未提取到卡片), "
+                        f"last response 预览: {resp_preview}"
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"卡片生成 attempt {attempt + 1} 异常: {e}"
+                )
+                if attempt >= len(RETRY_HINTS) - 1:
+                    logger.error(f"生成话题卡片最终失败: {e}", exc_info=True)
+                    return None
+
+        return None
 
     # ----------------------------------------------------------------
     # 推送
