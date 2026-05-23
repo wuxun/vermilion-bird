@@ -276,9 +276,15 @@ mcp:
 #   enabled: true
 #   webhook_enabled: true             # 开启 HTTP webhook 服务
 #   webhook_port: 9100
-#   proactive_enabled: true           # 每日主动聊天（AI 自主选题推送）
-#   proactive_hour: 10                # 触发时间（小时）
-#   proactive_minute: 0               # 触发时间（分钟）
+#   主动推送调度
+#   proactive_enabled: true           # 每日主动推送（新闻精选+讨论话题）
+#   proactive_rss_feeds:              # RSS 订阅源 URL 列表
+#     - https://hnrss.org/frontpage?count=10
+#     - https://feeds.feedburner.com/ruanyifeng
+#     - https://www.solidot.org/index.rss
+#     - https://sspai.com/feed
+#   # 推送时间默认为 8:00（新闻精选）/ 9:00（讨论话题），
+#   # 首次创建后通过 CLI 或 GUI 的调度器管理界面调整 cron
 #
 # 创建 webhook 任务:
 #   vermilion-bird schedule create \

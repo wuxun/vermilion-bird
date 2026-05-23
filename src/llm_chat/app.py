@@ -602,46 +602,57 @@ class App:
         logger.info("后台服务初始化完成")
 
     def _register_proactive_chat_task(self):
-        """注册每日主动聊天任务。幂等：任务存在但 APScheduler job 丢失时会重新注册。"""
+        """注册每日主动推送任务：新闻精选 + 讨论话题。
+
+        幂等：任务存在但 APScheduler job 丢失时会重新注册。
+        """
         if not self.scheduler or not self.config.scheduler.enabled:
             return
         if not self.config.scheduler.proactive_enabled:
             logger.info("主动聊天已禁用")
             return
-        try:
-            from llm_chat.scheduler.models import Task, TaskType
-            from datetime import datetime
-            import uuid
 
-            hour = self.config.scheduler.proactive_hour
-            minute = self.config.scheduler.proactive_minute
+        from llm_chat.scheduler.models import Task, TaskType
+        from datetime import datetime
+        import uuid
 
-            # 检查是否已有任务（含 APScheduler job 同步检查）
-            existing_tasks = self._get_tasks_by_type("PROACTIVE_CHAT")
-            if existing_tasks:
-                task = existing_tasks[0]
-                # 检查 APScheduler 是否有对应的 job
+        # 默认时间：新闻精选 8:00，讨论话题 9:00
+        # 首次创建后时间由 scheduler 数据库管理，可通过 CLI/GUI 调整
+        digest_hour, digest_minute = 8, 50
+        discuss_hour, discuss_minute = 9, 0
+
+        tasks_to_register = [
+            ("proactive-digest", "每日新闻精选", "news_digest",
+             digest_hour, digest_minute),
+            ("proactive-discuss", "每日讨论话题", "discussion",
+             discuss_hour, discuss_minute),
+        ]
+
+        for job_id, name, mode, hour, minute in tasks_to_register:
+            existing = [t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
+                        if t.id.startswith(job_id)]
+            if existing:
+                task = existing[0]
                 try:
                     job = self.scheduler._scheduler.get_job(task.id)
                     if job:
-                        logger.info(f"主动聊天任务已存在并已调度: {task.id}")
-                        return
+                        logger.info(f"{name} 已存在: {task.id}")
+                        continue
                     else:
-                        logger.warning(f"主动聊天任务在存储中存在但 APScheduler job 丢失，重新注册: {task.id}")
-                        # 删除旧任务记录，重新创建
+                        logger.warning(f"{name} job 丢失，重新注册: {task.id}")
                         self.storage.delete_task(task.id)
                 except Exception as e:
-                    logger.warning(f"检查 APScheduler job 失败，重新注册: {e}")
+                    logger.warning(f"检查 job 失败: {e}")
 
             task = Task(
-                id=f"proactive-daily-{uuid.uuid4().hex[:8]}",
-                name="每日主动聊天",
+                id=f"{job_id}-{uuid.uuid4().hex[:8]}",
+                name=name,
                 task_type=TaskType.PROACTIVE_CHAT,
                 trigger_config={
                     "cron": f"{minute} {hour} * * *",
                     "timezone": "Asia/Shanghai",
                 },
-                params={},
+                params={"mode": mode},
                 enabled=True,
                 max_retries=1,
                 created_at=datetime.now(),
@@ -649,9 +660,9 @@ class App:
                 notify_enabled=False,
             )
             self.scheduler.add_task(task)
-            logger.info(f"已注册每日主动聊天任务 (每天 {hour:02d}:{minute:02d}): {task.id}")
-        except Exception as e:
-            logger.error(f"注册主动聊天任务失败: {e}")
+            logger.info(
+                f"已注册{name} (每天 {hour:02d}:{minute:02d}): {task.id}"
+            )
 
     def _get_tasks_by_type(self, task_type: str) -> list:
         """按类型查询任务列表。"""

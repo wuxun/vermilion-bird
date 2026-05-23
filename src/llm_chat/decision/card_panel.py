@@ -78,12 +78,14 @@ if PYQT_AVAILABLE:
         card_created = pyqtSignal(object)  # DecisionCard
         card_decided = pyqtSignal(str, str)  # card_id, selected_option_id
         card_dismissed = pyqtSignal(str)  # card_id
+        proactive_text = pyqtSignal(str)  # 新闻精选文本（后台线程→主线程）
 
 else:
     class CardSignals(QObject):
         card_created = None
         card_decided = None
         card_dismissed = None
+        proactive_text = None
 
 
 # ── 样式 ─────────────────────────────────────────────────────────────

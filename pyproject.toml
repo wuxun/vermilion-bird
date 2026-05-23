@@ -30,6 +30,7 @@ playwright = "^1.40.0"
 apscheduler = "^3.9.1"
 sqlalchemy = "^2.0.0"
 trafilatura = "^1.7.0"
+feedparser = "^6.0.0"
 keyring = "^24.0.0"
 jieba = { version = "^0.42.1", optional = true }
 

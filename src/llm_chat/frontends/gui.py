@@ -260,6 +260,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._card_signals = CardSignals()
         self._card_signals.card_created.connect(self._on_card_received)
         self._card_signals.card_decided.connect(self._on_card_decided)
+        self._card_signals.proactive_text.connect(self._on_proactive_text)
 
         self._main_window = QMainWindow()
         self._main_window.setWindowTitle(self._title)
@@ -1577,6 +1578,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """跨线程信号：收到新卡片。"""
         self.display_card(card)
         logger.info(f"卡片已显示: {card.id} -> {card.title}")
+
+    def _on_proactive_text(self, text: str):
+        """跨线程信号：收到新闻精选文本（后台线程→主线程）。"""
+        from llm_chat.frontends.base import Message, MessageType
+        msg = Message(content=text, role="assistant", msg_type=MessageType.TEXT)
+        self.display_message(msg)
 
     def _on_card_decided(self, card_id: str, option_id: str):
         """跨线程信号：卡片已决策。"""

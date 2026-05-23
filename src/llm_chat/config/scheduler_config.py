@@ -28,10 +28,14 @@ class SchedulerConfig(BaseSettings):
         default=True, description="启用每日主动聊天"
     )
     proactive_hour: int = Field(
-        default=9, ge=0, le=23, description="主动聊天触发小时 (0-23)"
+        default=9, ge=0, le=23, description="主动聊天触发小时 (0-23)（兼容旧配置）"
     )
     proactive_minute: int = Field(
-        default=0, ge=0, le=59, description="主动聊天触发分钟 (0-59)"
+        default=0, ge=0, le=59, description="主动聊天触发分钟 (0-59)（兼容旧配置）"
+    )
+    proactive_rss_feeds: list = Field(
+        default=[],
+        description="RSS 源 URL 列表，用于 ProactiveAgent 新闻采集（feedparser 解析）",
     )
 
     class Config:

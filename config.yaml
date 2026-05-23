@@ -27,6 +27,21 @@ scheduler:
   default_timezone: Asia/Shanghai
   enabled: true
   max_workers: 4
+  proactive_enabled: true
+  proactive_rss_feeds:
+    # 科技/开发者
+    - https://hnrss.org/frontpage?count=10
+    - https://lobste.rs/rss
+    - https://feeds.arstechnica.com/arstechnica/index
+    # 中文科技
+    - https://feeds.feedburner.com/ruanyifeng
+    - https://www.solidot.org/index.rss
+    - https://sspai.com/feed
+    # 科学/学术
+    - http://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&max_results=5
+    - https://www.nature.com/nature.rss
+    # 英文综合
+    - https://www.theverge.com/rss/index.xml
 skills:
   shell_exec:
     allowed_workdir: ./

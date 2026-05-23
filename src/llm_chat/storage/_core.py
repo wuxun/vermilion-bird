@@ -89,6 +89,7 @@ class StorageCore:
             self._create_feishu_table_in(conn)
             self._create_context_cache_table_in(conn)
             self._create_decision_log_table_in(conn)
+            self._create_digest_tables_in(conn)
 
     def _create_conversations_table_in(self, conn):
         conn.executescript("""
@@ -264,3 +265,17 @@ class StorageCore:
             "CREATE INDEX IF NOT EXISTS idx_context_last_accessed "
             "ON context_cache(last_accessed)"
         )
+
+    def _create_digest_tables_in(self, conn):
+        """Create daily_digest table for proactive news curation."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS daily_digest (
+                id TEXT PRIMARY KEY,
+                date TEXT UNIQUE NOT NULL,
+                items_json TEXT NOT NULL,
+                raw_context_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_daily_digest_date
+                ON daily_digest(date);
+        """)

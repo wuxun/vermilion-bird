@@ -1,0 +1,123 @@
+"""News digest persistence (daily_digest table).
+
+Phase 2 of ProactiveAgent two-stage pipeline.
+"""
+
+import json
+import logging
+import uuid
+from datetime import date
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class StorageDigestMixin:
+    """Daily news digest CRUD operations.
+
+    Follows the StorageTaskMixin pattern (_task.py).
+    Uses _get_connection() from StorageCore.
+    """
+
+    def save_digest(
+        self,
+        digest_date: str,
+        items: list,
+        raw_context: str = "",
+    ) -> str:
+        """Save or replace today's news digest.
+
+        Args:
+            digest_date: ISO date string, e.g. '2026-05-23'
+            items: list of dicts with keys (rank, title, source, source_url,
+                   summary, relevance)
+            raw_context: raw collected context for discussion fallback
+
+        Returns:
+            digest id (UUID hex)
+        """
+        digest_id = uuid.uuid4().hex[:12]
+        items_json = json.dumps(items, ensure_ascii=False)
+        raw_json = json.dumps(
+            {"context": raw_context}, ensure_ascii=False
+        ) if raw_context else "{}"
+
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO daily_digest "
+                "(id, date, items_json, raw_context_json) "
+                "VALUES (?, ?, ?, ?)",
+                (digest_id, digest_date, items_json, raw_json),
+            )
+            logger.info(
+                f"Digest saved: {digest_id} date={digest_date} "
+                f"items={len(items)}"
+            )
+            return digest_id
+
+    def get_today_digest(self) -> Optional[dict]:
+        """Retrieve today's digest.
+
+        Returns:
+            dict with keys (id, date, items, raw_context) or None.
+            'items' is parsed from items_json into a Python list.
+        """
+        today = date.today().isoformat()
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM daily_digest WHERE date = ?",
+                (today,),
+            ).fetchone()
+            if not row:
+                return None
+
+            items = []
+            try:
+                items = json.loads(row["items_json"])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    f"Failed to parse items_json for date={today}"
+                )
+
+            raw_context = ""
+            try:
+                raw_data = json.loads(
+                    row["raw_context_json"] or "{}"
+                )
+                raw_context = raw_data.get("context", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            return {
+                "id": row["id"],
+                "date": row["date"],
+                "items": items,
+                "raw_context": raw_context,
+            }
+
+    def get_digest_by_date(self, digest_date: str) -> Optional[dict]:
+        """Retrieve digest for a specific date."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM daily_digest WHERE date = ?",
+                (digest_date,),
+            ).fetchone()
+            if not row:
+                return None
+            items = []
+            try:
+                items = json.loads(row["items_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+            raw_context = ""
+            try:
+                raw_data = json.loads(row["raw_context_json"] or "{}")
+                raw_context = raw_data.get("context", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return {
+                "id": row["id"],
+                "date": row["date"],
+                "items": items,
+                "raw_context": raw_context,
+            }

@@ -10,12 +10,14 @@
 from llm_chat.storage._core import StorageCore
 from llm_chat.storage._conversation import StorageConversationMixin
 from llm_chat.storage._task import StorageTaskMixin
+from llm_chat.storage._digest import StorageDigestMixin
 from llm_chat.storage._feishu import StorageFeishuMixin
 
 
 class Storage(
     StorageConversationMixin,
     StorageTaskMixin,
+    StorageDigestMixin,
     StorageFeishuMixin,
     StorageCore,
 ):
