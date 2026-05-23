@@ -40,6 +40,8 @@ _SHORTCUT_PATTERNS: list[tuple[re.Pattern, Intent, str]] = [
     (re.compile(r"^/(?:remember|记住|记忆)\s+(.+)", re.IGNORECASE), Intent.SHORTCUT, ""),
     # 帮助
     (re.compile(r"^/(?:help|帮助|\\?)\b", re.IGNORECASE), Intent.SHORTCUT, ""),
+    # 切换模型
+    (re.compile(r"^/model\s+(.+)", re.IGNORECASE), Intent.SHORTCUT, ""),
 ]
 
 
@@ -289,6 +291,14 @@ class IntentClassifier:
                         return RoutingDecision.bypass(
                             Intent.SHORTCUT,
                             _HELP_TEXT,
+                        )
+                    elif "model" in pattern.pattern:
+                        model_name = m.group(1).strip() if m.lastindex else ""
+                        return RoutingDecision(
+                            intent=Intent.SHORTCUT,
+                            confidence=1.0,
+                            skip_llm=True,
+                            override_message=f"__switch_model__:{model_name}",
                         )
                     return RoutingDecision.passthrough()
 

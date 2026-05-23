@@ -194,6 +194,29 @@ class ShortcutStage(PipelineStage):
             ctx.should_short_circuit = True
             return ctx
 
+        # 3.5. /model — 切换 LLM 模型
+        if override and override.startswith("__switch_model__:"):
+            model_name = override.split(":", 1)[1]
+            config = self._conversation_manager.client.config
+            available = getattr(config.llm, "available_models", []) or []
+            model_ids = []
+            for m in available:
+                mid = m.id if hasattr(m, "id") else (m.name if hasattr(m, "name") else str(m))
+                model_ids.append(mid)
+            if model_name in model_ids or not model_ids:
+                config.llm.model = model_name
+                response = f"已切换到模型: {model_name} ✓"
+            else:
+                model_list = "、".join(model_ids) if model_ids else "无可用模型列表"
+                response = f"未知模型: {model_name}。可用: {model_list}"
+            conv.add_assistant_message(response)
+            if ctx.on_chunk:
+                ctx.on_chunk(response)
+            logger.info(f"[ShortcutStage] 模型切换: {model_name}")
+            ctx.response = response
+            ctx.should_short_circuit = True
+            return ctx
+
         # 4. /clear /reset /help 等 — 直接回复
         # 注意：严格匹配 Intent.SHORTCUT，保持与原始 _handle_shortcut (chat_core.py:379) 一致
         if decision.intent == Intent.SHORTCUT and decision.direct_response:

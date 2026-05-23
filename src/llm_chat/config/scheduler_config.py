@@ -37,6 +37,10 @@ class SchedulerConfig(BaseSettings):
         default=[],
         description="RSS 源 URL 列表，用于 ProactiveAgent 新闻采集（feedparser 解析）",
     )
+    proactive_model: str = Field(
+        default="",
+        description="ProactiveAgent 专用模型 ID（空则用默认 llm.model）",
+    )
 
     class Config:
         env_prefix = "SCHEDULER_"

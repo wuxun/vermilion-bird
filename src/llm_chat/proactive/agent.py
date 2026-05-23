@@ -73,6 +73,12 @@ class ProactiveAgent:
         self._mode = mode  # "news_digest" | "discussion"
         self._last_card: Optional[DecisionCard] = None
 
+    def _get_model(self) -> str:
+        """获取 ProactiveAgent 使用的模型。优先 proactive_model 配置，否则默认模型。"""
+        cfg = self._config.scheduler
+        proactive_model = getattr(cfg, "proactive_model", "") or ""
+        return proactive_model if proactive_model else self._config.llm.model
+
     def generate_and_push(self):
         """入口，根据 mode 分发到对应管线。"""
         if self._mode == "news_digest":
