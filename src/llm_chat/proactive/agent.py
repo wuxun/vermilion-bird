@@ -116,7 +116,7 @@ class ProactiveAgent:
         self._push_text(text)
 
     def _curate_news(self, ctx: dict) -> list:
-        """LLM 精选：从资讯池挑 5-8 条，返回 [DigestItem, ...]。带 3 次重试。"""
+        """LLM 精选：从资讯池挑 8-12 条，返回 [DigestItem, ...]。带 3 次重试。"""
         from llm_chat.proactive.prompts import NEWS_CURATOR_PROMPT
 
         user_msg = f"## 资讯池\n\n{ctx['web_news']}"
@@ -134,7 +134,7 @@ class ProactiveAgent:
                     message=user_msg + hint,
                     history=[{"role": "system", "content": NEWS_CURATOR_PROMPT}],
                     temperature=0.4,
-                    max_tokens=1500,
+                    max_tokens=2500,
                     model=self._config.llm.model,
                 )
                 if response and len(response.strip()) > 20:
@@ -209,7 +209,7 @@ class ProactiveAgent:
         from datetime import datetime
         now = datetime.now()
         lines = [f"📰 今日精选 · {now.month}月{now.day}日\n"]
-        for item in items[:8]:
+        for item in items[:12]:
             emoji = "🔬" if "科学" in item.get("source", "") else "💻" if any(
                 k in item.get("source", "") for k in ["HN", "Hacker", "GitHub", "ArXiv"]
             ) else "📌"
@@ -515,7 +515,7 @@ class ProactiveAgent:
                 d = feedparser.parse(resp.content)
                 if d.bozo:
                     logger.debug(f"RSS 解析警告 [{url}]: {d.bozo_exception}")
-                for entry in d.entries[:5]:
+                for entry in d.entries[:10]:
                     title = entry.get("title", "")
                     summary = entry.get("summary", "") or entry.get("description", "")
                     link = entry.get("link", "")
