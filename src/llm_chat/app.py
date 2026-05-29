@@ -604,10 +604,7 @@ class App:
         logger.info("后台服务初始化完成")
 
     def _register_proactive_chat_task(self):
-        """注册内置「每日话题」任务。幂等：已存在则跳过。
-
-        LLM 在单次执行中完成全部工作：fetch_rss → web_search → 精选 → 生成话题卡片。
-        """
+        """注册内置定时任务：每日新闻精选 + 每日话题。幂等：已存在则跳过。"""
         if not self.scheduler or not self.config.scheduler.enabled:
             return
         if not self.config.scheduler.proactive_enabled:
@@ -618,56 +615,79 @@ class App:
         from datetime import datetime
         import uuid
 
-        job_id = "proactive-daily"
-
-        existing = [t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
-                    if t.id.startswith(job_id)]
-        if not existing:
-            existing = [t for t in self._get_tasks_by_type("LLM_CHAT")
-                        if t.id.startswith(job_id)]
-        if existing:
-            task = existing[0]
-            try:
-                job = self.scheduler._scheduler.get_job(task.id)
-                if job:
-                    logger.info(f"每日话题已存在: {task.id}")
-                    if task.task_type == TaskType.PROACTIVE_CHAT:
-                        task.task_type = TaskType.LLM_CHAT
-                        self.storage.save_task(task)
-                        logger.info(f"每日话题已升级为 LLM_CHAT")
-                    return
-                else:
-                    logger.warning(f"每日话题 job 丢失，重新注册: {task.id}")
-                    self.storage.delete_task(task.id)
-            except Exception as e:
-                logger.warning(f"检查每日话题 job 失败: {e}")
-
-        task = Task(
-            id=f"{job_id}-{uuid.uuid4().hex[:8]}",
-            name="每日话题",
-            task_type=TaskType.LLM_CHAT,
-            trigger_config={
-                "cron": "0 9 * * *",
-                "timezone": "Asia/Shanghai",
+        tasks_to_register = [
+            {
+                "job_id": "proactive-digest",
+                "name": "每日新闻精选",
+                "hour": 8, "minute": 50,
+                "message": self._build_digest_prompt(),
             },
-            params={"message": self._build_proactive_prompt()},
-            enabled=True,
-            max_retries=1,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
-            notify_enabled=True,
-        )
-        self.scheduler.add_task(task)
-        logger.info(f"已注册每日话题 (每天 08:00): {task.id}")
+            {
+                "job_id": "proactive-daily",
+                "name": "每日话题",
+                "hour": 9, "minute": 0,
+                "message": self._build_discussion_prompt(),
+            },
+        ]
 
-    def _build_proactive_prompt(self) -> str:
-        """每日话题 prompt — 一站式：搜 RSS + 搜网页 + 精选 + 生成卡片。"""
-        return """你是一个消息灵通、嗅觉敏锐的AI伙伴。每天你会主动找用户聊天。
+        for cfg in tasks_to_register:
+            job_id = cfg["job_id"]
+            name = cfg["name"]
+            hour = cfg["hour"]
+            minute = cfg["minute"]
 
-按以下步骤完成：
+            existing = [
+                t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
+                if t.id.startswith(job_id)
+            ]
+            if not existing:
+                existing = [
+                    t for t in self._get_tasks_by_type("LLM_CHAT")
+                    if t.id.startswith(job_id)
+                ]
+            if existing:
+                task = existing[0]
+                try:
+                    job = self.scheduler._scheduler.get_job(task.id)
+                    if job:
+                        logger.info(f"{name} 已存在: {task.id}")
+                        if task.task_type == TaskType.PROACTIVE_CHAT:
+                            task.task_type = TaskType.LLM_CHAT
+                            self.storage.save_task(task)
+                            logger.info(f"{name} 已升级为 LLM_CHAT")
+                        continue
+                    else:
+                        logger.warning(f"{name} job 丢失，重新注册: {task.id}")
+                        self.storage.delete_task(task.id)
+                except Exception as e:
+                    logger.warning(f"检查 {name} job 失败: {e}")
 
-1. 调用 fetch_rss 抓取 RSS 订阅的最新文章
-2. 按星期轮换主题，调用 web_search 搜索今日资讯：
+            task = Task(
+                id=f"{job_id}-{uuid.uuid4().hex[:8]}",
+                name=name,
+                task_type=TaskType.LLM_CHAT,
+                trigger_config={
+                    "cron": f"{minute} {hour} * * *",
+                    "timezone": "Asia/Shanghai",
+                },
+                params={"message": cfg["message"]},
+                enabled=True,
+                max_retries=1,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                notify_enabled=True,
+            )
+            self.scheduler.add_task(task)
+            logger.info(
+                f"已注册 {name} (每天 {hour:02d}:{minute:02d}): {task.id}"
+            )
+
+    def _build_digest_prompt(self) -> str:
+        """每日新闻精选 prompt — 搜新闻，输出精选文本（不用卡片）。"""
+        return """你现在是新闻编辑。按以下步骤完成新闻精选：
+
+1. 调用 fetch_rss 获取 RSS 订阅的最新文章
+2. 按星期轮换主题，调用 web_search 搜索补充资讯：
    - 周一: 商业趋势、新兴行业、商业模式
    - 周二: 科学发现、太空探索、生物学突破
    - 周三: 艺术展览、设计趋势、文学新书
@@ -675,31 +695,45 @@ class App:
    - 周五: 效率方法论、认知升级、技能学习
    - 周六: 旅行目的地、美食文化、户外运动
    - 周日: 哲学思想、幸福感研究、AI伦理
-   （每类主题搜 3 个关键词，确保 12 条以上结果）
+   （每类主题搜 3 个关键词）
 3. 同时搜索用户记忆中的兴趣领域最新进展
-4. 从全部资讯中找出最值得聊的 2-3 个方向
-5. 使用 submit_decision_card 生成话题建议卡
+4. 从全部资讯中精选 8-12 条最有价值的
 
-## 卡片要求
-- title: 有新闻感的标题（含 emoji），不是纯总结
-- context: 一句话说明为什么今天这个话题有意思
-- options: 2-3 个方向，id 自动为 A/B/C
-  - label: 有张力的方向名称
-  - description: 30字以内
-- recommendation: 推荐选项 id (可选)
+输出格式：
+📰 今日精选 · X月X日
 
-## 选题原则
-1. 借势资讯为主 — 从资讯中找兴奋点，不要纯围绕记忆自说自话
-2. 连接记忆 — 把资讯和用户兴趣/项目做连接
-3. 出其不意 — 引入用户不知道但可能感兴趣的新领域
-4. 言之有物 — 每个选项有具体讨论锚点
-5. 区分度 — 选项之间不要同质化
+1. 🔖 [标题]
+   来源：xxx
+   摘要：xxx (≤50字)
+   为什么选：xxx (一句话)
 
-## 禁区
-- 不要问"今天怎么样"这种空泛问候
-- 不要给用户无法参与的任务
-- 不要讲大道理
-- 如果搜索结果不足，说明原因并跳过"""
+要求：优先有新鲜感的，有具体锚点，不要输出 JSON。"""
+
+    def _build_discussion_prompt(self) -> str:
+        """每日话题 prompt — 读精选 + 记忆 → 生成话题卡片。"""
+        return """你是一个消息灵通的AI伙伴。每天你会从今天的新闻精选中找出值得和用户讨论的话题。
+
+注意：今天早些时候已生成「每日新闻精选」文本，你可以在对话历史中看到它。
+如果不可用，调用 web_search 搜索今日热点。
+
+步骤：
+1. 回顾今日新闻精选（如果有的话）
+2. 结合用户记忆中的兴趣和背景
+3. 提取 2-3 个最值得讨论的方向
+4. 使用 submit_decision_card 生成话题建议卡
+
+卡片要求：
+- title: 有新闻感的标题（含 emoji）
+- context: 一句话说明为什么有意思
+- options: 2-3 个方向，id 自动 A/B/C，description ≤30字
+
+选题原则：
+1. 借势资讯为主
+2. 连接记忆
+3. 出其不意
+4. 言之有物
+
+禁区：不要问"今天怎么样"，不要讲大道理。如果没找到合适的新闻就说一声。"""
 
     def _get_tasks_by_type(self, task_type: str) -> list:
         """按类型查询任务列表。"""
