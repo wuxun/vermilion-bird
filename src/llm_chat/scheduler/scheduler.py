@@ -577,8 +577,9 @@ class SchedulerService:
                 self._push_task_card(task, card)
             return
 
-        # 无卡片 → 发通用完成/失败通知
+        # 无卡片 → 推文本到 GUI/飞书（和卡片走同一条推送路径）
         self._send_completion_text(task, result, success)
+        self._push_text_via_feishu(task, result)
 
     def _send_completion_text(self, task, result: str, success: bool):
         """发送通用完成/失败文本通知到前端和飞书。"""
@@ -605,6 +606,45 @@ class SchedulerService:
             notification_service.send_notification(task, result, success)
         except Exception as e:
             logger.error(f"Failed to send completion text: {e}")
+
+    def _push_text_via_feishu(self, task, text: str):
+        """无卡片时，直接推文本到飞书（复用 _push_task_card 的飞书通路）。"""
+        if not text or not text.strip():
+            return
+        try:
+            feishu_cfg = getattr(self._app.config, "feishu", None)
+            if not feishu_cfg or not getattr(feishu_cfg, "enabled", False):
+                return
+            adapter = getattr(self._app, "_feishu_adapter", None)
+            if adapter is None:
+                return
+            recent = adapter.get_recent_chat()
+            if not recent or recent.get("type") != "feishu":
+                try:
+                    recent = self._app.storage.get_recent_feishu_chat()
+                except Exception:
+                    pass
+            if not recent:
+                return
+            receive_id = (
+                recent.get("chat_id") or recent.get("open_id")
+                or recent.get("user_id")
+            )
+            receive_id_type = (
+                "chat_id" if "chat_id" in recent
+                else "open_id" if "open_id" in recent else "user_id"
+            )
+            if not receive_id:
+                return
+            summary = text[:1000].replace("\n", " ")
+            adapter.send_message(
+                receive_id=receive_id,
+                msg_type="text",
+                content={"text": f"💡 {task.name}\n\n{summary}"},
+                receive_id_type=receive_id_type,
+            )
+        except Exception as e:
+            logger.warning(f"[{task.name}] 飞书文本推送失败: {e}")
 
     def _on_job_event(self, event):
         """处理任务事件。
