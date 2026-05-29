@@ -650,7 +650,7 @@ class App:
             name="每日话题",
             task_type=TaskType.LLM_CHAT,
             trigger_config={
-                "cron": "0 8 * * *",
+                "cron": "0 9 * * *",
                 "timezone": "Asia/Shanghai",
             },
             params={"message": self._build_proactive_prompt()},
