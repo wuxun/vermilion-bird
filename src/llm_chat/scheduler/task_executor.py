@@ -53,8 +53,6 @@ class TaskExecutor:
                     result = self._execute_skill(task)
                 elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
                     result = self._execute_maintenance(task)
-                elif task.task_type == TaskType.PROACTIVE_CHAT:
-                    result = self._execute_proactive_chat(task)
                 else:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 
@@ -105,30 +103,34 @@ class TaskExecutor:
         return execution
 
     def _execute_llm_chat(self, task: Task) -> str:
+        """通过 ChatCore 完整管道执行 LLM 对话 — 包含记忆注入、工具调用、决策卡片。
+
+        使用固定 conversation_id '__scheduled__' 作为所有定时任务的共享会话，
+        避免每次触发创建新会话导致上下文碎片化。
+        """
         params = task.params
-        # Required: user message
         message = params.get("message", "")
-        # Optional: historical context for multi-turn conversations
-        history = params.get("history", [])
-        # Optional: specify model to use
+        if not message:
+            raise ValueError("LLM_CHAT task requires 'message' in params")
+
         model = params.get("model", None)
+        temperature = params.get("temperature", None)
 
-        # Collect extra kwargs from model_params
         extra_kwargs = {}
-        if model is not None:
+        if model:
             extra_kwargs["model"] = model
-        if "model_params" in params:
-            model_params = params["model_params"] or {}
-            if "temperature" in model_params:
-                extra_kwargs["temperature"] = model_params["temperature"]
-            if "max_tokens" in model_params:
-                extra_kwargs["max_tokens"] = model_params["max_tokens"]
+        if temperature is not None:
+            extra_kwargs["temperature"] = temperature
 
-        result = self.app.client.chat(
+        result = self.app.chat_core.send_message(
+            conversation_id="__scheduled__",
             message=message,
-            history=history,
             **extra_kwargs,
         )
+
+        # 写入 daily_digest 供历史查询和其他任务复用
+        self._save_task_digest(task, message, result)
+
         return result
 
     def _execute_skill(self, task: Task) -> str:
@@ -282,17 +284,30 @@ class TaskExecutor:
             logger.error(f"Understanding evolution failed: {e}")
             raise
 
-    def _execute_proactive_chat(self, task: Task) -> str:
-        """执行主动聊天：生成话题建议卡片并推送。"""
+    def _save_task_digest(self, task: Task, prompt: str, result: str):
+        """任务执行后写入 daily_digest，供历史查询和其他任务复用。
+
+        每天每个任务只保留最新一条（INSERT OR REPLACE 按 date 覆盖）。
+        """
+        if not result or not result.strip():
+            return
+
         try:
-            from llm_chat.proactive.agent import ProactiveAgent
-            agent = ProactiveAgent(self.app, self.app.config)
-            agent.generate_and_push()
-            card = agent.last_card
-            if card:
-                return f"话题卡片已推送: {card.title} ({len(card.options)} 个选项)"
-            else:
-                return "主动聊天跳过（无足够信息）"
+            from datetime import date
+            today = date.today().isoformat()
+            summary = result[:300].replace("\n", " ")
+            self.app.storage.save_digest(
+                digest_date=today,
+                items=[{
+                    "title": task.name,
+                    "summary": summary,
+                    "source": "scheduled_task",
+                    "source_url": "",
+                    "relevance": task.id,
+                }],
+                raw_context=prompt,
+                source=task.name,
+            )
+            logger.debug(f"Digest saved for task '{task.name}'")
         except Exception as e:
-            logger.error(f"主动聊天执行失败: {e}")
-            raise
+            logger.warning(f"Failed to save task digest: {e}")

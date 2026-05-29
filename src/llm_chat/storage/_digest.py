@@ -1,11 +1,11 @@
-"""News digest persistence (daily_digest table).
+"""Task output persistence (daily_digest table).
 
-Phase 2 of ProactiveAgent two-stage pipeline.
+Records LLM_CHAT task outputs for historical querying
+and cross-task reference (e.g. weekly review reads daily digests).
 """
 
 import json
 import logging
-import uuid
 from datetime import date
 from typing import Optional
 
@@ -24,19 +24,21 @@ class StorageDigestMixin:
         digest_date: str,
         items: list,
         raw_context: str = "",
+        source: str = "",
     ) -> str:
-        """Save or replace today's news digest.
+        """Save or replace digest for a given date + source.
 
         Args:
             digest_date: ISO date string, e.g. '2026-05-23'
-            items: list of dicts with keys (rank, title, source, source_url,
-                   summary, relevance)
-            raw_context: raw collected context for discussion fallback
+            items: list of dicts with keys (title, summary, source, source_url, relevance)
+            raw_context: raw collected context or task prompt
+            source: task name or identifier — same (date, source) will be replaced
 
         Returns:
             digest id (UUID hex)
         """
-        digest_id = uuid.uuid4().hex[:12]
+        import hashlib
+        digest_id = hashlib.md5(f"{digest_date}|{source}".encode()).hexdigest()[:12]
         items_json = json.dumps(items, ensure_ascii=False)
         raw_json = json.dumps(
             {"context": raw_context}, ensure_ascii=False
@@ -45,13 +47,13 @@ class StorageDigestMixin:
         with self._get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO daily_digest "
-                "(id, date, items_json, raw_context_json) "
-                "VALUES (?, ?, ?, ?)",
-                (digest_id, digest_date, items_json, raw_json),
+                "(id, date, source, items_json, raw_context_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (digest_id, digest_date, source, items_json, raw_json),
             )
             logger.info(
                 f"Digest saved: {digest_id} date={digest_date} "
-                f"items={len(items)}"
+                f"source={source} items={len(items)}"
             )
             return digest_id
 

@@ -290,7 +290,7 @@ def task_info(task_id):
 
 @schedule.command()
 def proactive():
-    """手动触发一次主动聊天（立即执行）"""
+    """手动触发一次每日话题（立即执行）"""
     config = Config.from_yaml()
     if not config.scheduler.enabled:
         click.echo("调度器未启用。请在配置中设置 scheduler.enabled = true")
@@ -298,17 +298,20 @@ def proactive():
 
     app = App(config)
     try:
-        # 直接初始化 ProactiveAgent 执行，不需要走 TaskExecutor
-        from llm_chat.proactive.agent import ProactiveAgent
-        agent = ProactiveAgent(app, config)
+        # 查找 '每日话题' 任务（TTL_CHAT 类型），直接触发执行
+        tasks = app.scheduler.get_all_tasks()
+        proactive_task = next(
+            (t for t in tasks if t.name == "每日话题"), None
+        )
+        if not proactive_task:
+            click.echo("未找到「每日话题」任务，请先创建")
+            sys.exit(1)
+
         click.echo("正在生成话题...")
-        opener = agent.generate_and_push()
-        if opener:
-            click.echo(f"✓ 已推送: {opener}")
-        else:
-            click.echo("跳过：暂无足够记忆信息生成话题")
+        result = app.scheduler.trigger_task(proactive_task.id)
+        click.echo(f"✓ 任务已触发: {result}")
     except Exception as e:
-        click.echo(f"主动聊天执行失败: {e}", err=True)
+        click.echo(f"执行失败: {e}", err=True)
         sys.exit(1)
     finally:
         app.stop()

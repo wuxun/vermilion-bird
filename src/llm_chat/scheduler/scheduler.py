@@ -562,26 +562,6 @@ class SchedulerService:
         else:
             return f"Unknown maintenance action: {action}"
 
-    def _run_proactive_chat_task(self, task: Task) -> str:
-        """执行主动聊天任务。支持 news_digest / discussion 两种模式。"""
-        try:
-            from llm_chat.proactive.agent import ProactiveAgent
-            mode = (task.params or {}).get("mode", "discussion")
-            agent = ProactiveAgent(self._app, self._app.config, mode=mode)
-            agent.generate_and_push()
-
-            if mode == "news_digest":
-                return "新闻精选已推送"
-            card = agent.last_card
-            if card:
-                logger.info(f"主动话题卡片已推送: {card.title}")
-                return f"话题卡片已推送: {card.title} ({len(card.options)} 个选项)"
-            else:
-                return "主动聊天跳过（无足够信息）"
-        except Exception as e:
-            logger.error(f"主动聊天执行失败: {e}")
-            raise
-
     def _notify_task_completion(self, task: Task, result: str, success: bool = True):
         try:
             from llm_chat.frontends.base import Message, MessageType

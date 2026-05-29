@@ -267,15 +267,56 @@ class StorageCore:
         )
 
     def _create_digest_tables_in(self, conn):
-        """Create daily_digest table for proactive news curation."""
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS daily_digest (
-                id TEXT PRIMARY KEY,
-                date TEXT UNIQUE NOT NULL,
-                items_json TEXT NOT NULL,
-                raw_context_json TEXT DEFAULT '{}',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_daily_digest_date
-                ON daily_digest(date);
-        """)
+        """Create daily_digest table for scheduled task output recording.
+
+        Supports multiple tasks per day via (date, source) composite key.
+        Migrates from old schema (date UNIQUE alone) if needed.
+        """
+        # Check if old schema exists (date UNIQUE, no source column)
+        cursor = conn.execute("PRAGMA table_info(daily_digest)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if not columns:
+            # Fresh install — create with correct schema
+            conn.executescript("""
+                CREATE TABLE daily_digest (
+                    id TEXT PRIMARY KEY,
+                    date TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    items_json TEXT NOT NULL,
+                    raw_context_json TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date, source)
+                );
+                CREATE INDEX IF NOT EXISTS idx_daily_digest_date
+                    ON daily_digest(date);
+                CREATE INDEX IF NOT EXISTS idx_daily_digest_source
+                    ON daily_digest(source);
+            """)
+            return
+
+        if "source" not in columns:
+            # Migrate: add source column, remove old UNIQUE on date
+            logger.info("Migrating daily_digest schema: adding source column")
+            conn.executescript("""
+                ALTER TABLE daily_digest ADD COLUMN source TEXT NOT NULL DEFAULT '';
+                CREATE TABLE daily_digest_new (
+                    id TEXT PRIMARY KEY,
+                    date TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    items_json TEXT NOT NULL,
+                    raw_context_json TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date, source)
+                );
+                INSERT INTO daily_digest_new
+                    SELECT id, date, source, items_json, raw_context_json, created_at
+                    FROM daily_digest;
+                DROP TABLE daily_digest;
+                ALTER TABLE daily_digest_new RENAME TO daily_digest;
+                CREATE INDEX IF NOT EXISTS idx_daily_digest_date
+                    ON daily_digest(date);
+                CREATE INDEX IF NOT EXISTS idx_daily_digest_source
+                    ON daily_digest(source);
+            """)
+            logger.info("daily_digest migration complete")

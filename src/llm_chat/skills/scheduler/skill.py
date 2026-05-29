@@ -237,6 +237,88 @@ class DeleteScheduledTaskTool(BaseTool):
             return f"删除任务失败: {str(e)}"
 
 
+class ToggleScheduledTaskTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "toggle_scheduled_task"
+
+    @property
+    def description(self) -> str:
+        return "启用或暂停指定ID的定时任务。用户说'暂停XX任务'或'启用XX任务'时使用此工具。"
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "要切换状态的任务ID",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "true=启用，false=暂停",
+                },
+            },
+            "required": ["task_id", "enabled"],
+        }
+
+    def __init__(self, scheduler: Optional[SchedulerService] = None):
+        self._scheduler = scheduler
+
+    def execute(self, task_id: str, enabled: bool) -> str:
+        if self._scheduler is None:
+            return "错误：调度器未初始化"
+
+        try:
+            if enabled:
+                self._scheduler.resume_task(task_id)
+                return f"✅ 任务已启用"
+            else:
+                self._scheduler.pause_task(task_id)
+                return f"⏸️ 任务已暂停"
+        except ValueError as e:
+            return f"任务不存在: {str(e)}"
+        except Exception as e:
+            return f"操作失败: {str(e)}"
+
+
+class RunScheduledTaskTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "run_scheduled_task"
+
+    @property
+    def description(self) -> str:
+        return "立即手动触发一次定时任务执行。不影响原有的 cron 调度。"
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "要手动执行的任务ID",
+                },
+            },
+            "required": ["task_id"],
+        }
+
+    def __init__(self, scheduler: Optional[SchedulerService] = None):
+        self._scheduler = scheduler
+
+    def execute(self, task_id: str) -> str:
+        if self._scheduler is None:
+            return "错误：调度器未初始化"
+
+        try:
+            result = self._scheduler.trigger_task(task_id)
+            return f"✅ 任务已触发: {result}"
+        except ValueError as e:
+            return f"任务不存在: {str(e)}"
+        except Exception as e:
+            return f"执行失败: {str(e)}"
+
+
 class SchedulerSkill(BaseSkill):
     @property
     def name(self) -> str:
@@ -244,11 +326,11 @@ class SchedulerSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return "定时任务管理能力，支持创建、查询、删除定时任务，可通过自然语言配置定时执行LLM对话、技能调用和系统维护任务"
+        return "定时任务管理能力，支持创建、查询、删除、启用/暂停、手动触发定时任务"
 
     @property
     def version(self) -> str:
-        return "1.0.0"
+        return "1.1.0"
 
     def __init__(self):
         super().__init__()
@@ -259,6 +341,8 @@ class SchedulerSkill(BaseSkill):
             CreateScheduledTaskTool(self._scheduler),
             ListScheduledTasksTool(self._scheduler),
             DeleteScheduledTaskTool(self._scheduler),
+            ToggleScheduledTaskTool(self._scheduler),
+            RunScheduledTaskTool(self._scheduler),
         ]
 
     def on_load(self, config: Dict[str, Any]) -> None:

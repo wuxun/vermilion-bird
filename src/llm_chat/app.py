@@ -604,9 +604,10 @@ class App:
         logger.info("后台服务初始化完成")
 
     def _register_proactive_chat_task(self):
-        """注册每日主动推送任务：新闻精选 + 讨论话题。
+        """注册内置「每日话题」任务。幂等：已存在则跳过。
 
-        幂等：任务存在但 APScheduler job 丢失时会重新注册。
+        与旧的 ProactiveAgent 不同，现在就是一个普通的 LLM_CHAT 任务——
+        ChatCore 管道自动注入记忆、提供工具、生成决策卡片。
         """
         if not self.scheduler or not self.config.scheduler.enabled:
             return
@@ -618,53 +619,101 @@ class App:
         from datetime import datetime
         import uuid
 
-        # 默认时间：新闻精选 8:00，讨论话题 9:00
-        # 首次创建后时间由 scheduler 数据库管理，可通过 CLI/GUI 调整
-        digest_hour, digest_minute = 8, 50
-        discuss_hour, discuss_minute = 9, 0
+        proactive_hour = 8
+        proactive_minute = 0
+        job_id = "proactive-daily"
 
-        tasks_to_register = [
-            ("proactive-digest", "每日新闻精选", "news_digest",
-             digest_hour, digest_minute),
-            ("proactive-discuss", "每日讨论话题", "discussion",
-             discuss_hour, discuss_minute),
-        ]
-
-        for job_id, name, mode, hour, minute in tasks_to_register:
-            existing = [t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
+        existing = [t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
+                    if t.id.startswith(job_id)]
+        if not existing:
+            existing = [t for t in self._get_tasks_by_type("LLM_CHAT")
                         if t.id.startswith(job_id)]
-            if existing:
-                task = existing[0]
-                try:
-                    job = self.scheduler._scheduler.get_job(task.id)
-                    if job:
-                        logger.info(f"{name} 已存在: {task.id}")
-                        continue
-                    else:
-                        logger.warning(f"{name} job 丢失，重新注册: {task.id}")
-                        self.storage.delete_task(task.id)
-                except Exception as e:
-                    logger.warning(f"检查 job 失败: {e}")
+        if existing:
+            task = existing[0]
+            try:
+                job = self.scheduler._scheduler.get_job(task.id)
+                if job:
+                    logger.info(f"每日话题已存在: {task.id}")
+                    # 如果旧任务是 PROACTIVE_CHAT 类型，升级为 LLM_CHAT
+                    if task.task_type == TaskType.PROACTIVE_CHAT:
+                        task.task_type = TaskType.LLM_CHAT
+                        self.storage.save_task(task)
+                        logger.info(f"每日话题已升级为 LLM_CHAT: {task.id}")
+                    return
+                else:
+                    logger.warning(f"每日话题 job 丢失，重新注册: {task.id}")
+                    self.storage.delete_task(task.id)
+            except Exception as e:
+                logger.warning(f"检查每日话题 job 失败: {e}")
 
-            task = Task(
-                id=f"{job_id}-{uuid.uuid4().hex[:8]}",
-                name=name,
-                task_type=TaskType.PROACTIVE_CHAT,
-                trigger_config={
-                    "cron": f"{minute} {hour} * * *",
-                    "timezone": "Asia/Shanghai",
-                },
-                params={"mode": mode},
-                enabled=True,
-                max_retries=1,
-                created_at=datetime.now(),
-                updated_at=datetime.now(),
-                notify_enabled=False,
-            )
-            self.scheduler.add_task(task)
-            logger.info(
-                f"已注册{name} (每天 {hour:02d}:{minute:02d}): {task.id}"
-            )
+        # 构建 prompt：嵌入原 ProactiveAgent 的话题发现策略
+        prompt = self._build_proactive_prompt()
+
+        task = Task(
+            id=f"{job_id}-{uuid.uuid4().hex[:8]}",
+            name="每日话题",
+            task_type=TaskType.LLM_CHAT,
+            trigger_config={
+                "cron": f"{proactive_minute} {proactive_hour} * * *",
+                "timezone": "Asia/Shanghai",
+            },
+            params={"message": prompt},
+            enabled=True,
+            max_retries=1,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            notify_enabled=False,
+        )
+        self.scheduler.add_task(task)
+        logger.info(f"已注册每日话题 (每天 {proactive_hour:02d}:{proactive_minute:02d}): {task.id}")
+
+    def _build_proactive_prompt(self) -> str:
+        """构建每日话题的 prompt，包含搜索轮换策略。"""
+        rss_feeds = getattr(self.config.scheduler, "proactive_rss_feeds", None) or []
+        rss_section = ""
+        if rss_feeds:
+            rss_list = "\n".join(f"  - {url}" for url in rss_feeds)
+            rss_section = f"\n请抓取以下 RSS 源的最新文章：\n{rss_list}"
+
+        return f"""你是一个消息灵通、嗅觉敏锐的AI伙伴。每天你会主动找用户聊天。
+
+你的任务是：
+1. 使用 web_search 搜索今天的新闻和有趣话题
+2. 结合用户记忆中的兴趣和背景，找出值得讨论的方向
+3. 使用 submit_decision_card 生成一张话题建议卡，给用户 2-3 个选项
+
+## 搜索策略
+按星期几轮换搜索主题：
+- 周一: 商业趋势、新兴行业、商业模式
+- 周二: 科学发现、太空探索、生物学突破
+- 周三: 艺术展览、设计趋势、文学新书
+- 周四: 社会现象分析、生活方式变化、教育改革
+- 周五: 效率方法论、认知升级、技能学习
+- 周六: 旅行目的地、美食文化、户外运动
+- 周日: 哲学思想、幸福感研究、AI伦理
+
+每类主题搜索 3 个关键词，每个搜 4 条结果。
+同时搜索用户兴趣相关的 2 个维度的最新进展。
+{rss_section}
+
+## 卡片要求
+- title: 吸引人的主题（含 emoji），有新闻感而非纯总结
+- context: 一句话说明为什么今天这个有意思
+- options: 2-3 个方向，id 自动分配 A/B/C
+  - label: 方向名称（有张力）
+  - description: 30字以内
+- recommendation: 推荐选项 id (可选)
+
+## 选题原则
+1. 借势资讯为主——从搜索结果中找出最令人兴奋的发现
+2. 连接记忆——把资讯和用户兴趣/项目做连接
+3. 出其不意——引入用户从未接触过但可能感兴趣的新领域
+4. 言之有物——每个选项必须有具体的讨论锚点
+
+## 禁区
+- 不要问"今天怎么样"这种空泛问候
+- 不要讲大道理
+- 如果搜索结果不足，说明原因并跳过"""
 
     def _get_tasks_by_type(self, task_type: str) -> list:
         """按类型查询任务列表。"""
