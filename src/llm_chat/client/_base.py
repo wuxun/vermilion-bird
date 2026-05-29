@@ -127,7 +127,7 @@ class LLMClientBase:
             from llm_chat.decision.submit_tool import SubmitDecisionCardTool
             from llm_chat.tools.fetch_rss import FetchRSSTool
             self._tool_registry.register(SubmitDecisionCardTool())
-            self._tool_registry.register(FetchRSSTool(config=self._config))
+            self._tool_registry.register(FetchRSSTool(config=self.config))
 
         # 注册技能工具
         for skill_name, skill_class in get_builtin_skills().items():
