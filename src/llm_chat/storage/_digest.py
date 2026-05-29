@@ -57,19 +57,20 @@ class StorageDigestMixin:
             )
             return digest_id
 
-    def get_today_digest(self) -> Optional[dict]:
-        """Retrieve today's digest.
-
-        Returns:
-            dict with keys (id, date, items, raw_context) or None.
-            'items' is parsed from items_json into a Python list.
-        """
+    def get_today_digest(self, source: Optional[str] = None) -> Optional[dict]:
+        """Retrieve today's digest, optionally filtered by source."""
         today = date.today().isoformat()
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM daily_digest WHERE date = ?",
-                (today,),
-            ).fetchone()
+            if source:
+                row = conn.execute(
+                    "SELECT * FROM daily_digest WHERE date = ? AND source = ?",
+                    (today, source),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM daily_digest WHERE date = ?",
+                    (today,),
+                ).fetchone()
             if not row:
                 return None
 
@@ -97,13 +98,21 @@ class StorageDigestMixin:
                 "raw_context": raw_context,
             }
 
-    def get_digest_by_date(self, digest_date: str) -> Optional[dict]:
-        """Retrieve digest for a specific date."""
+    def get_digest_by_date(
+        self, digest_date: str, source: Optional[str] = None
+    ) -> Optional[dict]:
+        """Retrieve digest for a specific date, optionally filtered by source."""
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM daily_digest WHERE date = ?",
-                (digest_date,),
-            ).fetchone()
+            if source:
+                row = conn.execute(
+                    "SELECT * FROM daily_digest WHERE date = ? AND source = ?",
+                    (digest_date, source),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM daily_digest WHERE date = ?",
+                    (digest_date,),
+                ).fetchone()
             if not row:
                 return None
             items = []

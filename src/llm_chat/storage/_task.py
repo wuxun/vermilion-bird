@@ -183,16 +183,23 @@ class StorageTaskMixin:
             return execution.id
 
     def load_executions(
-        self, task_id: str, limit: int = 100
+        self, task_id: Optional[str] = None, limit: int = 100
     ) -> List["TaskExecution"]:
         from llm_chat.scheduler.models import TaskExecution, TaskStatus
 
         with self._get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM task_executions "
-                "WHERE task_id = ? ORDER BY started_at DESC LIMIT ?",
-                (task_id, limit),
-            ).fetchall()
+            if task_id:
+                rows = conn.execute(
+                    "SELECT * FROM task_executions "
+                    "WHERE task_id = ? ORDER BY started_at DESC LIMIT ?",
+                    (task_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM task_executions "
+                    "ORDER BY started_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
             executions: list = []
             for row in rows:
                 started_at = (
@@ -221,3 +228,24 @@ class StorageTaskMixin:
                 )
                 executions.append(exec_obj)
             return executions
+
+    def delete_executions(self, task_id: Optional[str] = None) -> int:
+        """删除执行记录。
+
+        Args:
+            task_id: 指定任务ID则只删该任务的记录，None 则清空全部。
+
+        Returns:
+            删除的记录数
+        """
+        with self._get_connection() as conn:
+            if task_id:
+                cursor = conn.execute(
+                    "DELETE FROM task_executions WHERE task_id = ?",
+                    (task_id,),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM task_executions")
+            count = cursor.rowcount
+            logger.info(f"Deleted {count} execution records")
+            return count

@@ -44,6 +44,7 @@ from llm_chat.scheduler import (
     SchedulerService,
 )
 from llm_chat.storage import Storage
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +325,8 @@ class TaskEditDialog(QDialog):
         # 设置任务类型
         if task.task_type == TaskType.LLM_CHAT:
             self._type_combo.setCurrentText("LLM 对话")
+        elif task.task_type == TaskType.PROACTIVE_CHAT:
+            self._type_combo.setCurrentText("LLM 对话")
         elif task.task_type == TaskType.SKILL_EXECUTION:
             self._type_combo.setCurrentText("技能执行")
         elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
@@ -331,8 +334,8 @@ class TaskEditDialog(QDialog):
 
         # 加载任务参数
         params = task.params
-        if task.task_type == TaskType.LLM_CHAT:
-            self._prompt_edit.setPlainText(params.get("prompt", ""))
+        if task.task_type in (TaskType.LLM_CHAT, TaskType.PROACTIVE_CHAT):
+            self._prompt_edit.setPlainText(params.get("message", "") or params.get("prompt", ""))
             self._model_edit.setText(params.get("model", ""))
             self._temp_spin.setValue(params.get("temperature", 0.7))
         elif task.task_type == TaskType.SKILL_EXECUTION:
@@ -398,7 +401,7 @@ class TaskEditDialog(QDialog):
         # 构建任务参数
         params = {}
         if task_type == TaskType.LLM_CHAT:
-            params["prompt"] = self._prompt_edit.toPlainText().strip()
+            params["message"] = self._prompt_edit.toPlainText().strip()
             params["model"] = self._model_edit.text().strip()
             params["temperature"] = self._temp_spin.value()
         elif task_type == TaskType.SKILL_EXECUTION:
@@ -452,7 +455,7 @@ class TaskEditDialog(QDialog):
         # 创建或更新任务
         task_id = self._task.id if self._task else None
         task = Task(
-            id=task_id or str(datetime.now().timestamp()),
+            id=task_id or uuid.uuid4().hex,
             name=name,
             task_type=task_type,
             trigger_config=trigger_config,
@@ -580,10 +583,9 @@ class ExecutionHistoryDialog(QDialog):
                 task_id=self._task_id, limit=self._page_size * 2
             )
         else:
-            # 查询所有任务的历史记录 - 需要临时修改 Storage 或直接查询
-            # 由于 load_executions 需要 task_id,这里传递空字符串查询所有记录
-            # 注意: 这种方式可能不会返回所有记录,因为 SQL 有 WHERE task_id = ?
-            executions = []
+            executions = self._storage.load_executions(
+                task_id=None, limit=self._page_size * 2
+            )
 
         # 应用分页
         page_executions = executions[offset : offset + self._page_size]
@@ -647,19 +649,21 @@ class ExecutionHistoryDialog(QDialog):
         self._load_history()
 
     def _on_clear_history(self):
-        """清空历史记录。"""
+        """清空执行历史。按当前筛选条件删除。"""
+        filter_task_id = self._task_filter.text().strip() or self._task_id or None
+
+        target = f"任务 {filter_task_id[:8]}" if filter_task_id else "全部"
         reply = QMessageBox.question(
             self,
             "确认",
-            "确定要清空所有执行历史吗？",
+            f"确定要删除 {target} 的执行历史吗？此操作不可撤销。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            # 这里需要实现清空历史的逻辑
-            # 由于 Storage 没有提供清空方法，暂时只清空显示
+            count = self._storage.delete_executions(task_id=filter_task_id)
             self._history_table.setRowCount(0)
             self._current_page = 0
-            QMessageBox.information(self, "完成", "历史记录已清空")
+            QMessageBox.information(self, "完成", f"已删除 {count} 条记录")
 
 
 class SchedulerDialog(QDialog):
@@ -758,6 +762,7 @@ class SchedulerDialog(QDialog):
             # 任务类型
             type_text = {
                 TaskType.LLM_CHAT: "LLM对话",
+                TaskType.PROACTIVE_CHAT: "LLM对话",
                 TaskType.SKILL_EXECUTION: "技能执行",
                 TaskType.SYSTEM_MAINTENANCE: "系统维护",
             }.get(task.task_type, task.task_type.value)

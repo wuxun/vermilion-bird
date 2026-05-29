@@ -480,47 +480,47 @@ class SchedulerService:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
     def _run_llm_chat_task(self, task: Task) -> str:
-        """执行 LLM 聊天任务，通过 ChatCore 完整管道。
-
-        与旧实现 (client.chat 裸调用) 相比，现在可以使用：
-        - 工具调用 (web_search, file_reader 等)
-        - 对话历史上下文 (按 task.id 持久化)
-        - 记忆系统注入
-        - 上下文压缩
-
-        Args:
-            task: 任务对象
-
-        Returns:
-            LLM 响应
-        """
+        """执行 LLM 聊天任务，通过 ChatCore 完整管道。"""
         params = task.params
         message = params.get("message", "")
         if not message:
             return "No message provided"
 
         model = params.get("model")
-        # 每个 task 拥有独立的 conversation，自动累积上下文
+        temperature = params.get("temperature")
         conversation_id = f"scheduled:{task.id}"
 
         chat_core = self._app.chat_core
         if chat_core is None:
-            # fallback: 直接调用 client (无工具/历史)
-            logger.warning(
-                "ChatCore unavailable, falling back to direct client.chat (no tools)"
-            )
-            if model:
-                return self._app.client.chat(message, model=model)
-            return self._app.client.chat(message)
+            logger.warning("ChatCore unavailable, falling back to direct client.chat")
+            result = self._app.client.chat(message, **({"model": model} if model else {}))
+            return result
 
-        return chat_core.send_message(
+        # 捕获决策卡片
+        captured_cards = []
+        def on_card(card):
+            captured_cards.append(card)
+
+        extra_kwargs = {}
+        if model:
+            extra_kwargs["model"] = model
+        if temperature is not None:
+            extra_kwargs["temperature"] = temperature
+
+        result = chat_core.send_message(
             conversation_id,
             message,
-            on_card=lambda card: logger.info(
-                f"调度器卡片 (不渲染): {card.id} -> {card.title}"
-            ),
-            **({} if model is None else {"model": model}),
+            on_card=on_card,
+            **extra_kwargs,
         )
+
+        # 暂存卡片，由 _notify_task_completion 统一推送（受 notify_enabled 控制）
+        self._pending_cards = captured_cards
+
+        # 写入 daily_digest
+        self._save_task_digest(task, message, result)
+
+        return result
 
     def _run_skill_task(self, task: Task) -> str:
         """执行技能任务。
@@ -563,42 +563,48 @@ class SchedulerService:
             return f"Unknown maintenance action: {action}"
 
     def _notify_task_completion(self, task: Task, result: str, success: bool = True):
+        """统一通知入口：检查 notify_enabled，推动态卡或发完成文本。"""
+        if not getattr(task, "notify_enabled", True):
+            logger.debug(f"[{task.name}] 通知已禁用，跳过")
+            return
+
+        pending_cards = getattr(self, "_pending_cards", None) or []
+        self._pending_cards = []
+
+        if pending_cards:
+            # 有决策卡片 → 只推卡片，不发完成文本
+            for card in pending_cards:
+                self._push_task_card(task, card)
+            return
+
+        # 无卡片 → 发通用完成/失败通知
+        self._send_completion_text(task, result, success)
+
+    def _send_completion_text(self, task, result: str, success: bool):
+        """发送通用完成/失败文本通知到前端和飞书。"""
         try:
             from llm_chat.frontends.base import Message, MessageType
 
-            # 1. 发送到前端（保留原有功能）
             frontend = self._app.current_frontend
             if frontend:
                 status = "✅" if success else "❌"
-                if success:
-                    content = f"{status} **定时任务完成**: {task.name}\n\n{result}"
-                else:
-                    content = (
-                        f"{status} **定时任务失败**: {task.name}\n\n错误: {result}"
-                    )
-
+                content = (
+                    f"{status} **定时任务完成**: {task.name}\n\n{result}"
+                    if success
+                    else f"{status} **定时任务失败**: {task.name}\n\n错误: {result}"
+                )
                 message = Message(
                     content=content,
                     role="assistant",
                     msg_type=MessageType.TEXT,
                     metadata={"task_id": task.id, "is_notification": True},
                 )
-
                 frontend.display_message(message)
-                logger.info(f"Frontend notification sent for task: {task.name}")
 
-            # 2. 发送到配置的通知目标（飞书等）
-            try:
-                logger.info(
-                    f"Attempting to send external notification for task: {task.id}"
-                )
-                notification_service = self._get_notification_service()
-                notification_service.send_notification(task, result, success)
-            except Exception as e:
-                logger.error(f"Failed to send external notification: {e}")
-
+            notification_service = self._get_notification_service()
+            notification_service.send_notification(task, result, success)
         except Exception as e:
-            logger.error(f"Failed to send notification: {e}")
+            logger.error(f"Failed to send completion text: {e}")
 
     def _on_job_event(self, event):
         """处理任务事件。
@@ -662,3 +668,86 @@ class SchedulerService:
         if self._webhook_server:
             return self._webhook_server.get_status()
         return None
+
+    def _push_task_card(self, task, card):
+        """推送决策卡片到 GUI 和飞书。"""
+        card_title = getattr(card, "title", "") or ""
+        logger.info(f"[{task.name}] 推送卡片: {card_title}")
+
+        # GUI
+        try:
+            frontend = getattr(self._app, "current_frontend", None)
+            if frontend and frontend.name == "gui":
+                signals = getattr(frontend, "_card_signals", None)
+                if signals:
+                    signals.card_created.emit(card)
+        except Exception as e:
+            logger.warning(f"[{task.name}] GUI 推送失败: {e}")
+
+        # 飞书
+        try:
+            feishu_cfg = getattr(self._app.config, "feishu", None)
+            if not feishu_cfg or not getattr(feishu_cfg, "enabled", False):
+                return
+            adapter = getattr(self._app, "_feishu_adapter", None)
+            if adapter is None:
+                return
+            recent = adapter.get_recent_chat()
+            if not recent or recent.get("type") != "feishu":
+                try:
+                    recent = self._app.storage.get_recent_feishu_chat()
+                except Exception:
+                    pass
+            if not recent:
+                return
+            receive_id = (
+                recent.get("chat_id") or recent.get("open_id")
+                or recent.get("user_id")
+            )
+            receive_id_type = (
+                "chat_id" if "chat_id" in recent
+                else "open_id" if "open_id" in recent else "user_id"
+            )
+            if not receive_id:
+                return
+            lines = [f"💡 {card_title}"]
+            context = getattr(card, "context", "") or ""
+            if context:
+                lines.append(f"  {context}")
+            for opt in getattr(card, "options", []) or []:
+                rec = (
+                    "✅" if getattr(opt, "id", "") == getattr(card, "recommendation", "")
+                    else "  "
+                )
+                lines.append(f"{rec} 选{opt.id}: {opt.label}")
+            adapter.send_message(
+                receive_id=receive_id,
+                msg_type="text",
+                content={"text": "\n".join(lines)},
+                receive_id_type=receive_id_type,
+            )
+        except Exception as e:
+            logger.warning(f"[{task.name}] 飞书推送失败: {e}")
+
+    def _save_task_digest(self, task, prompt: str, result: str):
+        """任务执行后写入 daily_digest。"""
+        if not result or not result.strip():
+            return
+        try:
+            from datetime import date
+            today = date.today().isoformat()
+            summary = result[:300].replace("\n", " ")
+            self._app.storage.save_digest(
+                digest_date=today,
+                items=[{
+                    "title": task.name,
+                    "summary": summary,
+                    "source": "scheduled_task",
+                    "source_url": "",
+                    "relevance": task.id,
+                }],
+                raw_context=prompt,
+                source=task.name,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save task digest: {e}")

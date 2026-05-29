@@ -122,11 +122,21 @@ class TaskExecutor:
         if temperature is not None:
             extra_kwargs["temperature"] = temperature
 
+        # 捕获 LLM 生成的决策卡片
+        captured_cards = []
+        def on_card(card):
+            captured_cards.append(card)
+
         result = self.app.chat_core.send_message(
             conversation_id="__scheduled__",
             message=message,
+            on_card=on_card,
             **extra_kwargs,
         )
+
+        # 推送决策卡片 (如果有)
+        for card in captured_cards:
+            self._push_card(task, card)
 
         # 写入 daily_digest 供历史查询和其他任务复用
         self._save_task_digest(task, message, result)
@@ -311,3 +321,68 @@ class TaskExecutor:
             logger.debug(f"Digest saved for task '{task.name}'")
         except Exception as e:
             logger.warning(f"Failed to save task digest: {e}")
+
+    def _push_card(self, task, card):
+        """推送决策卡片到 GUI 和飞书。
+
+        分别尝试两个通道，失败不影响另一个。
+        """
+        card_title = getattr(card, "title", "") or ""
+        logger.info(f"[{task.name}] 推送卡片: {card_title}")
+
+        # 1. GUI 推送
+        try:
+            frontend = getattr(self.app, "current_frontend", None)
+            if frontend and frontend.name == "gui":
+                signals = getattr(frontend, "_card_signals", None)
+                if signals:
+                    signals.card_created.emit(card)
+                    logger.info(f"[{task.name}] 卡片已推送到 GUI")
+        except Exception as e:
+            logger.warning(f"[{task.name}] GUI 推送失败: {e}")
+
+        # 2. 飞书推送
+        try:
+            feishu_cfg = getattr(self.app.config, "feishu", None)
+            if not feishu_cfg or not getattr(feishu_cfg, "enabled", False):
+                return
+            adapter = getattr(self.app, "_feishu_adapter", None)
+            if adapter is None:
+                return
+
+            recent = adapter.get_recent_chat()
+            if not recent or recent.get("type") != "feishu":
+                try:
+                    recent = self.app.storage.get_recent_feishu_chat()
+                except Exception:
+                    pass
+            if not recent:
+                return
+
+            receive_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
+            receive_id_type = (
+                "chat_id" if "chat_id" in recent
+                else "open_id" if "open_id" in recent
+                else "user_id"
+            )
+            if not receive_id:
+                return
+
+            # 构建文本摘要
+            lines = [f"💡 {card_title}"]
+            context = getattr(card, "context", "") or ""
+            if context:
+                lines.append(f"  {context}")
+            for opt in getattr(card, "options", []) or []:
+                rec = "✅" if getattr(opt, "id", "") == getattr(card, "recommendation", "") else "  "
+                lines.append(f"{rec} 选{opt.id}: {opt.label}")
+
+            adapter.send_message(
+                receive_id=receive_id,
+                msg_type="text",
+                content={"text": "\n".join(lines)},
+                receive_id_type=receive_id_type,
+            )
+            logger.info(f"[{task.name}] 卡片已推送到飞书")
+        except Exception as e:
+            logger.warning(f"[{task.name}] 飞书推送失败: {e}")
