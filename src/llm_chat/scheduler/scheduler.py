@@ -577,33 +577,28 @@ class SchedulerService:
                 self._push_task_card(task, card)
             return
 
-        # 无卡片 → 推文本到 GUI/飞书（和卡片走同一条推送路径）
+        # 无卡片 → 推文本到 GUI/飞书
         self._send_completion_text(task, result, success)
-        self._push_text_via_feishu(task, result)
 
     def _send_completion_text(self, task, result: str, success: bool):
-        """发送通用完成/失败文本通知到前端和飞书。"""
+        """发送通用完成/失败文本通知到 GUI 和飞书。"""
         try:
-            from llm_chat.frontends.base import Message, MessageType
+            status = "✅" if success else "❌"
+            text = (
+                f"{status} **{task.name}**\n\n{result[:2000]}"
+                if success
+                else f"{status} **{task.name} 失败**\n\n{result[:500]}"
+            )
 
+            # GUI: 通过 cross-thread signal 推送（不需要活跃会话）
             frontend = self._app.current_frontend
-            if frontend:
-                status = "✅" if success else "❌"
-                content = (
-                    f"{status} **定时任务完成**: {task.name}\n\n{result}"
-                    if success
-                    else f"{status} **定时任务失败**: {task.name}\n\n错误: {result}"
-                )
-                message = Message(
-                    content=content,
-                    role="assistant",
-                    msg_type=MessageType.TEXT,
-                    metadata={"task_id": task.id, "is_notification": True},
-                )
-                frontend.display_message(message)
+            if frontend and frontend.name == "gui":
+                signals = getattr(frontend, "_card_signals", None)
+                if signals and signals.proactive_text:
+                    signals.proactive_text.emit(text)
 
-            notification_service = self._get_notification_service()
-            notification_service.send_notification(task, result, success)
+            # 飞书: 通过 adapter 直接推送
+            self._push_text_via_feishu(task, text)
         except Exception as e:
             logger.error(f"Failed to send completion text: {e}")
 
