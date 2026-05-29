@@ -112,20 +112,33 @@ class SkillsConfigDialog(QDialog):
     
     def _load_skills(self):
         from llm_chat.skills.registry import get_builtin_skills
+        from llm_chat.skills.manager import SkillManager
         from llm_chat.skills.prompt_skill import PromptSkill
         from llm_chat.config import Config
         from pathlib import Path
 
         config = Config.from_yaml()
-        all_skills = get_builtin_skills()
+        manager = SkillManager()
 
-        # -- Code skills ------------------------------------------------------
-        for name, skill_class in all_skills.items():
+        # -- Code skills: 内置 + 外部发现 --------------------------------
+        # 注册内置 skills
+        for name, skill_class in get_builtin_skills().items():
+            manager.register_skill_class(skill_class)
+
+        # 发现外部 code skills（复用 config 的 external_skill_dirs）
+        external_dirs = config.external_skill_dirs or []
+        manager.discover_skills(external_dirs)
+
+        all_classes = manager.get_all_skill_classes()
+        for name, skill_class in all_classes.items():
             skill = skill_class()
             tools = skill.get_tools()
             tool_names = ", ".join([t.name for t in tools])
 
-            # Pydantic extra="allow" 字段需通过 getattr 访问
+            # 判断是否内置（内置在 registry 中）
+            builtin = get_builtin_skills()
+            source = "内置" if name in builtin else "外部"
+
             skill_config = getattr(config.skills, name, None)
             enabled = skill_config.enabled if skill_config and hasattr(skill_config, 'enabled') else True
 
@@ -133,7 +146,7 @@ class SkillsConfigDialog(QDialog):
 
             status = "✓ 已启用" if enabled else "○ 已禁用"
             item = QListWidgetItem()
-            item.setText(f"[代码] {status}  {name}\n      版本: {skill.version} | 工具: {tool_names}")
+            item.setText(f"[代码·{source}] {status}  {name}\n      版本: {skill.version} | 工具: {tool_names}")
             item.setData(Qt.ItemDataRole.UserRole, name)
             item.setData(Qt.ItemDataRole.UserRole + 1, "code")
             item.setForeground(Qt.GlobalColor.darkGray)
@@ -147,35 +160,41 @@ class SkillsConfigDialog(QDialog):
                 'tools': tools
             }
 
-        # -- Prompt skills ----------------------------------------------------
-        default_skill_dir = Path.home() / ".vermilion-bird" / "skills"
-        project_skill_dir = Path.cwd() / ".agents" / "skills"
+        # -- Prompt skills: 与 app._init_prompt_skills 对齐 ----------------
+        # 默认目录（与 app.py 保持一致）
+        home = Path.home()
         prompt_skill_dirs = [
-            d for d in [default_skill_dir, project_skill_dir]
-            if d.exists()
+            home / ".vermilion-bird" / "skills",
+            home / ".agents" / "skills",
+            Path.cwd() / ".agents" / "skills",
         ]
-        # Config extra dirs
+        # Config 额外目录
         extra_dirs = config.prompt_skill_dirs if hasattr(config, 'prompt_skill_dirs') else []
         for ed in extra_dirs:
             p = Path(ed).expanduser()
-            if p.exists() and str(p) not in [str(d) for d in prompt_skill_dirs]:
+            if p.exists() and p not in prompt_skill_dirs:
                 prompt_skill_dirs.append(p)
 
         for ps_dir in prompt_skill_dirs:
+            if not ps_dir.exists():
+                continue
             discovered = PromptSkill.discover(ps_dir)
             for ps in discovered:
                 ps.load()
                 name = ps.name
-                self._skill_states[f"prompt:{name}"] = True
+                key = f"prompt:{name}"
+                self._skill_states[key] = True
 
                 skill_type = ps.manifest.type if ps.manifest else "requested"
                 tags_str = ", ".join(ps.manifest.tags) if ps.manifest and ps.manifest.tags else ""
 
+                source_dir = str(ps_dir)
                 item = QListWidgetItem()
                 item.setText(
                     f"[提示] ✓ 已加载  {name}\n"
                     f"      {ps.description} | 类型: {skill_type}"
                     + (f" | 标签: {tags_str}" if tags_str else "")
+                    + f"\n      路径: {source_dir}"
                 )
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 item.setData(Qt.ItemDataRole.UserRole + 1, "prompt")
