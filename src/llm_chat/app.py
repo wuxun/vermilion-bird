@@ -203,8 +203,9 @@ class App:
 
         搜索目录:
         1. ~/.vermilion-bird/skills/
-        2. .agents/skills/ (当前目录)
-        3. config.yaml 中 prompt_skill_dirs 配置
+        2. ~/.agents/skills/ (用户全局)
+        3. .agents/skills/ (当前目录)
+        4. config.yaml 中 prompt_skill_dirs 配置
         """
         from llm_chat.skills.prompt_skill import PromptSkill
 
@@ -214,6 +215,7 @@ class App:
         home = Path.home()
         default_dirs = [
             str(home / ".vermilion-bird" / "skills"),
+            str(home / ".agents" / "skills"),
             str(Path.cwd() / ".agents" / "skills"),
         ]
 

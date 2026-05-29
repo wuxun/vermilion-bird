@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import logging
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import yaml
@@ -77,7 +78,10 @@ class Config(BaseSettings):
         default_factory=SkillsConfig, description="Skills 配置"
     )
     external_skill_dirs: List[str] = Field(
-        default_factory=list, description="外部 Skill (Code Skill) 目录列表"
+        default_factory=lambda: [
+            str(Path.home() / ".vermilion-bird" / "skills" / "code"),
+        ],
+        description="外部 Skill (Code Skill) 目录列表。默认包含 ~/.vermilion-bird/skills/code/"
     )
     prompt_skill_dirs: List[str] = Field(
         default_factory=list,

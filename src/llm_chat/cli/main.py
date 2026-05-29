@@ -350,11 +350,19 @@ def search(query, limit, conversation_id):
 # ===== 入口 =====
 
 def main():
-    """主入口 - 默认启动对话"""
+    """主入口 - 默认启动对话。
+
+    无参数时：打包后的 .app 默认 GUI（Double-click 体验），
+    源码运行默认 CLI（开发/终端场景）。
+    """
     import sys
 
     if len(sys.argv) == 1:
-        sys.argv.append("chat")
+        # frozen: PyInstaller 打包后的可执行文件 → 默认 GUI
+        if getattr(sys, "frozen", False):
+            sys.argv.extend(["chat", "--gui"])
+        else:
+            sys.argv.append("chat")
     cli()
 
 

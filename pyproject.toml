@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "vermilion-bird"
-version = "0.0.1"
+version = "0.2.1"
 description = "A simple LLM chat client with configurable settings and multi-protocol support"
 authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"

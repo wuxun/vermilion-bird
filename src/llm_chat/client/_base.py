@@ -189,6 +189,18 @@ class LLMClientBase:
 
         self._skill_manager.load_from_config(skill_configs)
 
+        # 自动加载外部发现但未配置的代码 Skill
+        # discover_skills 已将类注册到 _skill_classes，但没有 config 条目
+        # 因此 load_from_config 会跳过它们。这里补加载。
+        loaded = set(self._skill_manager.list_skill_names())
+        for name, skill_class in self._skill_manager.get_all_skill_classes().items():
+            if name not in loaded:
+                try:
+                    self._skill_manager.load_skill(name)
+                    logger.info(f"Auto-loaded external skill: {name}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-load external skill '{name}': {e}")
+
         logger.info(
             f"Skills setup complete. Loaded: {self._skill_manager.list_skill_names()}"
         )

@@ -272,3 +272,117 @@ def install_skill(url_or_path: str, target_dir: Optional[Path] = None) -> Option
     skill = PromptSkill(skill_dir)
     skill.load()
     return skill
+
+
+def uninstall_skill(name: str, target_dir: Optional[Path] = None) -> bool:
+    """卸载已安装的技能（删除对应目录）。
+
+    Args:
+        name: 技能名称
+        target_dir: 安装目录（默认 ~/.vermilion-bird/skills/）
+
+    Returns:
+        True 卸载成功，False 未找到
+    """
+    import shutil
+
+    target_dir = target_dir or (Path.home() / ".vermilion-bird" / "skills")
+    code_dir = Path.home() / ".vermilion-bird" / "skills" / "code"
+
+    # 先查 prompt skill 目录
+    skill_dir = target_dir / name
+    if skill_dir.exists():
+        shutil.rmtree(skill_dir)
+        logger.info(f"Skill '{name}' uninstalled from {skill_dir}")
+        return True
+
+    # 再查 code skill 目录
+    code_skill_dir = code_dir / name
+    if code_skill_dir.exists():
+        shutil.rmtree(code_skill_dir)
+        logger.info(f"Code skill '{name}' uninstalled from {code_skill_dir}")
+        return True
+
+    return False
+
+
+def install_code_skill(url: str, target_dir: Optional[Path] = None) -> Optional[str]:
+    """用 git clone 安装代码 Skill（BaseSkill 子类）。
+
+    克隆仓库到 ~/.vermilion-bird/skills/code/<name>/，
+    验证目录包含 skill.py 且含 BaseSkill 子类。
+
+    Args:
+        url: Git 仓库 URL (https://github.com/...)
+        target_dir: 安装目标目录（默认 ~/.vermilion-bird/skills/code/）
+
+    Returns:
+        技能名称（成功），None（失败）
+    """
+    import subprocess
+    import shutil
+
+    target_base = target_dir or (Path.home() / ".vermilion-bird" / "skills" / "code")
+    target_base.mkdir(parents=True, exist_ok=True)
+
+    # 从 URL 提取仓库名
+    name_match = re.search(r'/([^/]+?)(?:\.git)?$', url.rstrip('/'))
+    repo_name = name_match.group(1) if name_match else "unknown"
+
+    dest = target_base / repo_name
+    if dest.exists():
+        logger.warning(f"Code skill directory already exists: {dest}, removing...")
+        shutil.rmtree(dest)
+
+    click = __import__('click', fromlist=['ClickException'])
+
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            logger.error(f"git clone failed: {result.stderr}")
+            return None
+    except FileNotFoundError:
+        logger.error("git not found. Please install git first.")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.error(f"git clone timed out for {url}")
+        shutil.rmtree(dest, ignore_errors=True)
+        return None
+
+    # 验证是否包含 skill.py
+    skill_py = dest / "skill.py"
+    if not skill_py.exists():
+        logger.warning(f"No skill.py found in {dest}, but installed as code skill")
+
+    logger.info(f"Code skill cloned to {dest}")
+    return repo_name
+
+
+def is_code_skill(path: Path) -> bool:
+    """检查目录是否包含代码 Skill（含 skill.py 且有 BaseSkill 子类）。"""
+    skill_py = path / "skill.py"
+    if not skill_py.exists():
+        return False
+    try:
+        content = skill_py.read_text()
+        return "BaseSkill" in content
+    except Exception:
+        return False
+
+
+def list_installed_skills(target_dir: Optional[Path] = None) -> List[PromptSkill]:
+    """列出所有已安装的技能。
+
+    Args:
+        target_dir: 安装目录（默认 ~/.vermilion-bird/skills/）
+
+    Returns:
+        已加载的 PromptSkill 列表
+    """
+    target_dir = target_dir or (Path.home() / ".vermilion-bird" / "skills")
+    if not target_dir.exists():
+        return []
+    return PromptSkill.discover(target_dir)

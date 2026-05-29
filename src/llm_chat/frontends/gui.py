@@ -1096,6 +1096,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._add_widget_to_chat(ai_label)
 
         self._streaming_browser = None
+        self._scroll_to_bottom()
 
     def _ensure_streaming_browser(self):
         if self._streaming_browser is not None:
@@ -1279,12 +1280,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
 
     def _scroll_to_bottom(self):
+        """滚动到底部。用 QTimer 延迟到下一轮事件循环，确保布局完全就绪。"""
         if self._chat_scroll_area:
-            from PyQt6.QtCore import QCoreApplication
-
-            QCoreApplication.processEvents()
+            from PyQt6.QtCore import QTimer
             scrollbar = self._chat_scroll_area.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            QTimer.singleShot(0, lambda: scrollbar.setValue(scrollbar.maximum()))
 
     def _clear_chat_widgets(self):
         if self._chat_layout is None:
