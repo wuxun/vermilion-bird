@@ -336,6 +336,7 @@ class TaskExecutor:
             if frontend and frontend.name == "gui":
                 signals = getattr(frontend, "_card_signals", None)
                 if signals:
+                    card.conversation_id = None  # 定时任务推送 → 新建会话
                     signals.card_created.emit(card)
                     logger.info(f"[{task.name}] 卡片已推送到 GUI")
         except Exception as e:

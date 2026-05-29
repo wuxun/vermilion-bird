@@ -116,28 +116,20 @@ class LLMClientBase:
     # ------------------------------------------------------------------
 
     def _setup_skills(self, skills_filter: list = None):
-        """加载并初始化技能。
+        """加载并初始化技能。注册覆盖同名工具，天然幂等。
 
         Args:
             skills_filter: 可选，只加载列表中的技能名称。
                           None 表示加载所有技能。用于子 agent 的场景。
         """
-        # 保存 MCP 工具（clear 会清除所有，后续重新注册）
-        mcp_tools = [
-            t for t in self._tool_registry.get_all_tools()
-            if hasattr(t, '_executor')  # MCPToolAdapter 的特征：有 _executor
-        ]
-        self._tool_registry.clear()
-
-        # 恢复 MCP 工具
-        for tool in mcp_tools:
-            self._tool_registry.register(tool)
-
         # 注册系统级工具（仅在父 LLMClient，子 agent 不注册卡片工具）
         if skills_filter is None:
             from llm_chat.decision.submit_tool import SubmitDecisionCardTool
+            from llm_chat.tools.fetch_rss import FetchRSSTool
             self._tool_registry.register(SubmitDecisionCardTool())
+            self._tool_registry.register(FetchRSSTool(config=self._config))
 
+        # 注册技能工具
         for skill_name, skill_class in get_builtin_skills().items():
             if skills_filter is not None and skill_name not in skills_filter:
                 continue

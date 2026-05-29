@@ -76,11 +76,8 @@ class App:
 
     def _init_tool_registry(self):
         from llm_chat.tools.registry import ToolRegistry
-        from llm_chat.tools.fetch_rss import FetchRSSTool
         tr = ToolRegistry()
         ToolRegistry.set_instance(tr)
-        # 注册内置工具
-        tr.register(FetchRSSTool(config=self.config))
         return tr
 
     def _init_storage(self):

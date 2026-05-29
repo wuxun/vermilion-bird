@@ -680,6 +680,7 @@ class SchedulerService:
             if frontend and frontend.name == "gui":
                 signals = getattr(frontend, "_card_signals", None)
                 if signals:
+                    card.conversation_id = None  # 新会话，不继承 scheduled 会话
                     signals.card_created.emit(card)
         except Exception as e:
             logger.warning(f"[{task.name}] GUI 推送失败: {e}")
