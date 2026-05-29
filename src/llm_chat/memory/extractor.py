@@ -360,6 +360,138 @@ class MemoryExtractor:
 - 不要包含敏感信息
 - 如果某类信息不存在，对应字段留空数组"""
 
+    EXTRACT_USER_PROFILE_PROMPT = """你是一个用户画像分析师。基于以下信息，深度提取用户画像。
+
+## 中期日摘要 (最近 30 天全景 — 了解跨天模式和长期兴趣)
+{daily_summaries}
+
+## 近期对话 (最近 7 天细节 — 具体表达和交互)
+{recent_messages}
+
+## 已有用户画像 (避免重复提取)
+{existing_profile}
+
+请从以下维度提取用户信息，每条不超过 60 字，格式为 "fact": "描述", "source": "user_told|observed|inferred", "category": "类别"：
+
+1. **身份与背景** (identity)：姓名、年龄、职业、角色、工作领域、所在地等
+2. **沟通偏好** (preference)：语言偏好、回复风格、代码风格、是否需要 emoji 等
+3. **项目信息** (project)：正在开发的项目、技术栈、架构决策、工具链等
+4. **计划与目标** (plan)：未来计划、学习目标、职业规划、项目路线图等
+5. **技能能力** (skill)：编程语言、框架、工具、领域知识、擅长的技术等
+6. **习惯与作息** (habit)：工作时间、通勤方式、开发习惯、常用设备等
+7. **兴趣与关注** (interest)：技术兴趣方向、关注的前沿技术、非技术爱好等
+8. **其他事实** (fact)：以上类别无法归类的客观事实
+
+要求：
+- 只提取可以确定的信息，不要推测或编造
+- 同一信息如果已有画像中已存在则跳过
+- 每条事实独立一行，确保信息密度
+- 用户明确告知的标为 user_told，对话中观察到的标为 observed，合理推断的标为 inferred
+- 不要提取敏感信息（密码、密钥、token 等）
+
+输出格式 (JSON 数组)：
+[
+  {{"fact": "用户是后端工程师，主要从事业务系统开发", "category": "identity", "source": "user_told"}},
+  {{"fact": "偏好使用 Go 和 Java，近期待学习 Rust", "category": "skill", "source": "observed"}},
+  {{"fact": "工作时间 10:00-22:00，单程通勤 1 小时", "category": "habit", "source": "user_told"}},
+  {{"fact": "对 AI Agent 技术有持续关注，订阅了相关 newsletter", "category": "interest", "source": "inferred"}}
+]
+
+只返回 JSON，不要其他内容。"""
+
+    def extract_user_profile(
+        self,
+        messages: List[Dict],
+        daily_summaries: str = "",
+        existing_profile: str = ""
+    ) -> List[Dict[str, str]]:
+        """深度提取用户画像 — 从近期对话 + 中期摘要中提取多维度用户信息。
+
+        Args:
+            messages: 近期原始消息列表
+            daily_summaries: 中期日摘要文本 (最近 30 天全景)
+            existing_profile: 已有用户画像 (避免重复提取)
+
+        Returns:
+            [{"fact": "...", "category": "...", "source": "..."}, ...]
+            空列表表示无新信息或 LLM 不可用
+        """
+        summarizer = self._get_summarizer()
+        if summarizer is None:
+            logger.debug("无 Summarizer，跳过用户画像提取")
+            return []
+
+        # 格式化近期对话 (最近 100 条，截断到 4000 字符)
+        lines = []
+        total_chars = 0
+        for msg in reversed(messages[-100:]):
+            role = msg.get("role", "?")
+            content = msg.get("content", "")[:300]
+            if not content:
+                continue
+            line = f"[{role}]: {content}"
+            if total_chars + len(line) > 4000:
+                break
+            lines.append(line)
+            total_chars += len(line)
+        recent_text = "\n".join(reversed(lines)) if lines else "(无近期对话)"
+
+        # 脱敏
+        if self._contains_sensitive_info(recent_text):
+            recent_text = self._redact_sensitive_info(recent_text)
+
+        daily_text = daily_summaries if daily_summaries else "(无中期摘要)"
+        profile_text = (
+            existing_profile[:2000] if existing_profile else "(暂无已有画像)"
+        )
+
+        prompt = self.EXTRACT_USER_PROFILE_PROMPT.format(
+            daily_summaries=daily_text,
+            recent_messages=recent_text,
+            existing_profile=profile_text,
+        )
+
+        try:
+            response = summarizer.generate(prompt, max_tokens=800)
+            if not response:
+                logger.warning("用户画像提取：LLM 无响应")
+                return []
+
+            result = self._parse_llm_json(response)
+            if not isinstance(result, list):
+                logger.warning(f"用户画像提取：非数组响应: {type(result)}")
+                return []
+
+            # 验证每条记录
+            valid = []
+            valid_categories = {
+                "identity", "preference", "project", "plan",
+                "skill", "habit", "interest", "fact"
+            }
+            valid_sources = {"user_told", "observed", "inferred"}
+            for item in result:
+                if not isinstance(item, dict):
+                    continue
+                fact = item.get("fact", "").strip()
+                category = item.get("category", "fact").strip()
+                source = item.get("source", "observed").strip()
+                if not fact or category not in valid_categories:
+                    continue
+                if source not in valid_sources:
+                    source = "observed"
+                valid.append({
+                    "fact": fact[:120],  # 截断过长的
+                    "category": category,
+                    "source": source,
+                })
+
+            logger.info(f"用户画像提取完成: {len(valid)} 条新事实")
+            return valid
+
+        except Exception as e:
+            logger.error(f"用户画像提取失败: {e}")
+            return []
+
     def extract_long_term_facts(self, mid_term_content: str) -> List[str]:
         """从中期记忆提取长期事实"""
         if not mid_term_content or len(mid_term_content) < 50:

@@ -299,9 +299,11 @@ class MemoryManager:
             return 0
     
     def evolve_understanding(self):
-        """进化对用户的理解 — 规则检测偏好 + LLM 生成行为指引。
+        """进化对用户的理解 — 规则检测偏好 + 深度提取用户画像 + LLM 生成行为指引。
 
         规则部分（轻量）：检测语言、风格、代码偏好 → 更新 long_term 偏好章节。
+        提取部分（重量）：从近期对话 + 中期日摘要中深度提取 8 维用户画像
+        → 写入 long_term 的事实章节。
         LLM 部分（重量）：结合中期日摘要 (30 天全景) + 近期原始消息 (7 天细节)
         → 生成行为指引 → 写入「## 行为指引」章节。
         """
@@ -319,14 +321,37 @@ class MemoryManager:
         if preferences.get("code_style"):
             self.storage.update_section("沟通偏好", f"- 代码风格：{preferences['code_style']}")
 
-        # ── LLM 生成行为指引 ──
+        # 预加载中期日摘要 (后续两个 LLM 步骤共用)
         summarizer = self._summarizer
+        daily_summaries = ""
+        if summarizer:
+            mid_term = self.storage.load_mid_term()
+            daily_summaries = self._extract_all_daily_summaries(mid_term)
+
+        # ── 深度提取用户画像（LLM）──
         if summarizer and messages:
             try:
-                # 加载中期日摘要作为全景视图 (最近 30 天，截断到 2000 字符)
-                mid_term = self.storage.load_mid_term()
-                daily_summaries = self._extract_all_daily_summaries(mid_term)
+                existing_profile = self.storage.load_long_term() or ""
+                facts = self.extractor.extract_user_profile(
+                    messages, daily_summaries, existing_profile
+                )
+                if facts:
+                    # 将提取的事实写入 long_term
+                    for item in facts:
+                        source = item.get("source", "observed")
+                        if source == "user_told":
+                            self.storage.add_user_fact(item["fact"])
+                            self._long_term_fact_count += 1
+                        else:
+                            self.storage.add_inferred_fact(item["fact"])
+                            self._long_term_fact_count += 1
+                    logger.info(f"用户画像提取完成: {len(facts)} 条新事实")
+            except Exception as e:
+                logger.warning(f"用户画像提取失败，跳过: {e}")
 
+        # ── LLM 生成行为指引 ──
+        if summarizer and messages:
+            try:
                 directives = self._generate_behavioral_directives(
                     summarizer, messages, daily_summaries
                 )
@@ -473,7 +498,149 @@ class MemoryManager:
             )
 
         self.storage.save_long_term(content)
-    
+
+    def evolve_soul(self):
+        """进化 Soul 人格 — LLM 分析交互模式，精炼沟通风格和工具使用策略。
+
+        保留不变：身份描述、行为准则、专业能力、拒绝场景。
+        精炼范围：沟通风格 (语言/语气/格式/长度)、工具使用策略 (搜索/shell/文件/子Agent)。
+
+        触发：与 evolve_understanding 共用周期 (默认 7 天)。
+        """
+        summarizer = self._summarizer
+        if not summarizer:
+            logger.debug("无 Summarizer，跳过 Soul 进化")
+            return
+
+        current_soul = self.storage.load_soul()
+        if not current_soul:
+            logger.debug("Soul 文件不存在，跳过进化")
+            return
+
+        # 加载分析材料
+        messages = self.load_recent_conversations(7)
+        if not messages:
+            logger.debug("无近期对话，跳过 Soul 进化")
+            return
+
+        mid_term = self.storage.load_mid_term()
+        daily_summaries = self._extract_all_daily_summaries(mid_term)
+        long_term = self.storage.load_long_term() or ""
+
+        # 格式化近期对话
+        lines = []
+        total_chars = 0
+        for msg in reversed(messages[-80:]):
+            role = msg.get("role", "?")
+            content = msg.get("content", "")[:250]
+            if not content:
+                continue
+            line = f"[{role}]: {content}"
+            if total_chars + len(line) > 3500:
+                break
+            lines.append(line)
+            total_chars += len(line)
+        recent_text = "\n".join(reversed(lines)) if lines else "(无)"
+
+        # 提取当前 soul 的可精炼部分
+        comm_style = self._extract_section(current_soul, "## 沟通风格")
+        tool_strategy = self._extract_section(current_soul, "## 工具使用策略")
+
+        prompt = f"""你是一个 AI 人格设计师。根据用户的行为模式，精炼 AI 助手的沟通风格和工具使用策略。
+
+## 当前 Soul 的沟通风格
+{comm_style[:1500] if comm_style else "(默认)"}
+
+## 当前 Soul 的工具使用策略
+{tool_strategy[:1500] if tool_strategy else "(默认)"}
+
+## 用户长期画像
+{long_term[:1500] if long_term else "(暂无)"}
+
+## 近期交互模式 (最近 7 天)
+{recent_text[:3000]}
+
+{"## 中期日摘要 (最近 30 天全景)" + chr(10) + daily_summaries[:2000] if daily_summaries else ""}
+
+## 任务
+
+分析用户的交互模式，为 AI 助手生成精炼后的「沟通风格」和「工具使用策略」章节。
+
+要求：
+1. **沟通风格**：根据用户的实际偏好调整语言、语气、格式、长度 — 用户喜欢什么就加强什么
+   - 从交互中识别：用户喜欢简洁还是详细？中文还是英文？结构化还是叙述式？
+   - 如果用户反复纠正某个写法，将该偏好写入
+2. **工具使用策略**：根据用户的实际使用模式调整工具指引
+   - 用户频繁使用某类工具 → 策略应鼓励该工具
+   - 用户从不使用某策略 → 可降级或移除
+   - 保留安全护栏（rm、sudo 等危险操作仍需确认）
+3. **不要改变**：身份描述、行为准则 (用户优先/安全第一/诚实透明/隐私尊重/效率导向)、专业能力、拒绝场景 — 这些是核心护栏
+4. 使用与当前 soul 一致的 Markdown 格式（## H2, ### H3, 列表, 表格）
+5. 保留原有好的内容，只做增量精炼，不要大幅改写
+
+输出格式：
+
+## 沟通风格
+
+(精炼后的沟通风格章节，完整 Markdown)
+
+## 工具使用策略
+
+(精炼后的工具使用策略章节，完整 Markdown)
+
+只输出这两个章节，不要其他内容。"""
+
+        try:
+            response = summarizer.generate(prompt, max_tokens=1000)
+            if not response:
+                logger.warning("Soul 进化：LLM 无响应")
+                return
+
+            # 解析响应：提取两个章节
+            comm_match = re.search(
+                r'## 沟通风格\n(.*?)(?=\n## |\Z)', response, re.DOTALL
+            )
+            tool_match = re.search(
+                r'## 工具使用策略\n(.*?)(?=\n## |\Z)', response, re.DOTALL
+            )
+
+            if not comm_match and not tool_match:
+                logger.warning("Soul 进化：LLM 输出无法解析章节")
+                return
+
+            # 安全网：如果精炼后的章节长度小于原来的 30%，拒绝写入
+            if comm_match:
+                new_comm = comm_match.group(1).strip()
+                if len(new_comm) < len(comm_style or "") * 0.3:
+                    logger.warning(
+                        f"Soul 进化：沟通风格精炼后过短 ({len(new_comm)} < "
+                        f"{int(len(comm_style or '') * 0.3)})，跳过"
+                    )
+                else:
+                    self.update_soul_section("沟通风格", new_comm)
+                    logger.info(f"Soul 沟通风格已进化 ({len(new_comm)} 字符)")
+
+            if tool_match:
+                new_tool = tool_match.group(1).strip()
+                if len(new_tool) < len(tool_strategy or "") * 0.3:
+                    logger.warning(
+                        f"Soul 进化：工具策略精炼后过短 ({len(new_tool)} < "
+                        f"{int(len(tool_strategy or '') * 0.3)})，跳过"
+                    )
+                else:
+                    self.update_soul_section("工具使用策略", new_tool)
+                    logger.info(f"Soul 工具策略已进化 ({len(new_tool)} 字符)")
+
+        except Exception as e:
+            logger.warning(f"Soul 进化失败，跳过: {e}")
+
+    @staticmethod
+    def _extract_section(content: str, header: str) -> str:
+        """从 Markdown 提取指定 H2 章节的完整内容 (含子章节)。"""
+        pattern = rf'({re.escape(header)}\n.*?)(?=\n## |\Z)'
+        match = re.search(pattern, content, re.DOTALL)
+        return match.group(1) if match else ""
+
     # CJK 字符正则（中日韩），预编译避免每次 _estimate_tokens 重复编译
     _CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]')
 
@@ -746,7 +913,7 @@ class MemoryManager:
                 logger.error(f"中期记忆压缩失败: {e}")
 
     def _maybe_evolve_understanding(self, force: bool = False):
-        """按周期进化长期记忆"""
+        """按周期进化长期记忆 + Soul 人格"""
         if not self._long_term_auto_evolve:
             return
 
@@ -762,6 +929,12 @@ class MemoryManager:
                 logger.info(f"长期记忆进化+整理完成")
             except Exception as e:
                 logger.error(f"长期记忆进化失败: {e}")
+
+            # Soul 进化 — 独立于长期记忆，失败不影响长期记忆进化
+            try:
+                self.evolve_soul()
+            except Exception as e:
+                logger.warning(f"Soul 进化失败，跳过: {e}")
 
     # ------------------------------------------------------------------
     # 长期记忆整理：去重 + 重新分类
@@ -955,6 +1128,8 @@ class MemoryManager:
             "project": "项目信息",
             "plan": "计划与目标",
             "skill": "技能能力",
+            "habit": "习惯与作息",
+            "interest": "兴趣与关注",
             "fact": "其他事实",
         }
 
