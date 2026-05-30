@@ -24,64 +24,56 @@ class ModelConfigMixin:
     def _init_model_combo(self):
         if self._model_combo is None:
             return
+        self._model_combo.blockSignals(True)
         self._model_combo.clear()
         if self._config is None:
-            self._model_combo.addItem(self._current_model)
+            self._model_combo.addItem(self._current_model, self._current_model)
             self._model_combo.setCurrentText(self._current_model)
+            self._model_combo.blockSignals(False)
             return
         available_models = getattr(self._config.llm, "available_models", [])
         if available_models:
             for model_info in available_models:
-                if hasattr(model_info, "name"):
-                    model_name = model_info.name
+                if hasattr(model_info, "id"):
+                    model_id = model_info.id
+                    model_name = getattr(model_info, "name", model_id)
                 elif hasattr(model_info, "get"):
-                    model_name = model_info.get("id")
+                    model_id = model_info.get("id", "")
+                    model_name = model_info.get("name", model_id)
                 else:
-                    model_name = str(model_info)
-                self._model_combo.addItem(model_name)
+                    model_id = str(model_info)
+                    model_name = model_id
+                # displayText = name, userData = id
+                self._model_combo.addItem(model_name, model_id)
             current_model = self._config.llm.model
-            index = self._model_combo.findText(current_model)
-            if index >= 0:
-                self._model_combo.setCurrentIndex(index)
-            else:
-                self._model_combo.setCurrentText(current_model)
+            # 用 itemData 匹配，避免 name/id 不一致导致选不中
+            for i in range(self._model_combo.count()):
+                if self._model_combo.itemData(i) == current_model:
+                    self._model_combo.setCurrentIndex(i)
+                    break
         else:
-            self._model_combo.addItem(self._current_model)
+            self._model_combo.addItem(self._current_model, self._current_model)
             self._model_combo.setCurrentText(self._current_model)
+        self._model_combo.blockSignals(False)
 
     def _on_model_changed(self, index: int):
         if self._config is None or self._model_combo is None:
             return
-        model_name = self._model_combo.currentText()
+        # 从 itemData 获取真实 model id，不再依赖 currentText
+        model_id = self._model_combo.itemData(index)
+        if not model_id:
+            model_id = self._model_combo.currentText()
         old_model = self._config.llm.model
-        if model_name == old_model:
+        if model_id == old_model:
             return
+        # 查找对应的 ModelInfo 以获取 per-model 配置
         available_models = getattr(self._config.llm, "available_models", [])
-        model_id = model_name
         selected_model_info = None
-        if available_models:
-            for model_info in available_models:
-                info_name = (
-                    model_info.name
-                    if hasattr(model_info, "name")
-                    else (
-                        model_info.get("name")
-                        if hasattr(model_info, "get")
-                        else str(model_info)
-                    )
-                )
-                if info_name == model_name:
-                    model_id = (
-                        model_info.id
-                        if hasattr(model_info, "id")
-                        else (
-                            model_info.get("id")
-                            if hasattr(model_info, "get")
-                            else model_name
-                        )
-                    )
-                    selected_model_info = model_info
-                    break
+        for model_info in available_models:
+            mid = model_info.id if hasattr(model_info, "id") else model_info.get("id", "")
+            if mid == model_id:
+                selected_model_info = model_info
+                break
         self._config.llm.model = model_id
         self._current_model = model_id
         if selected_model_info:
