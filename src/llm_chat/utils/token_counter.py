@@ -52,6 +52,11 @@ MODEL_CONTEXT_LIMITS = {
     "deepseek-ai/DeepSeek-V3": 65536,
     "deepseek-ai/DeepSeek-R1": 65536,
     "deepseek-ai/DeepSeek-V4": 1048576,
+    "deepseek-v4-flash": 1048576,
+    "deepseek-v4-pro": 1048576,
+    # ── Xiaomi MiMo ──
+    "mimo-v2.5-pro": 1048576,
+    "mimo-v2.5": 1048576,
     # ── Qwen / 通义千问 ──
     "qwen-turbo": 1048576,
     "qwen-plus": 131072,
