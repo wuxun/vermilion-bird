@@ -1076,7 +1076,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{content}</span>"
         )
         self._add_widget_to_chat(user_browser)
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def _adjust_browser_height(self, browser):
         """调整 QTextBrowser 高度以适应内容"""
@@ -1096,7 +1096,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._add_widget_to_chat(ai_label)
 
         self._streaming_browser = None
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def _ensure_streaming_browser(self):
         if self._streaming_browser is not None:
@@ -1141,9 +1141,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._messages.append({"role": "card", "card": pending})
             self._pending_card = None
             logger.info(f"卡片已追加到 assistant 之后: {pending.id}")
+            # 有卡片时需要全量重建才能渲染卡片 widget
+            self._update_context_status()
+            self._refresh_chat_display()
+        else:
+            # 无卡片：流式浏览器已在 _on_stream_text 中实时更新内容，
+            # 不需要全量重建，避免重建导致界面跳到顶部
+            self._update_context_status()
+            self._scroll_to_bottom(force_layout=True)
 
-        self._update_context_status()
-        self._refresh_chat_display()
         self._set_input_state(True)
         self._refresh_conversation_list()
 
@@ -1193,7 +1199,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         else:
             self._chat_layout.addWidget(tool_widget)
 
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
         logger.info(f"工具调用开始: {tool_name}, args={args_formatted[:100]}")
 
     def _on_tool_call_finished(self, tool_name: str, tool_args: str, result: str):
@@ -1279,12 +1285,23 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             .replace("'", "&#39;")
         )
 
-    def _scroll_to_bottom(self):
-        """滚动到底部。用 QTimer 延迟到下一轮事件循环，确保布局完全就绪。"""
+    def _scroll_to_bottom(self, force_layout: bool = False):
+        """滚动到底部。
+
+        Args:
+            force_layout: True 时先 processEvents 刷新布局再滚动（首次加入 widget 后）。
+                         False 时用稍长延迟等布局自然就绪（流式过程中高频调用时）。"""
         if self._chat_scroll_area:
             from PyQt6.QtCore import QTimer
-            scrollbar = self._chat_scroll_area.verticalScrollBar()
-            QTimer.singleShot(0, lambda: scrollbar.setValue(scrollbar.maximum()))
+            if force_layout and self._app:
+                # 强制布局刷新：widget 刚加入、需要立刻拿到正确 maximum 时
+                self._app.processEvents()
+                scrollbar = self._chat_scroll_area.verticalScrollBar()
+                QTimer.singleShot(0, lambda: scrollbar.setValue(scrollbar.maximum()))
+            else:
+                # 流式高频场景：给布局 50ms 自然就绪，避免 processEvents 开销
+                scrollbar = self._chat_scroll_area.verticalScrollBar()
+                QTimer.singleShot(50, lambda: scrollbar.setValue(scrollbar.maximum()))
 
     def _clear_chat_widgets(self):
         if self._chat_layout is None:
@@ -1386,7 +1403,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 )
                 self._add_widget_to_chat(separator)
 
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def _add_widget_to_chat(self, widget: QWidget):
         if self._chat_layout is None:
@@ -1491,7 +1508,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             )
             self._add_widget_to_chat(separator)
 
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def display_error(self, error: str):
         if self._chat_layout is None:
@@ -1504,7 +1521,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "padding: 5px; background-color: #FFEBEE; border-radius: 4px; margin: 2px 0; color: #8B0000;"
         )
         self._add_widget_to_chat(error_label)
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def display_info(self, info: str):
         if self._chat_layout is None:
@@ -1519,7 +1536,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #6B4423;"
         )
         self._add_widget_to_chat(info_label)
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     def display_card(self, card: DecisionCard):
         """渲染决策卡片。
@@ -1676,7 +1693,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "padding: 4px 8px; margin: 2px 0;"
         )
         self._add_widget_to_chat(info)
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force_layout=True)
 
     @property
     def conversation_id(self) -> str:
