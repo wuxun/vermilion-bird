@@ -207,17 +207,23 @@ class ConversationManager:
         client: LLMClient,
         storage: Optional[Storage] = None,
         memory_config: Optional[Dict] = None,
+        knowledge_config: Optional[Dict] = None,
         default_model_params: Optional[Dict[str, Any]] = None,
         memory_manager=None,
+        knowledge_manager=None,
     ):
         self.client = client
         self.storage = storage or Storage()
         self.memory_config = memory_config or {}
+        self.knowledge_config = knowledge_config or {}
         self.default_model_params = default_model_params or {}
         self._conversations: Dict[str, Conversation] = {}
         self._memory_manager = memory_manager
         if self._memory_manager is None:
             self._init_memory()
+        self._knowledge_manager = knowledge_manager
+        if self._knowledge_manager is None:
+            self._init_knowledge()
 
     def _init_memory(self):
         """初始化共享记忆管理器（单例）"""
@@ -241,6 +247,27 @@ class ConversationManager:
             except Exception as e:
                 logger.warning(f"共享记忆系统初始化失败: {e}")
                 self._memory_manager = None
+
+    def _init_knowledge(self):
+        """初始化共享知识管理器（单例）"""
+        if self.knowledge_config.get("enabled", True):
+            try:
+                from llm_chat.knowledge import KnowledgeManager, KnowledgeStorage
+                from llm_chat.memory.summarizer import LLMSummarizer
+
+                knowledge_storage = KnowledgeStorage(
+                    self.knowledge_config.get("storage_dir", "~/.vermilion-bird/knowledge")
+                )
+                summarizer = LLMSummarizer(self.client)
+                self._knowledge_manager = KnowledgeManager(
+                    storage=knowledge_storage,
+                    summarizer=summarizer,
+                    config=self.knowledge_config,
+                )
+                logger.info("领域知识系统已初始化")
+            except Exception as e:
+                logger.warning(f"领域知识系统初始化失败: {e}")
+                self._knowledge_manager = None
 
     def get_conversation(self, conversation_id: str) -> Conversation:
         if conversation_id not in self._conversations:
@@ -275,6 +302,11 @@ class ConversationManager:
     def get_default_model_params(self) -> Dict[str, Any]:
         """获取默认模型参数"""
         return self.default_model_params.copy()
+
+    @property
+    def knowledge_manager(self):
+        """获取共享 KnowledgeManager 实例。"""
+        return self._knowledge_manager
 
     def list_conversations(
         self, limit: int = 50, offset: int = 0

@@ -37,6 +37,7 @@ from llm_chat.skills.task_delegator.skill import TaskDelegatorSkill
 from llm_chat.skills.scheduler.skill import SchedulerSkill
 from llm_chat.skills.shell_exec.skill import ShellExecSkill
 from llm_chat.skills.remember_fact.skill import RememberFactSkill
+from llm_chat.skills.knowledge_base.skill import KnowledgeBaseSkill
 
 _BUILTIN_SKILLS["web_search"] = WebSearchSkill
 _BUILTIN_SKILLS["calculator"] = CalculatorSkill
@@ -49,3 +50,4 @@ _BUILTIN_SKILLS["task_delegator"] = TaskDelegatorSkill
 _BUILTIN_SKILLS["scheduler"] = SchedulerSkill
 _BUILTIN_SKILLS["shell_exec"] = ShellExecSkill
 _BUILTIN_SKILLS["remember_fact"] = RememberFactSkill
+_BUILTIN_SKILLS["knowledge_base"] = KnowledgeBaseSkill

@@ -90,14 +90,18 @@ class App:
 
     def _init_conversation_manager(self):
         memory_config = self._build_memory_config()
+        knowledge_config = self._build_knowledge_config()
         default_model_params = self.config.llm.get_model_params()
         memory_manager = self._init_memory_manager()
+        knowledge_manager = self._init_knowledge_manager()
         return ConversationManager(
             self.client,
             self.storage,
             memory_config=memory_config,
+            knowledge_config=knowledge_config,
             default_model_params=default_model_params,
             memory_manager=memory_manager,
+            knowledge_manager=knowledge_manager,
         )
 
     def _init_memory_manager(self):
@@ -197,6 +201,47 @@ class App:
             "short_term_max_entries": self.config.memory.short_term_max_entries,
             "max_memory_tokens": self.config.memory.max_memory_tokens,
         }
+
+    def _build_knowledge_config(self) -> Dict[str, Any]:
+        """构建领域知识系统配置字典。"""
+        kc = self.config.knowledge
+        if not kc.enabled:
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "storage_dir": kc.storage_dir,
+            "max_knowledge_tokens": kc.max_knowledge_tokens,
+            "extraction_interval": kc.extraction_interval,
+            "consolidate_min_entries": kc.consolidate_min_entries,
+            "refine_min_total": kc.refine_min_total,
+        }
+
+    def _init_knowledge_manager(self):
+        """创建共享 KnowledgeManager (可选，取决于 config.knowledge.enabled)。"""
+        knowledge_config = self._build_knowledge_config()
+        if not knowledge_config.get("enabled"):
+            return None
+        try:
+            from llm_chat.knowledge import KnowledgeManager, KnowledgeStorage
+            from llm_chat.memory.summarizer import LLMSummarizer
+            knowledge_storage = KnowledgeStorage(
+                knowledge_config.get("storage_dir", "~/.vermilion-bird/knowledge")
+            )
+            # 注入共享存储实例到 skill 模块，确保 LLM 工具和 pipeline 使用同一实例
+            try:
+                from llm_chat.skills.knowledge_base.skill import set_storage
+                set_storage(knowledge_storage)
+            except Exception:
+                pass  # skill 未加载时静默跳过
+            summarizer = LLMSummarizer(self.client)
+            return KnowledgeManager(
+                storage=knowledge_storage,
+                summarizer=summarizer,
+                config=knowledge_config,
+            )
+        except Exception as e:
+            logger.warning(f"领域知识系统初始化失败: {e}")
+            return None
 
     def _init_prompt_skills(self):
         """发现并初始化 Prompt Skills (Agent Skills 标准)。

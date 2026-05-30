@@ -25,7 +25,8 @@ from llm_chat.pipeline.stages import (
     PersistUserStage, SystemContextStage, HistoryStage,
     ModelRouteStage, CompressStage,
     LLMCallStage,
-    PersistAssistantStage, MemoryExtractStage, TokenRecordStage,
+    PersistAssistantStage, MemoryExtractStage, KnowledgeExtractStage,
+    TokenRecordStage,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class ChatCore:
             if hasattr(config.tools, 'enable_intent') else True
         )
 
-        # 组装 10 阶段管道
+        # 组装 11 阶段管道
         stages = [
             IntentStage(self.intent_classifier),
             ShortcutStage(self.conversation_manager, self._style_holder),
@@ -81,6 +82,7 @@ class ChatCore:
             LLMCallStage(self.client, self.config),
             PersistAssistantStage(self.conversation_manager),
             MemoryExtractStage(self.conversation_manager),
+            KnowledgeExtractStage(self.conversation_manager),
             TokenRecordStage(self.config),
         ]
         self._runner = PipelineRunner(stages)

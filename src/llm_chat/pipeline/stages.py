@@ -448,6 +448,18 @@ class SystemContextStage(PipelineStage):
         if prompt_skills:
             parts.append(prompt_skills)
 
+        # 3a. 领域知识 (渐进式披露)
+        knowledge_mgr = self._conversation_manager.knowledge_manager
+        if knowledge_mgr is not None:
+            try:
+                knowledge_ctx = knowledge_mgr.build_knowledge_context(
+                    ctx.effective_message or ctx.user_message
+                )
+                if knowledge_ctx:
+                    parts.append(knowledge_ctx)
+            except Exception as e:
+                logger.warning(f"知识注入跳过: {e}")
+
         # 4. 当前对话风格 (非 default 时注入)
         style_context = self._get_style_context()
         if style_context:
@@ -789,6 +801,32 @@ class MemoryExtractStage(PipelineStage):
             memory_manager.process_pending_extractions()
         except Exception as e:
             logger.warning(f"[MemoryExtractStage] failed: {e}")
+        return ctx
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Stage 8a: KnowledgeExtractStage — 领域知识提取
+# ═══════════════════════════════════════════════════════════════════
+
+
+class KnowledgeExtractStage(PipelineStage):
+    """将本轮对话记录到领域知识系统，触发提取/整合/提炼。"""
+    name = "KnowledgeExtract"
+
+    def __init__(self, conversation_manager) -> None:
+        from llm_chat.conversation import ConversationManager as CM
+        self._conversation_manager: CM = conversation_manager
+
+    async def process(self, ctx: PipelineContext) -> PipelineContext:
+        knowledge_mgr = self._conversation_manager.knowledge_manager
+        if knowledge_mgr is None:
+            return ctx
+        try:
+            knowledge_mgr.record_conversation(
+                ctx.user_message, ctx.response
+            )
+        except Exception as e:
+            logger.warning(f"[KnowledgeExtractStage] failed: {e}")
         return ctx
 
 

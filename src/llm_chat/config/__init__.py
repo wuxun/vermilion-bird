@@ -38,6 +38,7 @@ from llm_chat.config.feishu_config import FeishuConfig
 from llm_chat.config.notification_config import NotificationConfig
 from llm_chat.config.skills_config import SkillsConfig, SkillConfig
 from llm_chat.config.scheduler_config import SchedulerConfig
+from llm_chat.config.knowledge_config import KnowledgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ __all__ = [
     "SkillsConfig",
     "SkillConfig",
     "SchedulerConfig",
+    "KnowledgeConfig",
     "config",
 ]
 
@@ -91,6 +93,7 @@ class Config(BaseSettings):
         ),
     )
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     log_file: str = Field(
         default="~/.vermilion-bird/logs/app.log",
         description="日志文件路径，可被 CLI --log-file 覆盖",
@@ -198,6 +201,14 @@ class Config(BaseSettings):
                 else SchedulerConfig()
             )
 
+            # Knowledge
+            knowledge_data = config_data.get("knowledge", {})
+            knowledge_config = (
+                KnowledgeConfig(**knowledge_data)
+                if knowledge_data
+                else KnowledgeConfig()
+            )
+
             # Log
             log_file = config_data.get("log_file", "~/.vermilion-bird/logs/app.log")
             log_level = config_data.get("log_level", "INFO")
@@ -213,6 +224,7 @@ class Config(BaseSettings):
                 memory=memory_config,
                 context=context_config,
                 scheduler=scheduler_config,
+                knowledge=knowledge_config,
                 log_file=log_file,
                 log_level=log_level,
             )
@@ -313,6 +325,7 @@ class Config(BaseSettings):
             "memory": self.memory.model_dump(),
             "context": self.context.model_dump(),
             "scheduler": self.scheduler.model_dump(),
+            "knowledge": self.knowledge.model_dump(),
             "log_file": self.log_file,
             "log_level": self.log_level,
         }
