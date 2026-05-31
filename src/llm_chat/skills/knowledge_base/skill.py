@@ -128,9 +128,10 @@ class RememberKnowledgeTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "将一条领域专业知识存储到指定领域。"
+            "将领域专业知识存储到指定领域。"
             "当对话中出现了值得长期记住的领域知识时使用此工具（技术约定、业务规则、"
             "最佳实践、经验教训等）。"
+            "支持批量写入，一次调用可存多条知识点。"
             "领域不存在时会自动创建。"
             "这些知识将在后续涉及该领域的对话中自动注入到系统提示上下文。"
         )
@@ -147,10 +148,11 @@ class RememberKnowledgeTool(BaseTool):
                     ),
                 },
                 "fact": {
-                    "type": "string",
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "要记住的知识点。用简洁的一句话描述，包含关键信息。"
-                        "例如：'PyTorch 2.0 的 torch.compile 可提速 30-50%'"
+                        "知识点列表，每条一个字符串。支持单行事实或多行 Markdown（表格、代码块等）。"
+                        "例如：[\"PyTorch 2.0 的 torch.compile 可提速 30-50%\", \"推理时必须加 no_grad()\"]"
                     ),
                 },
                 "category": {
@@ -191,7 +193,7 @@ class RememberKnowledgeTool(BaseTool):
     def execute(
         self,
         domain: str,
-        fact: str,
+        fact: list,
         category: str = "other",
         display_name: str = "",
         description: str = "",
@@ -203,7 +205,6 @@ class RememberKnowledgeTool(BaseTool):
             # 领域不存在 → 自动创建
             if not storage.domain_exists(domain):
                 if not display_name:
-                    # 没有显示名 → 用 domain 本身
                     display_name = domain
                 if not description:
                     description = f"{display_name}领域专业知识"
@@ -225,13 +226,20 @@ class RememberKnowledgeTool(BaseTool):
                         f"关键词: {kw_list}"
                     )
                 except FileExistsError:
-                    # 竞态：另一个线程已创建，继续
                     pass
 
-            # 追加知识点
-            ok = storage.append_fact(domain, fact, category)
-            if not ok:
-                return f"❌ 写入失败：无法追加到领域 '{domain}'"
+            # 批量追加知识点
+            written = 0
+            for f in fact:
+                f = f.strip()
+                if not f:
+                    continue
+                ok = storage.append_fact(domain, f, category)
+                if ok:
+                    written += 1
+
+            if written == 0:
+                return f"❌ 写入失败：所有知识点为空或写入出错"
 
             label = CATEGORY_LABELS.get(category, category)
             meta = storage.get_domain_meta(domain)
@@ -239,7 +247,7 @@ class RememberKnowledgeTool(BaseTool):
 
             return (
                 f"已记住 ✓ [{label}] → {domain}\n"
-                f"知识点: {fact[:120]}\n"
+                f"本次写入: {written} 条\n"
                 f"该领域累计: {count} 条"
             )
 
