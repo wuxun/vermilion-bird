@@ -474,8 +474,6 @@ class SchedulerService:
             return self._run_skill_task(task)
         elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
             return self._run_maintenance_task(task)
-        elif task.task_type == TaskType.PROACTIVE_CHAT:
-            return self._run_proactive_chat_task(task)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
