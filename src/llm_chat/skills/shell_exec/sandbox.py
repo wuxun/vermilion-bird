@@ -85,7 +85,9 @@ class SandboxExecutor:
                 logger.info("沙箱已启动: docker (持久化容器)")
                 return
             except Exception as e:
-                logger.warning(f"Docker 沙箱启动失败: {e}")
+                logger.warning(f"Docker 沙箱启动失败 (daemon 可能未就绪): {e}")
+        else:
+            logger.info("Docker 不可用 (CLI 缺失或 daemon 未就绪)")
 
         # 2. 尝试 bwrap
         if self._check_bwrap():
@@ -175,8 +177,18 @@ class SandboxExecutor:
     # ------------------------------------------------------------------
 
     def _check_docker(self) -> bool:
-        """检查 Docker 是否可用。"""
-        return shutil.which("docker") is not None
+        """检查 Docker 是否可用 (CLI 存在 + daemon 可连接)。"""
+        if shutil.which("docker") is None:
+            return False
+        # 验证 daemon 真正就绪，而非仅 CLI 存在
+        try:
+            result = subprocess.run(
+                ["docker", "info"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
 
     def _start_docker(self):
         """创建持久化 Docker 容器，带心跳存活性监控。

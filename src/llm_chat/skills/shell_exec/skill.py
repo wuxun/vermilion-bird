@@ -248,11 +248,29 @@ class ShellExecSkill(BaseSkill):
         """后台线程中异步启动沙箱（Docker 容器创建），不阻塞主线程。
 
         由 App._start_background_services 在窗口显示后调用。
+        如果 Docker daemon 未就绪，最多重试 3 次 (间隔 5 秒)。
         """
         if not self._sandbox or self._sandbox._started:
             return
         import threading
-        t = threading.Thread(target=self._sandbox.start, daemon=True,
+
+        def _start_with_retry():
+            import time as _time
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                self._sandbox.start()
+                if self._sandbox.mode == "docker":
+                    logger.info(f"沙箱异步启动成功: docker (第 {attempt} 次尝试)")
+                    return
+                if attempt < max_retries:
+                    logger.info(f"Docker 未就绪，5秒后重试 ({attempt}/{max_retries})...")
+                    _time.sleep(5)
+                    # 重置状态以便重试
+                    self._sandbox._started = False
+                    self._sandbox._mode = "none"
+            logger.warning(f"沙箱最终回退到: {self._sandbox.mode}")
+
+        t = threading.Thread(target=_start_with_retry, daemon=True,
                              name="sandbox-start")
         t.start()
         logger.info("沙箱异步启动中 (Docker 容器创建)...")
