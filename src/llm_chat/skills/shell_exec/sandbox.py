@@ -46,6 +46,7 @@ class SandboxExecutor:
         self._max_cpus = max_cpus
 
         self._mode: str = "none"  # docker | bwrap | subprocess
+        self._docker_cmd: Optional[str] = None  # docker CLI 完整路径
         self._container_id: Optional[str] = None
         self._started = False
         self._start_lock = threading.Lock()  # 防止并发 start() 竞态
@@ -116,7 +117,7 @@ class SandboxExecutor:
         if self._mode == "docker" and self._container_id:
             try:
                 subprocess.run(
-                    ["docker", "rm", "-f", self._container_id],
+                    [self._docker_cmd, "rm", "-f", self._container_id],
                     capture_output=True, timeout=5,
                 )
                 logger.info("Docker 沙箱已清理")
@@ -176,14 +177,35 @@ class SandboxExecutor:
     # Docker 实现
     # ------------------------------------------------------------------
 
+    def _resolve_docker_cmd(self) -> Optional[str]:
+        """解析 docker CLI 完整路径。
+
+        PyInstaller .app 不继承 shell PATH，需尝试常见 macOS 安装位置。
+        """
+        # 1. shutil.which (继承当前 PATH)
+        found = shutil.which("docker")
+        if found:
+            return found
+        # 2. 常见 macOS 路径 (Homebrew arm64/intel + Docker Desktop)
+        candidates = [
+            "/opt/homebrew/bin/docker",
+            "/usr/local/bin/docker",
+            "/Applications/Docker.app/Contents/Resources/bin/docker",
+        ]
+        for path in candidates:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+        return None
+
     def _check_docker(self) -> bool:
         """检查 Docker 是否可用 (CLI 存在 + daemon 可连接)。"""
-        if shutil.which("docker") is None:
+        self._docker_cmd = self._resolve_docker_cmd()
+        if self._docker_cmd is None:
             return False
         # 验证 daemon 真正就绪，而非仅 CLI 存在
         try:
             result = subprocess.run(
-                ["docker", "info"],
+                [self._docker_cmd, "info"],
                 capture_output=True, text=True, timeout=10,
             )
             return result.returncode == 0
@@ -202,13 +224,13 @@ class SandboxExecutor:
 
         # 先清理可能存在的同名容器
         subprocess.run(
-            ["docker", "rm", "-f", self._container_id],
+            [self._docker_cmd, "rm", "-f", self._container_id],
             capture_output=True, timeout=5,
         )
 
         # 拉取镜像 (如果本地没有)
         subprocess.run(
-            ["docker", "pull", "alpine:latest"],
+            [self._docker_cmd, "pull", "alpine:latest"],
             capture_output=True, timeout=120,
         )
 
@@ -237,7 +259,7 @@ class SandboxExecutor:
 
         result = subprocess.run(
             [
-                "docker", "run", "-d", "--rm",
+                self._docker_cmd, "run", "-d", "--rm",
                 "--name", self._container_id,
                 "--read-only",
                 "--network=none",
@@ -264,7 +286,7 @@ class SandboxExecutor:
         """在 Docker 容器中执行命令。"""
         result = subprocess.run(
             [
-                "docker", "exec",
+                self._docker_cmd, "exec",
                 "-w", work_dir,
                 self._container_id,
                 "sh", "-c", command,
