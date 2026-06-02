@@ -46,13 +46,24 @@ class SchedulerService:
     def _job_wrapper(cls, task_id: str, scheduler_id: str):
         """类方法 job 包装 — 避免绑定方法的 pickle 问题。"""
         scheduler = cls._instances.get(scheduler_id)
-        if scheduler:
-            scheduler._execute_task(task_id)
-        else:
-            logger.error(f"Scheduler instance not found: {scheduler_id}")
+        if not scheduler:
+            logger.warning(f"Scheduler instance not found ({scheduler_id}), using fallback")
             if cls._instances:
                 scheduler = next(iter(cls._instances.values()))
-                scheduler._execute_task(task_id)
+            else:
+                logger.error(f"No scheduler instances available, skipping task: {task_id}")
+                return
+
+        task = scheduler._storage.load_task(task_id)
+        if not task:
+            logger.warning(f"Task not found in storage, removing stale job: {task_id}")
+            try:
+                scheduler._scheduler.remove_job(task_id)
+            except Exception:
+                pass
+            return
+
+        scheduler._execute_task(task_id)
 
     @property
     def name(self) -> str:
@@ -73,8 +84,8 @@ class SchedulerService:
         # Use string annotation to avoid importing BackgroundScheduler at module load time
         self._scheduler: Optional["BackgroundScheduler"] = None
         self._running = False
-        # 生成唯一的 scheduler ID 用于注册表
-        self._scheduler_id = str(uuid.uuid4())
+        # 使用固定 ID，确保重启后持久化的 APScheduler jobs 能找到实例
+        self._scheduler_id = "default"
         # 立即注册到全局注册表
         SchedulerService._instances[self._scheduler_id] = self
 
@@ -148,6 +159,7 @@ class SchedulerService:
             return
 
         if self._scheduler:
+            self._cleanup_stale_jobs()
             self._scheduler.start()
             self._running = True
             logger.info("Scheduler started")
@@ -157,6 +169,23 @@ class SchedulerService:
             self._webhook_server.start()
             # 注册已存在的 webhook 任务
             self._register_webhook_tasks()
+
+    def _cleanup_stale_jobs(self):
+        """清理 APScheduler 中的孤儿 jobs (task 已不存在于 storage)。"""
+        try:
+            jobs = self._scheduler.get_jobs()
+            stale_ids = []
+            for job in jobs:
+                task_id = job.args[0] if job.args else job.id
+                if not self._storage.load_task(task_id):
+                    stale_ids.append(job.id)
+            for jid in stale_ids:
+                self._scheduler.remove_job(jid)
+                logger.info(f"Removed stale job: {jid}")
+            if stale_ids:
+                logger.info(f"Cleaned up {len(stale_ids)} stale job(s)")
+        except Exception as e:
+            logger.warning(f"Stale job cleanup failed: {e}")
 
     def shutdown(self, wait: bool = True):
         """关闭调度器
