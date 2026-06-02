@@ -1,7 +1,10 @@
 import json
+import logging
 import uuid
 from typing import Dict, Any, List, Optional
 from .base import BaseProtocol, ToolCall
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIProtocol(BaseProtocol):
@@ -39,7 +42,17 @@ class OpenAIProtocol(BaseProtocol):
         return data
     
     def parse_chat_response(self, response: Dict[str, Any]) -> str:
-        return response["choices"][0]["message"]["content"].strip()
+        choice = response["choices"][0]
+        message = choice["message"]
+        content = message.get("content") or ""
+        reason = choice.get("finish_reason", "unknown")
+        refusal = message.get("refusal", "")
+        if not content or refusal:
+            logger.warning(
+                f"LLM 返回空内容或拒绝: finish_reason={reason}, "
+                f"refusal={refusal!r}, content={content!r}"
+            )
+        return content.strip()
     
     def get_generate_url(self) -> str:
         return f"{self.base_url}/completions"
