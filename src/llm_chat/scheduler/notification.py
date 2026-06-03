@@ -147,7 +147,18 @@ class NotificationService:
         )
         logger.info(f"Feishu notification sent to {receive_id}")
 
+    # 飞书卡片 markdown 元素安全上限 (字符数)
+    _FEISHU_MD_LIMIT = 3500
+
     def _build_feishu_markdown_card(self, markdown_text: str) -> Dict[str, Any]:
+        """构建飞书卡片，超长内容自动截断。"""
+        if len(markdown_text) > self._FEISHU_MD_LIMIT:
+            truncated = markdown_text[: self._FEISHU_MD_LIMIT]
+            # 尽量在最后一个完整条目处截断
+            last_break = truncated.rfind("\n**")
+            if last_break > self._FEISHU_MD_LIMIT // 2:
+                truncated = truncated[:last_break]
+            markdown_text = truncated + "\n\n---\n⚠️ 内容过长已截断，请在客户端查看完整版"
         return {
             "config": {"wide_screen_mode": True},
             "elements": [

@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Callable
 import requests
 
 from llm_chat.config import Config
+from llm_chat.exceptions import LLMError
 from llm_chat.protocols import get_protocol
 from llm_chat.tools import get_tool_registry, ToolExecutor
 from llm_chat.skills import SkillManager

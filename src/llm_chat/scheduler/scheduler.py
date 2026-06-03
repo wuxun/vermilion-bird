@@ -612,7 +612,7 @@ class SchedulerService:
         try:
             status = "✅" if success else "❌"
             text = (
-                f"{status} **{task.name}**\n\n{result[:2000]}"
+                f"{status} **{task.name}**\n\n{result}"
                 if success
                 else f"{status} **{task.name} 失败**\n\n{result[:500]}"
             )
@@ -629,8 +629,11 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Failed to send completion text: {e}")
 
+    # 飞书卡片 markdown 元素安全上限
+    _FEISHU_MD_LIMIT = 3500
+
     def _push_text_via_feishu(self, task, text: str):
-        """无卡片时，直接推文本到飞书（复用 _push_task_card 的飞书通路）。"""
+        """无卡片时，用 Markdown 卡片推送到飞书。"""
         if not text or not text.strip():
             return
         try:
@@ -658,15 +661,28 @@ class SchedulerService:
             )
             if not receive_id:
                 return
-            summary = text[:1000].replace("\n", " ")
+
+            # 截断超长内容，在完整条目处断开
+            md_content = text
+            if len(md_content) > self._FEISHU_MD_LIMIT:
+                truncated = md_content[: self._FEISHU_MD_LIMIT]
+                last_break = truncated.rfind("\n**")
+                if last_break > self._FEISHU_MD_LIMIT // 2:
+                    truncated = truncated[:last_break]
+                md_content = truncated + "\n\n---\n⚠️ 内容过长已截断，请在客户端查看完整版"
+
+            card = {
+                "config": {"wide_screen_mode": True},
+                "elements": [{"tag": "markdown", "content": md_content}],
+            }
             adapter.send_message(
                 receive_id=receive_id,
-                msg_type="text",
-                content={"text": f"💡 {task.name}\n\n{summary}"},
+                msg_type="interactive",
+                content=card,
                 receive_id_type=receive_id_type,
             )
         except Exception as e:
-            logger.warning(f"[{task.name}] 飞书文本推送失败: {e}")
+            logger.warning(f"[{task.name}] 飞书推送失败: {e}")
 
     def _on_job_event(self, event):
         """处理任务事件。
