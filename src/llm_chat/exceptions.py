@@ -167,3 +167,15 @@ class AuthorizationError(VermilionBirdError):
     """
 
     pass
+
+
+class ContentModerationError(LLMError):
+    """内容审核拒绝
+
+    当 LLM API 因内容安全策略拒绝请求时抛出 (如 DeepSeek "Content Exists Risk")。
+    此错误不应重试同一模型，但可以 fallback 到其他模型。
+    """
+
+    def __init__(self, message: str, request_dump: Optional[Dict[str, Any]] = None):
+        super().__init__(message, status_code=400)
+        self.request_dump = request_dump or {}

@@ -3,6 +3,8 @@
 import logging
 from typing import Optional
 
+from llm_chat.exceptions import ContentModerationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,15 @@ class LLMClientGenerateMixin:
 
         logger.info(f"发送生成请求: prompt_length={len(prompt)}")
 
-        result = self._http_post_json_with_retry(url, data, headers, label="generate")
+        try:
+            result = self._http_post_json_with_retry(url, data, headers, label="generate")
+        except ContentModerationError as e:
+            def build_request():
+                u = self.protocol.get_generate_url()
+                h = self.protocol.get_headers()
+                d = self.protocol.build_generate_request(prompt, **kwargs)
+                return u, d, h
+            result = self._handle_content_moderation_fallback(e, build_request, "generate")
 
         # Track token usage
         usage = result.get("usage", {})

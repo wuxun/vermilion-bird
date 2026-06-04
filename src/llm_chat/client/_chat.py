@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Generator
 
 import requests
 
-from llm_chat.exceptions import LLMError
+from llm_chat.exceptions import LLMError, ContentModerationError
 from llm_chat.client._logging import log_request_details
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,15 @@ class LLMClientChatMixin:
 
         log_request_details(url, data, messages, kwargs)
 
-        result = self._http_post_json_with_retry(url, data, headers, label="chat")
+        try:
+            result = self._http_post_json_with_retry(url, data, headers, label="chat")
+        except ContentModerationError as e:
+            def build_request():
+                u = self.protocol.get_chat_url()
+                h = self.protocol.get_headers()
+                d = self.protocol.build_chat_request(messages, **kwargs)
+                return u, d, h
+            result = self._handle_content_moderation_fallback(e, build_request, "chat")
 
         response_text = self.protocol.parse_chat_response(result)
         logger.info(f"聊天响应: length={len(response_text)}")

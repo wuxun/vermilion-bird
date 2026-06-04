@@ -610,7 +610,7 @@ class MemoryManager:
 
             # 安全网：如果精炼后的章节长度小于原来的 30%，拒绝写入
             if comm_match:
-                new_comm = comm_match.group(1).strip()
+                new_comm = self._dedup_h3_subsections(comm_match.group(1).strip())
                 if len(new_comm) < len(comm_style or "") * 0.3:
                     logger.warning(
                         f"Soul 进化：沟通风格精炼后过短 ({len(new_comm)} < "
@@ -621,7 +621,7 @@ class MemoryManager:
                     logger.info(f"Soul 沟通风格已进化 ({len(new_comm)} 字符)")
 
             if tool_match:
-                new_tool = tool_match.group(1).strip()
+                new_tool = self._dedup_h3_subsections(tool_match.group(1).strip())
                 if len(new_tool) < len(tool_strategy or "") * 0.3:
                     logger.warning(
                         f"Soul 进化：工具策略精炼后过短 ({len(new_tool)} < "
@@ -640,6 +640,38 @@ class MemoryManager:
         pattern = rf'({re.escape(header)}\n.*?)(?=\n## |\Z)'
         match = re.search(pattern, content, re.DOTALL)
         return match.group(1) if match else ""
+
+    @staticmethod
+    def _dedup_h3_subsections(text: str) -> str:
+        """去除 H3 子章节中的重复章节，保留每个标题的最后一个出现。
+
+        LLM 生成的 Markdown 常出现重复的 ### 标题（如 4 个 '### 格式规范'），
+        此方法按 H3 标题去重，保留每个标题的最后出现（通常最完整）。
+        """
+        # 按 ### 标题拆分
+        parts = re.split(r'(?=^### )', text, flags=re.MULTILINE)
+        seen: dict[str, str] = {}
+        order: list[str] = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # 提取 H3 标题行
+            m = re.match(r'^(### .+)$', part, re.MULTILINE)
+            if m:
+                title = m.group(1).strip()
+                if title in seen:
+                    # 重复标题：用最新内容替换
+                    logger.info(f"Soul 去重: 移除重复章节 '{title}'")
+                else:
+                    order.append(title)
+                seen[title] = part
+            else:
+                # 非 ### 开头的片段（如开头文字），原样保留
+                order.append(f"__preamble_{id(part)}__")
+                seen[order[-1]] = part
+
+        return "\n\n".join(seen[k] for k in order if k in seen)
 
     # CJK 字符正则（中日韩），预编译避免每次 _estimate_tokens 重复编译
     _CJK_RE = re.compile(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]')

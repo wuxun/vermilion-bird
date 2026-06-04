@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Callable
 import requests
 
 from llm_chat.config import Config
-from llm_chat.exceptions import LLMError
+from llm_chat.exceptions import LLMError, ContentModerationError
 from llm_chat.protocols import get_protocol
 from llm_chat.tools import get_tool_registry, ToolExecutor
 from llm_chat.skills import SkillManager
@@ -233,13 +233,16 @@ class LLMClientBase:
                 return response.json()
             except requests.RequestException as e:
                 last_error = e
+                # 内容审核拒绝 (如 DeepSeek "Content Exists Risk") — 不重试，抛出独立异常
+                if self._is_content_moderation_error(e):
+                    error_msg = self._format_error(e, label)
+                    logger.error(f"[{label}] 内容审核拒绝，跳过重试: {error_msg}")
+                    raise ContentModerationError(
+                        f"内容审核拒绝: {error_msg}",
+                        request_dump=self._build_request_dump(data),
+                    )
                 if attempt == self.config.llm.max_retries - 1:
-                    error_msg = str(e)
-                    if hasattr(e, "response") and e.response is not None:
-                        try:
-                            error_msg = f"{error_msg}\n详情: {e.response.json()}"
-                        except Exception:
-                            error_msg = f"{error_msg}\n响应: {e.response.text}"
+                    error_msg = self._format_error(e, label)
                     logger.error(f"[{label}] 重试耗尽: {error_msg}")
                     raise LLMError(f"API 请求失败: {error_msg}")
                 # 指数退避 + 抖动: base=1s, max=60s
@@ -253,3 +256,170 @@ class LLMClientBase:
                 time.sleep(total_delay)
         # unreachable
         raise LLMError(f"API 请求失败: {last_error}")
+
+    # 内容审核拒绝关键词 (各厂商常见错误信息)
+    _CONTENT_MODERATION_KEYWORDS = frozenset({
+        "content exists risk",
+        "content_policy_violation",
+        "safety",
+        "blocked",
+        "moderation",
+        "harmful",
+        "flagged",
+    })
+
+    def _is_content_moderation_error(self, error: requests.RequestException) -> bool:
+        """判断是否为内容审核拒绝（非网络错误，重试无意义）。"""
+        resp = getattr(error, "response", None)
+        if resp is None or resp.status_code != 400:
+            return False
+        try:
+            body = resp.json()
+            err_obj = body.get("error", {})
+            msg = (err_obj.get("message", "") or "").lower()
+            code = (err_obj.get("code", "") or "").lower()
+            return any(kw in msg or kw in code for kw in self._CONTENT_MODERATION_KEYWORDS)
+        except Exception:
+            return False
+
+    def _format_error(self, error: requests.RequestException, label: str) -> str:
+        """格式化错误信息，包含 API 详情。"""
+        error_msg = str(error)
+        resp = getattr(error, "response", None)
+        if resp is not None:
+            try:
+                error_msg = f"{error_msg}\n详情: {resp.json()}"
+            except Exception:
+                error_msg = f"{error_msg}\n响应: {resp.text}"
+        return error_msg
+
+    # ── 内容审核拒绝：日志记录 + 模型 fallback ──
+
+    def _build_request_dump(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """构建请求快照，用于审核日志。脱敏 API key。"""
+        messages = data.get("messages", [])
+        # 只保留 role + content 前 500 字符
+        safe_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                content = content[:500]
+            safe_messages.append({
+                "role": msg.get("role", "unknown"),
+                "content": content,
+            })
+        return {
+            "model": data.get("model", "unknown"),
+            "messages_count": len(messages),
+            "messages": safe_messages,
+            "has_tools": "tools" in data,
+        }
+
+    def _log_moderation_request(
+        self, error: ContentModerationError, label: str
+    ) -> None:
+        """将触发审核的请求详情写入专用日志文件。"""
+        import json as _json
+        from datetime import datetime
+
+        log_dir = self.config.llm.moderation_log_dir
+        if not log_dir:
+            import pathlib
+            log_dir = str(pathlib.Path.home() / ".vermilion-bird" / "moderation_logs")
+
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_path = os.path.join(log_dir, f"moderation_{ts}.json")
+            dump = {
+                "timestamp": datetime.now().isoformat(),
+                "label": label,
+                "model": self.config.llm.model,
+                "base_url": self.config.llm.base_url,
+                "error": error.message,
+                "request": error.request_dump,
+            }
+            with open(log_path, "w", encoding="utf-8") as f:
+                _json.dump(dump, f, ensure_ascii=False, indent=2)
+            logger.info(f"审核拒绝请求已记录: {log_path}")
+        except Exception as e:
+            logger.warning(f"写入审核日志失败: {e}")
+
+    def _handle_content_moderation_fallback(
+        self,
+        error: ContentModerationError,
+        build_request_fn,
+        label: str,
+    ):
+        """内容审核拒绝时：记录日志 + 遍历 fallback 模型重试。
+
+        Args:
+            error: 原始审核拒绝异常
+            build_request_fn: 无参函数，返回 (url, data, headers) 三元组
+            label: 日志标签
+
+        Returns:
+            fallback 模型的响应 JSON
+
+        Raises:
+            ContentModerationError: 所有 fallback 也失败时重新抛出
+        """
+        # 1. 记录审核日志
+        self._log_moderation_request(error, label)
+
+        # 2. 查找 fallback 模型
+        fallback_ids = self.config.llm.fallback_models
+        if not fallback_ids:
+            logger.warning("无 fallback 模型配置，审核拒绝无法恢复")
+            raise error
+
+        # 3. 保存原始配置
+        orig_model = self.config.llm.model
+        orig_base_url = self.config.llm.base_url
+        orig_api_key = self.config.llm.api_key
+        orig_protocol = self.config.llm.protocol
+
+        available = {m.id: m for m in self.config.llm.available_models}
+
+        for fb_id in fallback_ids:
+            fb_info = available.get(fb_id)
+            if not fb_info:
+                logger.warning(f"fallback 模型 '{fb_id}' 不在 available_models 中，跳过")
+                continue
+
+            # 切换到 fallback 模型
+            self.config.llm.model = fb_info.id
+            if fb_info.base_url:
+                self.config.llm.base_url = fb_info.base_url
+            if fb_info.api_key:
+                self.config.llm.api_key = fb_info.api_key
+            if fb_info.protocol:
+                self.config.llm.protocol = fb_info.protocol
+            self.reconfigure()
+
+            logger.info(
+                f"[{label}] 内容审核拒绝，尝试 fallback 模型: "
+                f"{orig_model} → {fb_id}"
+            )
+
+            try:
+                url, data, headers = build_request_fn()
+                result = self._http_post_json_with_retry(
+                    url, data, headers, label=f"{label}→{fb_id}"
+                )
+                logger.info(f"[{label}] fallback 模型 {fb_id} 调用成功")
+                return result
+            except ContentModerationError:
+                logger.warning(f"[{label}] fallback 模型 {fb_id} 也被审核拒绝")
+                continue
+            except Exception as fb_err:
+                logger.warning(f"[{label}] fallback 模型 {fb_id} 调用失败: {fb_err}")
+                continue
+
+        # 所有 fallback 都失败，恢复原始配置并抛出
+        self.config.llm.model = orig_model
+        self.config.llm.base_url = orig_base_url
+        self.config.llm.api_key = orig_api_key
+        self.config.llm.protocol = orig_protocol
+        self.reconfigure()
+        raise error

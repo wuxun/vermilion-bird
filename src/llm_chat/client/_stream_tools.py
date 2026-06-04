@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Generator
 
 import requests
 
-from llm_chat.exceptions import LLMError
+from llm_chat.exceptions import LLMError, ContentModerationError
 from llm_chat.utils.token_counter import count_messages_tokens, get_context_limit
 from llm_chat.client._logging import log_request_details
 
@@ -279,9 +279,21 @@ class LLMClientStreamToolsMixin:
                     data = self.protocol.build_chat_request_with_tools(
                         current_messages, tools, stream=True, **kwargs
                     )
-                    result = self._http_post_json_with_retry(
-                        url, data, headers, label=f"stream stuck recovery"
-                    )
+                    try:
+                        result = self._http_post_json_with_retry(
+                            url, data, headers, label=f"stream stuck recovery"
+                        )
+                    except ContentModerationError as e:
+                        def _build_stream_recovery_req():
+                            u = self.protocol.get_chat_url()
+                            h = self.protocol.get_headers()
+                            d = self.protocol.build_chat_request_with_tools(
+                                current_messages, tools, stream=True, **kwargs
+                            )
+                            return u, d, h
+                        result = self._handle_content_moderation_fallback(
+                            e, _build_stream_recovery_req, "stream stuck recovery"
+                        )
                     return self.protocol.parse_chat_response(result)
             else:
                 empty_call_streak = 0

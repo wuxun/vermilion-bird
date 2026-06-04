@@ -4,6 +4,7 @@ import json
 import logging
 from typing import List, Dict, Any, Optional, Generator
 
+from llm_chat.exceptions import ContentModerationError
 from llm_chat.utils.observability import observe, get_observability, llm_call_completed
 
 logger = logging.getLogger(__name__)
@@ -74,9 +75,21 @@ class LLMClientToolsMixin:
 
             logger.debug(f"迭代 {iteration + 1}: 发送请求")
 
-            result = self._http_post_json_with_retry(
-                url, data, headers, label=f"tools iter {iteration+1}"
-            )
+            try:
+                result = self._http_post_json_with_retry(
+                    url, data, headers, label=f"tools iter {iteration+1}"
+                )
+            except ContentModerationError as e:
+                def _build_req():
+                    u = self.protocol.get_chat_url()
+                    h = self.protocol.get_headers()
+                    d = self.protocol.build_chat_request_with_tools(
+                        current_messages, tools, **kwargs
+                    )
+                    return u, d, h
+                result = self._handle_content_moderation_fallback(
+                    e, _build_req, f"tools iter {iteration+1}"
+                )
 
             if not self.protocol.has_tool_calls(result):
                 response_text = self.protocol.parse_chat_response(result)
@@ -120,9 +133,21 @@ class LLMClientToolsMixin:
                     data = self.protocol.build_chat_request_with_tools(
                         current_messages, tools, **kwargs
                     )
-                    result = self._http_post_json_with_retry(
-                        url, data, headers, label=f"tools stuck recovery"
-                    )
+                    try:
+                        result = self._http_post_json_with_retry(
+                            url, data, headers, label=f"tools stuck recovery"
+                        )
+                    except ContentModerationError as e:
+                        def _build_recovery_req():
+                            u = self.protocol.get_chat_url()
+                            h = self.protocol.get_headers()
+                            d = self.protocol.build_chat_request_with_tools(
+                                current_messages, tools, **kwargs
+                            )
+                            return u, d, h
+                        result = self._handle_content_moderation_fallback(
+                            e, _build_recovery_req, "tools stuck recovery"
+                        )
                     return self.protocol.parse_chat_response(result)
             else:
                 empty_call_streak = 0  # 有参数或不同工具 → 重置

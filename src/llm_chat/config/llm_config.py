@@ -67,6 +67,14 @@ class LLMConfig(BaseSettings):
     available_models: List[ModelInfo] = Field(
         default_factory=list, description="可用模型列表"
     )
+    fallback_models: List[str] = Field(
+        default_factory=list,
+        description="内容审核拒绝时的备选模型 ID 列表 (引用 available_models 中的 id)",
+    )
+    moderation_log_dir: Optional[str] = Field(
+        default=None,
+        description="内容审核拒绝请求日志目录，默认 ~/.vermilion-bird/moderation_logs",
+    )
 
     class Config:
         env_prefix = "LLM_"
