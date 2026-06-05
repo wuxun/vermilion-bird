@@ -13,7 +13,28 @@ a = Analysis(
     hiddenimports=[
         # PyQt6
         'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
-        # MCP
+        # Skills (懒加载，PyInstaller 无法自动检测 importlib 导入)
+        'llm_chat.skills.web_search.skill',
+        'llm_chat.skills.calculator.skill',
+        'llm_chat.skills.web_fetch.skill',
+        'llm_chat.skills.file_reader.skill',
+        'llm_chat.skills.file_writer.skill',
+        'llm_chat.skills.file_editor.skill',
+        'llm_chat.skills.todo_manager.skill',
+        'llm_chat.skills.task_delegator.skill',
+        'llm_chat.skills.task_delegator.tools',
+        'llm_chat.skills.task_delegator.registry',
+        'llm_chat.skills.task_delegator.context',
+        'llm_chat.skills.task_delegator.workflow',
+        'llm_chat.skills.task_delegator.workflow_tools',
+        'llm_chat.skills.scheduler.skill',
+        'llm_chat.skills.shell_exec.skill',
+        'llm_chat.skills.shell_exec.sandbox',
+        'llm_chat.skills.remember_fact.skill',
+        'llm_chat.skills.knowledge_base.skill',
+        # MCP (延迟导入)
+        'llm_chat.mcp.config', 'llm_chat.mcp.types',
+        'llm_chat.mcp.client', 'llm_chat.mcp.manager',
         'mcp', 'mcp.client.stdio', 'mcp.client.sse',
         # Playwright
         'playwright',
