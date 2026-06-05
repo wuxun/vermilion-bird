@@ -14,7 +14,6 @@ from llm_chat.frontends.base import (
     ConversationContext,
     MessageType,
 )
-from llm_chat.mcp import MCPManager, MCPServerStatus
 from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
@@ -22,6 +21,7 @@ from llm_chat.health import get_checker, create_database_checker, create_service
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
+    from llm_chat.mcp import MCPManager
 
 
 class App:
@@ -44,7 +44,7 @@ class App:
 
         self.config = config or Config()
         self.current_frontend: Optional[BaseFrontend] = None
-        self._mcp_manager: Optional[MCPManager] = None
+        self._mcp_manager = None  # MCPManager, lazy import
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
         self.scheduler: Optional["SchedulerService"] = None
@@ -319,8 +319,9 @@ class App:
         """获取系统健康状态"""
         return self._health_checker.get_summary()
 
-    def _get_mcp_manager(self) -> MCPManager:
+    def _get_mcp_manager(self):
         if self._mcp_manager is None:
+            from llm_chat.mcp import MCPManager
             self._mcp_manager = MCPManager()
             MCPManager.set_instance(self._mcp_manager)
             new_servers = []

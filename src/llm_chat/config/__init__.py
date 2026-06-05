@@ -22,7 +22,7 @@ import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from llm_chat.mcp import MCPConfig
+from llm_chat.config.mcp_config import MCPConfig
 
 # ── 子域配置类 ──
 from llm_chat.config.llm_config import LLMConfig, ModelInfo
