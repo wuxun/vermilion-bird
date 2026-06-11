@@ -193,7 +193,7 @@ class MemoryStorage:
 
     def _trim_evolution_log(self, content: str, max_entries: int = 10) -> str:
         """截断进化日志章节，保留最近 N 条。"""
-        match = re.search(r'(## 进化日志\n)(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        match = re.search(r'(## 进化日志\n)(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if not match:
             return content
         header = match.group(1)

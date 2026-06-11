@@ -136,7 +136,7 @@ class MemoryManager:
     def _update_section(self, content: str, section_header: str, new_content: str) -> str:
         """更新Markdown文件的特定章节"""
         
-        pattern = rf'({re.escape(section_header)}\n)(.*?)(?=\n##|\Z)'
+        pattern = rf'({re.escape(section_header)}\n)(.*?)(?=\n##[^#]|\Z)'
         match = re.search(pattern, content, re.DOTALL)
         
         if match:
@@ -152,7 +152,7 @@ class MemoryManager:
         """压缩中期记忆：删除过期条目 + 合并相似摘要。"""
         content = self.storage.load_mid_term()
 
-        summary_section = re.search(r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        summary_section = re.search(r'## 近期摘要\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
 
         if summary_section:
             summaries_text = summary_section.group(1)
@@ -192,7 +192,7 @@ class MemoryManager:
 
         # 提取所有每日摘要
         summary_section = re.search(
-            r'## 近期摘要\n(.*?)(?=\n##|\Z)', content, re.DOTALL
+            r'## 近期摘要\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL
         )
         if not summary_section:
             return 0
@@ -486,7 +486,7 @@ class MemoryManager:
         content = self.storage.load_long_term()
 
         # 替换或追加 ## 行为指引 章节
-        pattern = r'## 行为指引\n.*?(?=\n##|\Z)'
+        pattern = r'## 行为指引\n.*?(?=\n##[^#]|\Z)'
         replacement = "## 行为指引\n\n" + directives
 
         if re.search(r'## 行为指引', content):
@@ -758,7 +758,7 @@ class MemoryManager:
         # 层级 0.5: 行为指引（从长期记忆中提取）
         if long_term:
             b_match = re.search(
-                r'## 行为指引\n(.*?)(?=\n##|\Z)', long_term, re.DOTALL
+                r'## 行为指引\n(.*?)(?=\n##[^#]|\Z)', long_term, re.DOTALL
             )
             if b_match:
                 behavioral = b_match.group(1).strip()
@@ -827,15 +827,15 @@ class MemoryManager:
         
         sections = []
         
-        core_traits = re.search(r'## 核心特质\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        core_traits = re.search(r'## 核心特质\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if core_traits:
             sections.append(core_traits.group(1).strip())
         
-        behavior = re.search(r'## 行为准则\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        behavior = re.search(r'## 行为准则\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if behavior:
             sections.append(behavior.group(1).strip())
         
-        style = re.search(r'## 沟通风格\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        style = re.search(r'## 沟通风格\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if style:
             sections.append(style.group(1).strip())
         
@@ -854,7 +854,7 @@ class MemoryManager:
         """更新人格设定的特定章节"""
         soul = self.storage.load_soul() or ""
         
-        pattern = rf'(## {re.escape(section)}\n)(.*?)(?=\n##|\Z)'
+        pattern = rf'(## {re.escape(section)}\n)(.*?)(?=\n##[^#]|\Z)'
         match = re.search(pattern, soul, re.DOTALL)
         
         if match:
@@ -867,11 +867,11 @@ class MemoryManager:
         
         sections = []
         
-        user_profile = re.search(r'## 用户画像\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        user_profile = re.search(r'## 用户画像\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if user_profile:
             sections.append(user_profile.group(1).strip())
         
-        important_facts = re.search(r'## 重要事实\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        important_facts = re.search(r'## 重要事实\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if important_facts:
             sections.append(important_facts.group(1).strip())
         
@@ -895,7 +895,7 @@ class MemoryManager:
     def _extract_current_task(self, content: str) -> str:
         """提取当前任务"""
         
-        task_match = re.search(r'## 当前任务\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        task_match = re.search(r'## 当前任务\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         if task_match:
             return task_match.group(1).strip()
         return ""
@@ -1191,7 +1191,7 @@ class MemoryManager:
 
         # 替换「用户画像」章节 (## 用户画像 到下一个 ##)
         content = re.sub(
-            r'(## 用户画像\n).*?(?=\n##|\Z)',
+            r'(## 用户画像\n).*?(?=\n##[^#]|\Z)',
             r'\1' + profile_block,
             content,
             flags=re.DOTALL,
@@ -1290,7 +1290,7 @@ class MemoryManager:
         """修剪短期记忆条目，保持最大数量"""
         content = self.storage.load_short_term()
         
-        dialog_section = re.search(r'## 最近对话\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        dialog_section = re.search(r'## 最近对话\n(.*?)(?=\n##[^#]|\Z)', content, re.DOTALL)
         
         if dialog_section:
             entries = dialog_section.group(1).strip().split('\n')
