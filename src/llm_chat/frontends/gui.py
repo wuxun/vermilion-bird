@@ -617,6 +617,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 对话列（自适应宽度，最大 1100px，两侧留白）
         self._chat_container = QWidget()
         self._chat_container.setMaximumWidth(1100)
+        self._chat_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._chat_container.setStyleSheet(f"background-color: {Colors.CHAT_BG};")
         self._chat_layout = QVBoxLayout(self._chat_container)
         self._chat_layout.setContentsMargins(24, 20, 24, 20)
