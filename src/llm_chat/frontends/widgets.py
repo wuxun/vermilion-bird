@@ -82,14 +82,15 @@ if PYQT_AVAILABLE:
             self._setup_ui()
 
         def _setup_ui(self):
+            from llm_chat.frontends.theme import Colors
             self.setFrameShape(QFrame.Shape.StyledPanel)
-            self.setStyleSheet("""
-                CollapsibleToolCall {
-                    background-color: #F3E5F5;
-                    border: 1px solid #9C27B0;
+            self.setStyleSheet(f"""
+                CollapsibleToolCall {{
+                    background-color: {Colors.TOOL_BG};
+                    border: 1px solid {Colors.TOOL_BORDER};
                     border-radius: 8px;
                     margin: 4px 0px;
-                }
+                }}
             """)
 
             layout = QVBoxLayout(self)
@@ -97,19 +98,19 @@ if PYQT_AVAILABLE:
             layout.setSpacing(0)
 
             self._header = QPushButton()
-            self._header.setStyleSheet("""
-                QPushButton {
-                    background-color: #E1BEE7;
+            self._header.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Colors.TOOL_HEADER};
                     border: none;
                     border-radius: 8px 8px 0 0;
                     padding: 8px 12px;
                     text-align: left;
                     font-weight: bold;
-                    color: #7B1FA2;
-                }
-                QPushButton:hover {
-                    background-color: #CE93D8;
-                }
+                    color: {Colors.TOOL_TEXT};
+                }}
+                QPushButton:hover {{
+                    background-color: {Colors.TOOL_HEADER_HOVER};
+                }}
             """)
             self._header.clicked.connect(self._toggle)
             self._update_header_text()
@@ -117,7 +118,7 @@ if PYQT_AVAILABLE:
 
             self._content = QWidget()
             self._content.setStyleSheet(
-                "background-color: #FFFFFF; border-radius: 0 0 8px 8px;"
+                f"background-color: #FFFFFF; border-radius: 0 0 8px 8px;"
             )
             content_layout = QVBoxLayout(self._content)
             content_layout.setContentsMargins(12, 10, 12, 10)
@@ -125,7 +126,7 @@ if PYQT_AVAILABLE:
 
             args_label = QLabel("参数:")
             args_label.setStyleSheet(
-                "color: #7B1FA2; font-weight: bold; border: none; background: transparent;"
+                f"color: {Colors.TOOL_TEXT}; font-weight: bold; border: none; background: transparent;"
             )
             content_layout.addWidget(args_label)
 
@@ -133,22 +134,22 @@ if PYQT_AVAILABLE:
             self._args_text.setPlainText(self._tool_args)
             self._args_text.setReadOnly(True)
             self._args_text.setMaximumHeight(120)
-            self._args_text.setStyleSheet("""
-                QTextEdit {
+            self._args_text.setStyleSheet(f"""
+                QTextEdit {{
                     background-color: #F5F5F5;
                     border-radius: 4px;
                     border: none;
                     padding: 8px;
                     font-family: Consolas, monospace;
                     font-size: 12px;
-                    color: #4A148C;
-                }
+                    color: {Colors.TOOL_TEXT};
+                }}
             """)
             content_layout.addWidget(self._args_text)
 
             self._result_label = QLabel("结果:")
             self._result_label.setStyleSheet(
-                "color: #2E7D32; font-weight: bold; border: none; background: transparent;"
+                f"color: {Colors.TOOL_RESULT_TEXT}; font-weight: bold; border: none; background: transparent;"
             )
             self._result_label.hide()
             content_layout.addWidget(self._result_label)
@@ -156,16 +157,16 @@ if PYQT_AVAILABLE:
             self._result_text = QTextEdit()
             self._result_text.setReadOnly(True)
             self._result_text.setMaximumHeight(150)
-            self._result_text.setStyleSheet("""
-                QTextEdit {
-                    background-color: #E8F5E9;
+            self._result_text.setStyleSheet(f"""
+                QTextEdit {{
+                    background-color: {Colors.TOOL_RESULT_BG};
                     border-radius: 4px;
-                    border-left: 3px solid #4CAF50;
+                    border-left: 3px solid {Colors.TOOL_RESULT_BORDER};
                     padding: 8px;
                     font-family: Consolas, monospace;
                     font-size: 11px;
-                    color: #2E7D32;
-                }
+                    color: {Colors.TOOL_RESULT_TEXT};
+                }}
             """)
             self._result_text.hide()
             content_layout.addWidget(self._result_text)

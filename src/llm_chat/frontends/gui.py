@@ -17,6 +17,24 @@ from llm_chat.frontends.widgets import (
     ConversationListSignals,
     ProactiveMessageSignals,
 )
+from llm_chat.frontends.theme import (
+    Colors,
+    MARKDOWN_CSS,
+    header_button_style,
+    send_button_style,
+    stop_button_style,
+    secondary_button_style,
+    sidebar_button_style,
+    conversation_list_style,
+    input_field_style,
+    chat_scroll_style,
+    message_browser_style,
+    error_label_style,
+    info_label_style,
+    tool_header_style,
+    params_container_style,
+    search_input_style,
+)
 
 from llm_chat.decision.card_panel import DecisionCardWidget, CardSignals
 from llm_chat.decision.schema import DecisionCard
@@ -112,25 +130,7 @@ except ImportError:
     QObject = None
 
 
-MARKDOWN_CSS = """
-<style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #3D2C2E; }
-    h1 { color: #B8312F; border-bottom: 2px solid #C84B31; padding-bottom: 5px; }
-    h2 { color: #C84B31; border-bottom: 1px solid #EC994B; padding-bottom: 5px; }
-    h3 { color: #D4652F; }
-    code { background-color: #FFF3E6; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: #8B4513; }
-    pre { background-color: #2D2D2D; padding: 10px; border-radius: 5px; overflow-x: auto; }
-    pre code { background-color: transparent; padding: 0; color: #F5E6D3; }
-    blockquote { border-left: 4px solid #C84B31; margin-left: 0; padding-left: 15px; color: #6B4423; background-color: #FFF8F0; }
-    ul, ol { padding-left: 20px; }
-    li { margin: 5px 0; }
-    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
-    th, td { border: 1px solid #D4A574; padding: 8px; text-align: left; }
-    th { background-color: #F5E6D3; color: #6B4423; }
-    a { color: #B8312F; text-decoration: none; }
-    a:hover { text-decoration: underline; color: #C84B31; }
-</style>
-"""
+
 
 
 class GUIFrontend(ModelConfigMixin, BaseFrontend):
@@ -221,6 +221,83 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         except Exception as e:
             logger.warning("SubAgentPanel: failed to connect: %s", e)
 
+    def _setup_shortcuts(self):
+        """注册全局键盘快捷键。"""
+        from PyQt6.QtGui import QShortcut, QKeySequence
+
+        # Ctrl+N → 新建对话
+        QShortcut(QKeySequence("Ctrl+N"), self._main_window, self._on_new_conv)
+        # Ctrl+K → 聚焦搜索框
+        QShortcut(QKeySequence("Ctrl+K"), self._main_window, self._focus_search)
+        # Ctrl+L → 清空对话
+        QShortcut(QKeySequence("Ctrl+L"), self._main_window, self._on_clear)
+        # Escape → 停止生成（流式中）或聚焦输入框
+        QShortcut(QKeySequence("Escape"), self._main_window, self._on_escape)
+        # Ctrl+, → 打开设置菜单
+        QShortcut(QKeySequence("Ctrl+,"), self._main_window, self._show_settings_menu)
+        logger.info("键盘快捷键已注册")
+
+    def _focus_search(self):
+        """聚焦侧边栏搜索框。"""
+        if self._search_input:
+            self._search_input.setFocus()
+            self._search_input.selectAll()
+
+    def _on_escape(self):
+        """Escape 键：流式中停止，否则聚焦输入框。"""
+        if self._is_streaming:
+            self._on_stop_generation()
+        elif self._input_field:
+            self._input_field.setFocus()
+
+    def _show_settings_menu(self):
+        """显示设置下拉菜单。"""
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self._main_window)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {Colors.CHAT_BG};
+                color: {Colors.TEXT_PRIMARY};
+                border: 1px solid {Colors.CHAT_ACCENT};
+                border-radius: 4px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 8px 24px;
+            }}
+            QMenu::item:selected {{
+                background-color: {Colors.PRIMARY};
+                color: white;
+                border-radius: 3px;
+            }}
+        """)
+        menu.addAction("🔧 MCP Tools", self._on_mcp_config)
+        menu.addAction("⚡ Skills", self._on_skills_config)
+        menu.addAction("🤖 Models", self._on_models_config)
+        menu.addAction("⏰ Scheduler", self._on_scheduler_config)
+        menu.addAction("📊 Dashboard", self._on_dashboard)
+        menu.addSeparator()
+        menu.addAction("⌨️ 快捷键说明", self._show_shortcuts_help)
+        # 在设置按钮位置弹出
+        sender = self._main_window.sender() if hasattr(self, '_settings_button') else None
+        pos = self._settings_button.mapToGlobal(self._settings_button.rect().bottomLeft()) if self._settings_button else self._main_window.mapToGlobal(self._main_window.rect().center())
+        menu.exec(pos)
+
+    def _show_shortcuts_help(self):
+        """显示快捷键帮助弹窗。"""
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self._main_window,
+            "快捷键",
+            "Ctrl+N  — 新建对话\n"
+            "Ctrl+K  — 搜索历史对话\n"
+            "Ctrl+L  — 清空当前对话\n"
+            "Ctrl+,  — 打开设置菜单\n"
+            "Escape  — 停止生成 / 聚焦输入框\n"
+            "Enter   — 发送消息\n"
+            "Shift+Enter — 换行",
+        )
+
     def set_conversation_callbacks(
         self,
         on_new: Callable,
@@ -276,13 +353,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._init_model_combo()
         self._init_subagent_panel()
+        self._setup_shortcuts()
 
         self._main_window.closeEvent = self._on_close_event
 
         self._refresh_conversation_list()
 
-        self.display_info("Welcome to Vermilion Bird!")
-        self.display_info("Press Enter to send, Shift+Enter for new line")
+        self.display_info("欢迎使用 Vermilion Bird!")
+        self.display_info("Enter 发送消息，Shift+Enter 换行，Ctrl+, 打开设置")
 
         self._main_window.show()
 
@@ -339,8 +417,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        sidebar = self._create_sidebar()
-        main_layout.addWidget(sidebar)
+        self._sidebar = self._create_sidebar()
+        main_layout.addWidget(self._sidebar)
 
         chat_area = self._create_chat_area()
         main_layout.addWidget(chat_area, stretch=1)
@@ -354,15 +432,28 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
-        title_label = QLabel("Conversations")
+        # 顶栏：标题 + 折叠按钮
+        top_row = QHBoxLayout()
+        title_label = QLabel("会话")
         title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        layout.addWidget(title_label)
+        top_row.addWidget(title_label)
+
+        top_row.addStretch()
+
+        self._collapse_button = QPushButton("◀")
+        self._collapse_button.setFixedSize(24, 24)
+        self._collapse_button.setToolTip("收起侧边栏")
+        self._collapse_button.setStyleSheet(sidebar_button_style())
+        self._collapse_button.clicked.connect(self._toggle_sidebar)
+        top_row.addWidget(self._collapse_button)
+
+        layout.addLayout(top_row)
 
         button_layout = QHBoxLayout()
 
         self._new_conv_button = QPushButton("+")
         self._new_conv_button.setFixedSize(30, 30)
-        self._new_conv_button.setToolTip("New Conversation")
+        self._new_conv_button.setToolTip("New Conversation (Ctrl+N)")
         self._new_conv_button.clicked.connect(self._on_new_conv)
         button_layout.addWidget(self._new_conv_button)
 
@@ -384,7 +475,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 搜索栏
         search_layout = QHBoxLayout()
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("🔍 搜索历史对话...")
+        self._search_input.setPlaceholderText("🔍 搜索历史对话 (Ctrl+K)...")
+        self._search_input.setStyleSheet(search_input_style())
         self._search_input.returnPressed.connect(self._on_search)
         search_layout.addWidget(self._search_input)
         self._search_clear_button = QPushButton("✕")
@@ -403,15 +495,57 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         return sidebar
 
+    def _toggle_sidebar(self):
+        """折叠/展开侧边栏。"""
+        if self._sidebar.width() > 50:
+            # 收起
+            self._sidebar.setFixedWidth(40)
+            self._collapse_button.setText("▶")
+            self._collapse_button.setToolTip("展开侧边栏")
+            for w in [
+                self._new_conv_button, self._rename_conv_button, self._delete_conv_button,
+                self._search_input, self._search_clear_button, self._conversation_list,
+            ]:
+                if w:
+                    w.hide()
+            # 隐藏标题（保留折叠按钮）
+            for i in range(self._sidebar.layout().count()):
+                item = self._sidebar.layout().itemAt(i)
+                if item and item.layout():
+                    for j in range(item.layout().count()):
+                        w = item.layout().itemAt(j).widget()
+                        if w and w != self._collapse_button:
+                            w.hide()
+        else:
+            # 展开
+            self._sidebar.setFixedWidth(220)
+            self._collapse_button.setText("◀")
+            self._collapse_button.setToolTip("收起侧边栏")
+            for w in [
+                self._new_conv_button, self._rename_conv_button, self._delete_conv_button,
+                self._search_input, self._conversation_list,
+            ]:
+                if w:
+                    w.show()
+            for i in range(self._sidebar.layout().count()):
+                item = self._sidebar.layout().itemAt(i)
+                if item and item.layout():
+                    for j in range(item.layout().count()):
+                        w = item.layout().itemAt(j).widget()
+                        if w:
+                            w.show()
+
     def _create_chat_area(self) -> QWidget:
         chat_area = QFrame()
         chat_area.setObjectName("chatArea")
 
         layout = QVBoxLayout(chat_area)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
+        # ── 顶栏 ──
         header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
 
         title_label = QLabel("Vermilion Bird")
         title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
@@ -419,31 +553,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         header_layout.addStretch()
 
-        self._mcp_button = QPushButton("MCP Tools")
-        self._mcp_button.setFixedWidth(100)
-        self._mcp_button.clicked.connect(self._on_mcp_config)
-        header_layout.addWidget(self._mcp_button)
-
-        self._skills_button = QPushButton("Skills")
-        self._skills_button.setFixedWidth(100)
-        self._skills_button.clicked.connect(self._on_skills_config)
-        header_layout.addWidget(self._skills_button)
-
-        self._models_button = QPushButton("Models")
-        self._models_button.setFixedWidth(100)
-        self._models_button.clicked.connect(self._on_models_config)
-        header_layout.addWidget(self._models_button)
-
-        self._scheduler_button = QPushButton("Scheduler")
-        self._scheduler_button.setFixedWidth(100)
-        self._scheduler_button.clicked.connect(self._on_scheduler_config)
-        header_layout.addWidget(self._scheduler_button)
-
-        self._dashboard_button = QPushButton("Dashboard")
-        self._dashboard_button.setFixedWidth(100)
-        self._dashboard_button.setToolTip("Token & 成本仪表盘")
-        self._dashboard_button.clicked.connect(self._on_dashboard)
-        header_layout.addWidget(self._dashboard_button)
+        # 设置齿轮按钮 — 收纳 MCP/Skills/Models/Scheduler/Dashboard
+        self._settings_button = QPushButton("⚙️")
+        self._settings_button.setFixedSize(36, 36)
+        self._settings_button.setToolTip("设置 (Ctrl+,)")
+        self._settings_button.setStyleSheet(header_button_style())
+        self._settings_button.clicked.connect(self._show_settings_menu)
+        header_layout.addWidget(self._settings_button)
 
         self._clear_button = QPushButton("Clear")
         self._clear_button.setFixedWidth(80)
@@ -452,15 +568,23 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         layout.addLayout(header_layout)
 
+        # ── 上下文状态栏（紧凑单行） ──
+        status_layout = QHBoxLayout()
+        status_layout.setSpacing(12)
+
         self._context_label = QLabel(self._format_context_text(0, self._get_current_context_limit()))
         self._context_label.setFont(QFont("Arial", 10))
-        self._context_label.setStyleSheet("color: #666; padding: 2px;")
-        layout.addWidget(self._context_label)
+        self._context_label.setStyleSheet(f"color: #666; padding: 2px;")
+        status_layout.addWidget(self._context_label)
+
+        status_layout.addStretch()
 
         self._cost_label = QLabel("💲 成本: —")
         self._cost_label.setFont(QFont("Arial", 10))
-        self._cost_label.setStyleSheet("color: #888; padding: 2px;")
-        layout.addWidget(self._cost_label)
+        self._cost_label.setStyleSheet(f"color: #888; padding: 2px;")
+        status_layout.addWidget(self._cost_label)
+
+        layout.addLayout(status_layout)
 
         self._chat_scroll_area = QScrollArea()
         self._chat_scroll_area.setWidgetResizable(True)
@@ -492,39 +616,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_display.hide()
 
         params_container = QWidget()
-        params_container.setStyleSheet("""
-            QWidget {
-                background-color: #F5E6D3;
-                border: 1px solid #D4A574;
-                border-radius: 4px;
-                padding: 2px;
-            }
-            QLabel {
-                color: #4A2C2A;
-                font-size: 11px;
-            }
-            QSlider::groove:horizontal {
-                height: 4px;
-                background: #D4A574;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #8B4513;
-                width: 12px;
-                margin: -4px 0;
-                border-radius: 6px;
-            }
-            QComboBox {
-                background-color: white;
-                border: 1px solid #D4A574;
-                border-radius: 3px;
-                padding: 2px 5px;
-                color: #4A2C2A;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-        """)
+        params_container.setStyleSheet(params_container_style())
         params_layout = QHBoxLayout(params_container)
         params_layout.setContentsMargins(8, 3, 8, 3)
         params_layout.setSpacing(10)
@@ -572,22 +664,20 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout.addWidget(params_container)
 
         input_container = QVBoxLayout()
-        input_container.setSpacing(5)
-
-        input_label = QLabel("Message:")
-        input_container.addWidget(input_label)
+        input_container.setSpacing(4)
 
         input_row = QHBoxLayout()
+        input_row.setSpacing(8)
 
         self._input_field = InputTextEdit()
         self._input_field.setMaximumHeight(100)
         self._input_field.setFont(QFont("Arial", 11))
-        self._input_field.setPlaceholderText("Type your message here...")
+        self._input_field.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行)")
         self._input_field.send_requested.connect(self._on_send)
         input_row.addWidget(self._input_field, stretch=1)
 
         button_column = QVBoxLayout()
-        button_column.setSpacing(5)
+        button_column.setSpacing(4)
 
         self._send_button = QPushButton("Send")
         self._send_button.setFixedSize(80, 35)
@@ -599,13 +689,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._stop_button.setFixedSize(80, 35)
         self._stop_button.clicked.connect(self._on_stop_generation)
         self._stop_button.setVisible(False)
-        self._stop_button.setStyleSheet("""
-            QPushButton {
-                background-color: #C0392B; color: white;
-                border: none; border-radius: 5px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #E74C3C; }
-        """)
+        self._stop_button.setStyleSheet(stop_button_style())
         button_column.addWidget(self._stop_button)
 
         exit_button = QPushButton("Exit")
@@ -621,186 +705,53 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         return chat_area
 
     def _apply_styles(self):
-        self._main_window.setStyleSheet("""
-            QFrame#sidebar {
-                background-color: #4A2C2A;
-                border-right: 1px solid #3D2422;
-            }
-            QFrame#sidebar QLabel { color: #F5E6D3; }
-            QFrame#chatArea {
-                background-color: #FFFBF5;
-            }
-            QLabel { color: #3D2C2E; }
+        """应用全局样式 — 引用 theme.py 共享常量。"""
+        self._main_window.setStyleSheet(f"""
+            QFrame#sidebar {{
+                background-color: {Colors.SIDEBAR_BG};
+                border-right: 1px solid {Colors.SIDEBAR_BORDER};
+            }}
+            QFrame#sidebar QLabel {{ color: {Colors.SIDEBAR_TEXT}; }}
+            QFrame#chatArea {{
+                background-color: {Colors.CHAT_BG};
+            }}
+            QLabel {{ color: {Colors.TEXT_PRIMARY}; }}
         """)
 
-        self._chat_display.setStyleSheet("""
-            QTextBrowser {
-                background-color: #FFF8F0;
+        self._chat_display.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {Colors.CHAT_BG_ALT};
                 border: none;
                 padding: 10px;
-                color: #3D2C2E;
-            }
+                color: {Colors.TEXT_PRIMARY};
+            }}
         """)
 
-        self._chat_scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: #FFF8F0;
-                border: 1px solid #E8D5C4;
-                border-radius: 8px;
-            }
-            QWidget {
-                background-color: #FFF8F0;
-            }
-        """)
+        self._chat_scroll_area.setStyleSheet(chat_scroll_style())
+        self._input_field.setStyleSheet(input_field_style())
+        self._send_button.setStyleSheet(send_button_style())
+        self._clear_button.setStyleSheet(secondary_button_style())
 
-        self._input_field.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #D4A574;
-                border-radius: 8px;
-                padding: 8px;
-                background-color: #FFFCF7;
-                color: #3D2C2E;
-            }
-            QTextEdit:focus {
-                border: 2px solid #C84B31;
-            }
-        """)
-
-        self._send_button.setStyleSheet("""
-            QPushButton {
-                background-color: #C84B31;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #B8312F;
-            }
-            QPushButton:disabled {
-                background-color: #D4A574;
-            }
-        """)
-
-        self._clear_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FFF3E6;
-                border: 1px solid #D4A574;
-                border-radius: 8px;
-                color: #6B4423;
-            }
-            QPushButton:hover {
-                background-color: #F5E6D3;
-            }
-        """)
-
-        self._mcp_button.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
-        """)
-
-        self._skills_button.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
-        """)
-
-        self._models_button.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
-        """)
-
-        self._scheduler_button.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
-        """)
-
-        self._dashboard_button.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
-        """)
-
-        self._conversation_list.setStyleSheet("""
-            QListWidget {
-                border: none;
-                border-radius: 8px;
-                background-color: #5C3D3A;
-                color: #F5E6D3;
-                font-size: 12px;
-            }
-            QListWidget::item {
-                padding: 12px 8px;
-                border-bottom: 1px solid #4A2C2A;
-                color: #F5E6D3;
-            }
-            QListWidget::item:selected {
-                background-color: #C84B31;
-                color: white;
-            }
-            QListWidget::item:hover:!selected {
-                background-color: #6B4D4A;
-                color: #F5E6D3;
-            }
-        """)
-
-        sidebar_title = self._main_window.findChild(QLabel, "sidebar_title")
-
+        # 顶栏功能按钮 — 统一样式
         for btn in [
-            self._new_conv_button,
-            self._rename_conv_button,
-            self._delete_conv_button,
+            self._mcp_button,
+            self._skills_button,
+            self._models_button,
+            self._scheduler_button,
+            self._dashboard_button,
         ]:
             if btn:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #5C3D3A;
-                        border: 1px solid #7A5A56;
-                        border-radius: 5px;
-                        font-size: 14px;
-                        color: #F5E6D3;
-                    }
-                    QPushButton:hover {
-                        background-color: #7A5A56;
-                    }
-                """)
+                btn.setStyleSheet(header_button_style())
+
+        self._conversation_list.setStyleSheet(conversation_list_style())
+
+        for btn in [self._new_conv_button, self._rename_conv_button, self._delete_conv_button]:
+            if btn:
+                btn.setStyleSheet(sidebar_button_style())
 
     def _on_new_conv(self):
         if self._is_streaming:
-            self.display_info("Please wait for the current response to finish")
+            self.display_info("请等待当前响应完成")
             return
 
         if self._on_new_conversation:
@@ -808,7 +759,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _on_delete_conv(self):
         if self._is_streaming:
-            self.display_info("Please wait for the current response to finish")
+            self.display_info("请等待当前响应完成")
             return
 
         if self._on_delete_conversation:
@@ -861,7 +812,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _on_conversation_selected(self, item: QListWidgetItem):
         if self._is_streaming:
-            self.display_info("Please wait for the current response to finish")
+            self.display_info("请等待当前响应完成")
             for i in range(self._conversation_list.count()):
                 list_item = self._conversation_list.item(i)
                 if list_item.data(Qt.ItemDataRole.UserRole) == self.conversation_id:
@@ -1320,24 +1271,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         browser = QTextBrowser()
         browser.setHtml(html_content)
         browser.setOpenExternalLinks(True)
-        browser.setStyleSheet("""
-            QTextBrowser {
-                padding: 5px;
-                background-color: rgba(255,255,255,0.5);
-                border-radius: 4px;
-                border: none;
-                color: #3D2C2E;
-            }
-            QMenu {
-                background-color: #FFFBF5;
-                color: #3D2C2E;
-                border: 1px solid #D4A574;
-            }
-            QMenu::item:selected {
-                background-color: #D4A574;
-                color: white;
-            }
-        """)
+        browser.setStyleSheet(message_browser_style())
         browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1365,17 +1299,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 tool_calls = msg.get("tool_calls", [])
                 if tool_calls:
                     tool_header = QLabel("🔧 工具调用记录")
-                    tool_header.setStyleSheet("""
-                        QLabel {
-                            padding: 5px 10px;
-                            background-color: #F3E5F5;
-                            border-left: 3px solid #9C27B0;
-                            border-radius: 4px;
-                            color: #7B1FA2;
-                            font-weight: bold;
-                            margin: 5px 0;
-                        }
-                    """)
+                    tool_header.setStyleSheet(tool_header_style())
                     self._add_widget_to_chat(tool_header)
 
                     for tc in tool_calls:
@@ -1428,7 +1352,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout:
             self._clear_chat_widgets()
 
-        self.display_info("Conversation cleared")
+        self.display_info("对话已清空")
 
     def _on_close(self):
         self._handle_exit()
@@ -1517,9 +1441,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         error_label = QLabel(f"<span style='color: #8B0000;'>Error: {error}</span>")
         error_label.setWordWrap(True)
         error_label.setTextFormat(Qt.TextFormat.RichText)
-        error_label.setStyleSheet(
-            "padding: 5px; background-color: #FFEBEE; border-radius: 4px; margin: 2px 0; color: #8B0000;"
-        )
+        error_label.setStyleSheet(error_label_style())
         self._add_widget_to_chat(error_label)
         self._scroll_to_bottom(force_layout=True)
 
@@ -1532,9 +1454,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
         info_label.setWordWrap(True)
         info_label.setTextFormat(Qt.TextFormat.RichText)
-        info_label.setStyleSheet(
-            "padding: 5px; background-color: rgba(255,255,255,0.5); border-radius: 4px; margin: 2px 0; color: #6B4423;"
-        )
+        info_label.setStyleSheet(info_label_style())
         self._add_widget_to_chat(info_label)
         self._scroll_to_bottom(force_layout=True)
 

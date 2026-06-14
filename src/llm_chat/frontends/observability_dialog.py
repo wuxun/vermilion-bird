@@ -160,10 +160,29 @@ class ObservabilityDialog(QDialog):
                 self._tool_table.setItem(i, 3, QTableWidgetItem("—"))
 
     def _reset(self):
-        from llm_chat.utils.observability import get_observability
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "确认重置",
+            "确定要清空所有统计数据吗？此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            from llm_chat.utils.observability import get_observability
+            get_observability().reset()
+            self._refresh()
 
-        get_observability().reset()
-        self._refresh()
+    def showEvent(self, event):
+        """对话框显示时恢复定时刷新。"""
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start(2000)
+
+    def hideEvent(self, event):
+        """对话框隐藏时暂停定时刷新，节省资源。"""
+        self._timer.stop()
+        super().hideEvent(event)
 
     def closeEvent(self, event):
         self._timer.stop()

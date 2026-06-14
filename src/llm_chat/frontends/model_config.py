@@ -133,13 +133,13 @@ class ModelConfigMixin:
 
     def _on_mcp_config(self):
         from llm_chat.frontends.mcp_dialog import MCPConfigDialog
-        dialog = MCPConfigDialog(parent=None)
+        dialog = MCPConfigDialog(parent=getattr(self, '_main_window', None))
         dialog.exec()
 
     def _on_skills_config(self):
         from llm_chat.frontends.skills_dialog import SkillsConfigDialog
         from PyQt6.QtWidgets import QDialog
-        dialog = SkillsConfigDialog(parent=None)
+        dialog = SkillsConfigDialog(parent=getattr(self, '_main_window', None))
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if getattr(self, '_app_instance', None):
                 self._app_instance.reload_skills_from_config()
@@ -147,7 +147,7 @@ class ModelConfigMixin:
     def _on_models_config(self):
         from llm_chat.frontends.models_dialog import ModelsConfigDialog
         from PyQt6.QtWidgets import QDialog
-        dialog = ModelsConfigDialog(config=self._config, parent=None)
+        dialog = ModelsConfigDialog(config=self._config, parent=getattr(self, '_main_window', None))
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if getattr(self, '_app_instance', None):
                 self._app_instance.reload_skills_from_config()
@@ -158,7 +158,7 @@ class ModelConfigMixin:
         from llm_chat.frontends.scheduler_dialog import SchedulerDialog
         app = getattr(self, '_app_instance', None)
         dialog = SchedulerDialog(
-            parent=None,
+            parent=getattr(self, '_main_window', None),
             scheduler=app.scheduler if app else None,
             storage=app.storage if app else None,
         )
@@ -166,5 +166,5 @@ class ModelConfigMixin:
 
     def _on_dashboard(self):
         from llm_chat.frontends.observability_dialog import ObservabilityDialog
-        dialog = ObservabilityDialog(parent=None)
+        dialog = ObservabilityDialog(parent=getattr(self, '_main_window', None))
         dialog.exec()
