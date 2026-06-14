@@ -300,8 +300,23 @@ class MCPConfigDialog(QDialog):
         for row, server in enumerate(config.servers):
             self._server_table.setItem(row, 0, QTableWidgetItem(server.name))
             
-            status_item = QTableWidgetItem("未连接")
-            status_item.setForeground(QColor("#999999"))
+            # 查询实际连接状态
+            status_text = "未连接"
+            status_color = "#999999"
+            server_info = self._manager.get_server_info(server.name)
+            if server_info:
+                if server_info.status == MCPServerStatus.CONNECTED:
+                    status_text = "已连接"
+                    status_color = "#4CAF50"
+                elif server_info.status == MCPServerStatus.CONNECTING:
+                    status_text = "连接中..."
+                    status_color = "#FF9800"
+                elif server_info.status == MCPServerStatus.ERROR:
+                    status_text = "错误"
+                    status_color = "#F44336"
+            
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor(status_color))
             self._server_table.setItem(row, 1, status_item)
             
             self._server_table.setItem(row, 2, QTableWidgetItem(server.transport))
