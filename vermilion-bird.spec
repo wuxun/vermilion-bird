@@ -11,6 +11,8 @@ a = Analysis(
         *collect_data_files('llm_chat'),
     ],
     hiddenimports=[
+        # CLI
+        'click',
         # PyQt6
         'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
         # Skills (懒加载，PyInstaller 无法自动检测 importlib 导入)

@@ -151,6 +151,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._mcp_dialog = None
         self._scheduler_button: Optional[QPushButton] = None
         self._scheduler_dialog = None
+        self._settings_button: Optional[QPushButton] = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
@@ -732,16 +733,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._send_button.setStyleSheet(send_button_style())
         self._clear_button.setStyleSheet(secondary_button_style())
 
-        # 顶栏功能按钮 — 统一样式
-        for btn in [
-            self._mcp_button,
-            self._skills_button,
-            self._models_button,
-            self._scheduler_button,
-            self._dashboard_button,
-        ]:
-            if btn:
-                btn.setStyleSheet(header_button_style())
+        # 设置齿轮按钮
+        if self._settings_button:
+            self._settings_button.setStyleSheet(header_button_style())
 
         self._conversation_list.setStyleSheet(conversation_list_style())
 
