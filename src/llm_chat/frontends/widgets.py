@@ -55,8 +55,24 @@ else:
 if PYQT_AVAILABLE:
 
     class InputTextEdit(QTextEdit):
-        """支持 Shift+Enter 换行、Enter 发送的输入框。"""
+        """支持 Shift+Enter 换行、Enter 发送的输入框，高度自适应。"""
         send_requested = pyqtSignal()
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._min_height = 36
+            self._max_height = 150
+            self.document().documentLayout().documentSizeChanged.connect(
+                self._adjust_height
+            )
+            self._adjust_height()
+
+        def _adjust_height(self):
+            doc_height = int(self.document().size().height())
+            margins = self.contentsMargins()
+            needed = doc_height + margins.top() + margins.bottom() + 8
+            new_height = max(self._min_height, min(self._max_height, needed))
+            self.setFixedHeight(new_height)
 
         def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_Return and not (

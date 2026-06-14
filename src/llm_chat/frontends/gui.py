@@ -360,28 +360,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._refresh_conversation_list()
 
-        self.display_info("欢迎使用 Vermilion Bird!")
-        self.display_info("Enter 发送消息，Shift+Enter 换行，Ctrl+, 打开设置")
-
         self._main_window.show()
 
         # 窗口显示后异步执行后台初始化（MCP 连接 / Scheduler 启动等）
         if post_init is not None:
             QTimer.singleShot(0, post_init)
 
-        # If there are preloaded messages (set_current_conversation called before start),
-        # render them now that the UI is constructed.
-        try:
-            if (
-                hasattr(self, "_messages")
-                and isinstance(self._messages, list)
-                and len(self._messages) > 0
-            ):
-                self._refresh_chat_display()
-                self._scroll_to_bottom()
-        except Exception:
-            # Ignore UI rendering errors here; proceed to start the event loop.
-            pass
+        # 空态：显示欢迎卡片
+        if self.is_current_conversation_empty():
+            self._show_welcome_state()
         sys.exit(self._app.exec())
 
     def _set_window_icon(self):
@@ -671,33 +658,29 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         input_row.setSpacing(8)
 
         self._input_field = InputTextEdit()
-        self._input_field.setMaximumHeight(100)
         self._input_field.setFont(QFont("Arial", 11))
         self._input_field.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行)")
         self._input_field.send_requested.connect(self._on_send)
         input_row.addWidget(self._input_field, stretch=1)
 
+        # Send / Stop 共用同一位置，切换显示
         button_column = QVBoxLayout()
         button_column.setSpacing(4)
 
         self._send_button = QPushButton("Send")
-        self._send_button.setFixedSize(80, 35)
+        self._send_button.setFixedSize(80, 36)
         self._send_button.clicked.connect(self._on_send)
         self._send_button.setDefault(True)
         button_column.addWidget(self._send_button)
 
         self._stop_button = QPushButton("⏹ Stop")
-        self._stop_button.setFixedSize(80, 35)
+        self._stop_button.setFixedSize(80, 36)
         self._stop_button.clicked.connect(self._on_stop_generation)
         self._stop_button.setVisible(False)
         self._stop_button.setStyleSheet(stop_button_style())
         button_column.addWidget(self._stop_button)
 
-        exit_button = QPushButton("Exit")
-        exit_button.setFixedSize(80, 35)
-        exit_button.clicked.connect(self._on_close)
-        button_column.addWidget(exit_button)
-
+        button_column.addStretch()
         input_row.addLayout(button_column)
         input_container.addLayout(input_row)
 
@@ -975,6 +958,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _start_streaming(self, message: str):
         """启动流式对话：显示用户消息、发起 worker 线程调用 LLM。"""
+        # 清除欢迎态
+        if not self._messages:
+            self._clear_chat_widgets()
+
         self._messages.append({"role": "user", "content": message})
         self._update_context_status()
         self._display_user_message(message)
@@ -984,7 +971,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._current_tool_calls = []
         self._is_streaming = True
         self._streaming_conversation_id = self.conversation_id
+
+        # 思考动画：等待首个 token
         self._display_ai_prefix()
+        self._ensure_streaming_browser()
+        if self._streaming_browser:
+            self._streaming_browser.setHtml(
+                '<span style="color:#8B7355;">● ● ●</span>'
+            )
 
         current_conv_id = self.conversation_id
         model_params = self._get_model_params()
@@ -1017,10 +1011,36 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
-        user_browser = self._create_message_browser(
-            f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{content}</span>"
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M")
+        escaped = self._escape_html(content)
+
+        # 用户气泡：右对齐，朱红色背景
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background: transparent;")
+        outer = QHBoxLayout(wrapper)
+        outer.setContentsMargins(40, 4, 8, 4)
+        outer.addStretch()
+
+        bubble = QLabel(
+            f"<div style='text-align:right; font-size:10px; color:#BFA89A; margin-bottom:2px;'>{ts}</div>"
+            f"<div style='color:white;'>{escaped}</div>"
         )
-        self._add_widget_to_chat(user_browser)
+        bubble.setTextFormat(Qt.TextFormat.RichText)
+        bubble.setWordWrap(True)
+        bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        bubble.setStyleSheet(f"""
+            background-color: {Colors.PRIMARY};
+            color: white;
+            border-radius: 12px;
+            padding: 8px 14px;
+            font-size: 13px;
+        """)
+        bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        bubble.setMaximumWidth(520)
+        outer.addWidget(bubble)
+
+        self._add_widget_to_chat(wrapper)
         self._scroll_to_bottom(force_layout=True)
 
     def _adjust_browser_height(self, browser):
@@ -1036,9 +1056,18 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
-        ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
-        ai_label.setStyleSheet("margin-top: 5px; color: #3D2C2E;")
-        self._add_widget_to_chat(ai_label)
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M")
+
+        # AI 头部：头像 + 名称 + 时间
+        header = QLabel(
+            f"<span style='font-size:15px;'>🐦</span> "
+            f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
+            f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        header.setStyleSheet("background: transparent; margin-left: 4px; margin-top: 8px;")
+        self._add_widget_to_chat(header)
 
         self._streaming_browser = None
         self._scroll_to_bottom(force_layout=True)
@@ -1059,7 +1088,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._current_stream_text += text
 
         if self._streaming_browser:
+            # 流式光标：末尾闪烁 █
             html_content = self._render_markdown(self._current_stream_text)
+            html_content += '<span style="color:#C84B31; animation:blink 1s infinite;">▌</span>'
             self._streaming_browser.setHtml(html_content)
 
         self._scroll_to_bottom()
@@ -1090,8 +1121,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._update_context_status()
             self._refresh_chat_display()
         else:
-            # 无卡片：流式浏览器已在 _on_stream_text 中实时更新内容，
-            # 不需要全量重建，避免重建导致界面跳到顶部
+            # 无卡片：流式浏览器已有内容，去掉末尾光标
+            if self._streaming_browser:
+                final_html = self._render_markdown(full_text)
+                self._streaming_browser.setHtml(final_html)
             self._update_context_status()
             self._scroll_to_bottom(force_layout=True)
 
@@ -1283,10 +1316,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         for msg in self._messages:
             if msg["role"] == "user":
-                user_browser = self._create_message_browser(
-                    f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{msg['content']}</span>"
-                )
-                self._add_widget_to_chat(user_browser)
+                self._display_user_message(msg["content"])
             elif msg["role"] == "card":
                 self._render_card_widget(msg["card"])
             elif msg["role"] == "assistant":
@@ -1306,20 +1336,21 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                         tool_widget.set_result(tc_result)
                         self._add_widget_to_chat(tool_widget)
 
-                ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
-                ai_label.setStyleSheet("margin-top: 10px; color: #3D2C2E;")
-                self._add_widget_to_chat(ai_label)
+                # AI 头部
+                from datetime import datetime
+                ts = ""
+                ai_header = QLabel(
+                    f"<span style='font-size:15px;'>🐦</span> "
+                    f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
+                    f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
+                )
+                ai_header.setTextFormat(Qt.TextFormat.RichText)
+                ai_header.setStyleSheet("background: transparent; margin-left: 4px; margin-top: 8px;")
+                self._add_widget_to_chat(ai_header)
 
                 html_content = self._render_markdown(msg["content"])
                 content_browser = self._create_message_browser(html_content)
                 self._add_widget_to_chat(content_browser)
-
-                separator = QFrame()
-                separator.setFrameShape(QFrame.Shape.HLine)
-                separator.setStyleSheet(
-                    "background-color: #D4A574; max-height: 1px; margin: 10px 0;"
-                )
-                self._add_widget_to_chat(separator)
 
         self._scroll_to_bottom(force_layout=True)
 
@@ -1336,6 +1367,89 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._chat_layout.addWidget(widget)
 
+    def _show_welcome_state(self):
+        """空态：Logo + 快捷操作卡片网格。"""
+        if self._chat_layout is None:
+            return
+
+        # Logo + 标题
+        logo = QLabel("🐦")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setStyleSheet("font-size: 48px; background: transparent; margin-top: 40px;")
+        self._add_widget_to_chat(logo)
+
+        title = QLabel("Vermilion Bird")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(f"""
+            font-size: 22px; font-weight: bold;
+            color: {Colors.TEXT_PRIMARY};
+            background: transparent;
+            margin-bottom: 6px;
+        """)
+        self._add_widget_to_chat(title)
+
+        subtitle = QLabel("有什么可以帮你的？")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet(f"""
+            font-size: 13px;
+            color: {Colors.TEXT_MUTED};
+            background: transparent;
+            margin-bottom: 24px;
+        """)
+        self._add_widget_to_chat(subtitle)
+
+        # 快捷操作卡片网格
+        shortcuts = [
+            ("💬", "日常对话", "你好，帮我写一段自我介绍"),
+            ("💻", "代码助手", "帮我用 Python 写一个快速排序"),
+            ("🔍", "搜索信息", "搜索最新的 AI 新闻"),
+            ("📝", "文件操作", "读取当前目录的 README 文件"),
+            ("⚡", "任务委托", "帮我分析这个项目的代码结构"),
+            ("📊", "定时任务", "创建一个每天早上 9 点的提醒"),
+        ]
+
+        grid_widget = QWidget()
+        grid_widget.setStyleSheet("background: transparent;")
+        from PyQt6.QtWidgets import QGridLayout as GridLayout
+        grid = GridLayout(grid_widget)
+        grid.setSpacing(10)
+        grid.setContentsMargins(40, 0, 40, 0)
+
+        for i, (icon, label, prompt) in enumerate(shortcuts):
+            card = QPushButton(f"{icon}  {label}")
+            card.setFixedHeight(48)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Colors.CHAT_BG};
+                    border: 1px solid {Colors.CHAT_ACCENT};
+                    border-radius: 10px;
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    color: {Colors.TEXT_PRIMARY};
+                    text-align: left;
+                }}
+                QPushButton:hover {{
+                    background-color: {Colors.PARAMS_BG};
+                    border-color: {Colors.PRIMARY};
+                }}
+            """)
+            card.clicked.connect(lambda checked, p=prompt: self._fill_prompt(p))
+            grid.addWidget(card, i // 3, i % 3)
+
+        self._add_widget_to_chat(grid_widget)
+        self._scroll_to_bottom(force_layout=True)
+
+    def _fill_prompt(self, text: str):
+        """快捷卡片点击：填入输入框并聚焦。"""
+        if self._input_field:
+            self._input_field.setPlainText(text)
+            self._input_field.setFocus()
+            # 移动光标到末尾
+            cursor = self._input_field.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self._input_field.setTextCursor(cursor)
+
     def _on_clear(self):
         ctx = ConversationContext(conversation_id=self.conversation_id)
         self._handle_clear(ctx)
@@ -1346,7 +1460,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout:
             self._clear_chat_widgets()
 
-        self.display_info("对话已清空")
+        # 清空后显示欢迎态
+        self._show_welcome_state()
 
     def _on_close(self):
         self._handle_exit()
@@ -1406,25 +1521,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         if message.role == "user":
-            user_browser = self._create_message_browser(
-                f"<b style='color: #B8312F;'>You:</b> <span style='color: #3D2C2E;'>{message.content}</span>"
-            )
-            self._add_widget_to_chat(user_browser)
+            self._display_user_message(message.content)
         elif message.role == "assistant":
-            ai_label = QLabel("<b style='color: #D4652F;'>AI:</b>")
-            ai_label.setStyleSheet("margin-top: 10px; color: #3D2C2E;")
-            self._add_widget_to_chat(ai_label)
-
+            self._display_ai_prefix()
             html_content = self._render_markdown(message.content)
             content_browser = self._create_message_browser(html_content)
             self._add_widget_to_chat(content_browser)
-
-            separator = QFrame()
-            separator.setFrameShape(QFrame.Shape.HLine)
-            separator.setStyleSheet(
-                "background-color: #D4A574; max-height: 1px; margin: 10px 0;"
-            )
-            self._add_widget_to_chat(separator)
 
         self._scroll_to_bottom(force_layout=True)
 
