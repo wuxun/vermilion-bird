@@ -1283,22 +1283,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
 
     def _scroll_to_bottom(self, force_layout: bool = False):
-        """滚动到底部。
-
-        Args:
-            force_layout: True 时先 processEvents 刷新布局再滚动（首次加入 widget 后）。
-                         False 时用稍长延迟等布局自然就绪（流式过程中高频调用时）。"""
+        """滚动到底部。使用 QTimer 延迟，避免 processEvents 重入。"""
         if self._chat_scroll_area:
             from PyQt6.QtCore import QTimer
-            if force_layout and self._app:
-                # 强制布局刷新：widget 刚加入、需要立刻拿到正确 maximum 时
-                self._app.processEvents()
-                scrollbar = self._chat_scroll_area.verticalScrollBar()
-                QTimer.singleShot(0, lambda: scrollbar.setValue(scrollbar.maximum()))
-            else:
-                # 流式高频场景：给布局 50ms 自然就绪，避免 processEvents 开销
-                scrollbar = self._chat_scroll_area.verticalScrollBar()
-                QTimer.singleShot(50, lambda: scrollbar.setValue(scrollbar.maximum()))
+            scrollbar = self._chat_scroll_area.verticalScrollBar()
+            # 统一用延迟滚动，避免 processEvents 导致主线程卡死
+            delay = 100 if force_layout else 50
+            QTimer.singleShot(delay, lambda: scrollbar.setValue(scrollbar.maximum()))
 
     def _clear_chat_widgets(self):
         if self._chat_layout is None:
