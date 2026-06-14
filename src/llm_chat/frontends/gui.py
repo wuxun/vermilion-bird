@@ -614,9 +614,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 左侧弹簧
         center_layout.addStretch()
 
-        # 对话列（固定最大宽度）
+        # 对话列（自适应宽度，最大 1100px，两侧留白）
         self._chat_container = QWidget()
-        self._chat_container.setMaximumWidth(768)
+        self._chat_container.setMaximumWidth(1100)
         self._chat_container.setStyleSheet(f"background-color: {Colors.CHAT_BG};")
         self._chat_layout = QVBoxLayout(self._chat_container)
         self._chat_layout.setContentsMargins(24, 20, 24, 20)
@@ -1056,7 +1056,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             font-size: 13px;
         """)
         bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        bubble.setMaximumWidth(520)
+        bubble.setMaximumWidth(720)
         outer.addWidget(bubble)
 
         self._add_widget_to_chat(wrapper)
