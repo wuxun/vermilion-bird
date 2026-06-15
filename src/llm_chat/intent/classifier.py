@@ -147,7 +147,7 @@ _REASONING_INTENTS: set[Intent] = {
 # ═══════════════════════════════════════════════════════════════════
 
 _GREETING_RESPONSES = [
-    "你好！我是 🐦 Vermilion Bird，有什么可以帮你的？",
+    "你好！我是 🐦‍🔥 Vermilion Bird，有什么可以帮你的？",
     "嗨！今天想聊点什么？需要我帮你搜索、写代码还是处理文件？",
     "你好呀！随时可以问我问题，或者试试 `/search`、`/code` 等快捷指令~",
 ]
@@ -167,7 +167,7 @@ _CONFIRM_RESPONSES = [
     "嗯？有什么我可以帮你的吗？",
 ]
 
-_HELP_TEXT = """🐦 **Vermilion Bird 快捷指令**
+_HELP_TEXT = """🐦‍🔥 **Vermilion Bird 快捷指令**
 
 | 指令 | 说明 |
 |------|------|

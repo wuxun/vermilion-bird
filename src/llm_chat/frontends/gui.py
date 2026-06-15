@@ -1074,7 +1074,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         # AI 头部：头像 + 名称 + 时间
         header = QLabel(
-            f"<span style='font-size:15px;'>🐦</span> "
+            f"<span style='font-size:15px;'>🐦‍🔥</span> "
             f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
             f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
         )
@@ -1344,7 +1344,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 from datetime import datetime
                 ts = ""
                 ai_header = QLabel(
-                    f"<span style='font-size:15px;'>🐦</span> "
+                    f"<span style='font-size:15px;'>🐦‍🔥</span> "
                     f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
                     f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
                 )
@@ -1377,7 +1377,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         # Logo + 标题
-        logo = QLabel("🐦")
+        logo = QLabel("🐦‍🔥")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet("font-size: 48px; background: transparent; margin-top: 40px;")
         self._add_widget_to_chat(logo)
