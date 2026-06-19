@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Type
 
 from .base import BaseSkill
 from .prompt_skill import PromptSkill
+from llm_chat.tools.base import BaseTool
 from llm_chat.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ class SkillManager:
         return self._prompt_skills.copy()
 
     def get_prompt_skills_summary(self) -> str:
-        """返回所有 prompt skills 的一行摘要列表（用于始终注入 system prompt）。"""
+        """返回所有 prompt skills 的一行摘要列表（向后兼容，含文件路径）。"""
         lines = []
         for skill in self._prompt_skills.values():
             summary = skill.get_summary()
@@ -261,30 +262,139 @@ class SkillManager:
     def get_prompt_skills_for_context(self) -> str:
         """构建 prompt skills 的 system prompt 注入块。
 
-        遵循 Agent Skills 标准的渐进式加载：
-        - always 类型: 注入全文
-        - requested/manual: 注入 name + description 摘要
+        遵循 Agent Skills 标准 (agentskills.io) 的渐进式加载：
+
+        - Tier 1 (Catalog): 所有 skill 以 XML 格式列出 name + description + location
+        - Tier 2 (Instructions): LLM 自行用 read 工具加载 SKILL.md 全文
+        - Tier 3 (Resources): scripts/references/assets 按需加载
+
+        always 类型的 skill（vermilion-bird 扩展）同时注入全文，
+        用于编码规范、品牌语调等每次对话都需要的技能。
         """
-        always_blocks = []
-        summary_lines = ["## Available Prompt Skills (use /skill:name to load)"]
+        # 分类
+        always_skills = []
+        catalog_skills = []
         for skill in self._prompt_skills.values():
             if skill.manifest and skill.manifest.type == "always":
-                content = skill.get_content()
-                if content:
-                    always_blocks.append(content)
+                always_skills.append(skill)
             else:
-                summary_lines.append(skill.get_summary())
+                catalog_skills.append(skill)
 
         parts = []
+
+        # always 类型：注入全文（vermilion-bird 非标准扩展）
+        always_blocks = []
+        for skill in always_skills:
+            content = skill.get_content()
+            if content:
+                always_blocks.append(content)
         if always_blocks:
             parts.append("\n\n".join(always_blocks))
-        if len(summary_lines) > 1:
-            parts.append("\n".join(summary_lines))
+
+        # 构建 XML catalog（Agent Skills 标准格式）
+        if catalog_skills or always_skills:
+            xml_lines = []
+            # 行为指令（Agent Skills 标准推荐措辞）
+            xml_lines.append(
+                "The following skills provide specialized instructions for specific tasks.\n"
+                "When a task matches a skill's description, call the activate_skill tool\n"
+                "with the skill's name to load its full instructions before proceeding."
+            )
+            xml_lines.append("<available_skills>")
+            for skill in catalog_skills:
+                xml_lines.append(f"  <skill>")
+                xml_lines.append(f"    <name>{skill.name}</name>")
+                xml_lines.append(f"    <description>{skill.description}</description>")
+                xml_lines.append(f"    <location>{skill.location}</location>")
+                xml_lines.append(f"  </skill>")
+            # always 类型也列入 catalog（标记为 always）
+            for skill in always_skills:
+                xml_lines.append(f"  <skill>")
+                xml_lines.append(f"    <name>{skill.name}</name>")
+                xml_lines.append(f"    <description>{skill.description}</description>")
+                xml_lines.append(f"    <location>{skill.location}</location>")
+                xml_lines.append(f"    <note>Already injected above (always type)</note>")
+                xml_lines.append(f"  </skill>")
+            xml_lines.append("</available_skills>")
+            parts.append("\n".join(xml_lines))
+
         return "\n\n".join(parts) if parts else ""
 
     def load_prompt_skill_by_name(self, name: str) -> Optional[str]:
-        """按名称加载 prompt skill 全文（/skill:name 触发）。"""
+        """按名称加载 prompt skill 全文。
+
+        供 ShortcutStage 的 /skill:name 命令使用（用户显式激活路径）。
+        模型自行激活时使用 activate_skill 工具。
+        """
         skill = self._prompt_skills.get(name)
         if skill:
             return skill.get_content()
         return None
+
+    def register_activate_skill_tool(self) -> None:
+        """注册 activate_skill 工具，让 LLM 自行加载 prompt skill。
+
+        在 disover_prompt_skills() 之后调用。
+        仅在发现 prompt skill 时才注册此工具。
+
+        工具名: activate_skill — 符合 Agent Skills 标准。
+        工具接收 skill_name 参数，返回 SKILL.md 全文。
+        """
+        if not self._prompt_skills:
+            return  # 无 prompt skill 时不注册
+
+        # 检查是否已注册（避免重复）
+        if self._tool_registry.has_tool("activate_skill"):
+            return  # 已注册
+
+        manager_ref = self  # 闭包引用
+
+        class ActivateSkillTool(BaseTool):
+            @property
+            def name(self) -> str:
+                return "activate_skill"
+
+            @property
+            def description(self) -> str:
+                return (
+                    "加载指定 Prompt Skill 的完整指令。"
+                    "当任务匹配某个可用技能的描述时，调用此工具加载该技能的详细工作流。"
+                )
+
+            def get_parameters_schema(self) -> Dict[str, Any]:
+                skill_names = sorted(manager_ref._prompt_skills.keys())
+                return {
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "要加载的技能名称",
+                            "enum": skill_names,
+                        }
+                    },
+                    "required": ["skill_name"],
+                }
+
+            def execute(self, skill_name: str) -> str:
+                content = manager_ref.load_prompt_skill_by_name(skill_name)
+                if not content:
+                    return f"错误: 技能 '{skill_name}' 未找到"
+                skill = manager_ref._prompt_skills.get(skill_name)
+                # 用结构化标签包裹，方便上下文管理
+                location = skill.location if skill else ""
+                lines = [
+                    f'<skill_content name="{skill_name}">',
+                    content,
+                    "",
+                    f"Skill directory: {location}",
+                    "Relative paths in this skill are relative to the skill directory.",
+                    "</skill_content>",
+                ]
+                return "\n".join(lines)
+
+        tool = ActivateSkillTool()
+        self._tool_registry.register(tool)
+        logger.info(
+            f"Registered activate_skill tool with "
+            f"{len(self._prompt_skills)} skills"
+        )

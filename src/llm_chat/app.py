@@ -272,6 +272,8 @@ class App:
 
         discovered = skill_manager.discover_prompt_skills()
         if discovered:
+            # 注册 activate_skill 工具（Agent Skills 标准方案 B）
+            skill_manager.register_activate_skill_tool()
             context = skill_manager.get_prompt_skills_for_context()
             self.chat_core.set_prompt_skills_context(context)
             logger.info(

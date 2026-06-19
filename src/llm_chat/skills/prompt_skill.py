@@ -90,6 +90,14 @@ class PromptSkill:
     def description(self) -> str:
         return self.manifest.description if self.manifest else ""
 
+    @property
+    def location(self) -> str:
+        """SKILL.md 文件的绝对路径（Agent Skills 标准 catalog 字段）。"""
+        skill_md = self.path / "SKILL.md"
+        if not skill_md.exists():
+            skill_md = self.path / "skill.md"
+        return str(skill_md.resolve()) if skill_md.exists() else ""
+
     # -- load -----------------------------------------------------------------
 
     def load(self) -> bool:
@@ -127,7 +135,7 @@ class PromptSkill:
         """返回一行摘要（始终在上下文中的那部分）。"""
         if not self._loaded:
             self.load()
-        return f"- {self.name}: {self.description}"
+        return f"- {self.name}: {self.description}  ({self.location})"
 
     @staticmethod
     def _parse_frontmatter(text: str) -> tuple:
