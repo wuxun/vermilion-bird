@@ -353,5 +353,11 @@ MARKDOWN_CSS = f"""
     th {{ background-color: {Colors.PARAMS_BG}; color: {Colors.TEXT_SECONDARY}; }}
     a {{ color: {Colors.PRIMARY_HOVER}; text-decoration: none; }}
     a:hover {{ text-decoration: underline; color: {Colors.PRIMARY}; }}
+    .math-block {{ display: block; text-align: center; padding: 12px 0; font-family: 'Times New Roman', serif; font-style: italic; font-size: 1.15em; color: {Colors.TEXT_PRIMARY}; }}
+    .math-inline {{ font-family: 'Times New Roman', serif; font-style: italic; color: {Colors.TEXT_PRIMARY}; }}
+    .math-frac {{ display: inline-block; text-align: center; vertical-align: middle; line-height: 1.1; }}
+    .math-frac sup {{ display: block; font-size: 0.85em; border-bottom: 1px solid {Colors.TEXT_SECONDARY}; padding-bottom: 2px; }}
+    .math-frac span {{ font-size: 0.7em; }}
+    .math-frac sub {{ display: block; font-size: 0.85em; padding-top: 2px; }}
 </style>
 """

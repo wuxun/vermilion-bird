@@ -1501,7 +1501,147 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._app:
             self._app.quit()
 
+    # ── LaTeX → HTML 渲染 ──────────────────────────────────────────
+
+    # 常见 LaTeX 命令 → Unicode / HTML 映射
+    _LATEX_SYMBOLS = {
+        # 希腊字母
+        r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ",
+        r"\epsilon": "ε", r"\zeta": "ζ", r"\eta": "η", r"\theta": "θ",
+        r"\iota": "ι", r"\kappa": "κ", r"\lambda": "λ", r"\mu": "μ",
+        r"\nu": "ν", r"\xi": "ξ", r"\pi": "π", r"\rho": "ρ",
+        r"\sigma": "σ", r"\tau": "τ", r"\upsilon": "υ", r"\phi": "φ",
+        r"\chi": "χ", r"\psi": "ψ", r"\omega": "ω",
+        r"\Gamma": "Γ", r"\Delta": "Δ", r"\Theta": "Θ", r"\Lambda": "Λ",
+        r"\Xi": "Ξ", r"\Pi": "Π", r"\Sigma": "Σ", r"\Phi": "Φ",
+        r"\Psi": "Ψ", r"\Omega": "Ω",
+        # 运算符 & 关系
+        r"\times": "×", r"\cdot": "·", r"\div": "÷", r"\pm": "±",
+        r"\mp": "∓", r"\approx": "≈", r"\equiv": "≡", r"\neq": "≠",
+        r"\leq": "≤", r"\geq": "≥", r"\ll": "≪", r"\gg": "≫",
+        r"\propto": "∝", r"\sim": "∼", r"\simeq": "≃",
+        r"\to": "→", r"\rightarrow": "→", r"\leftarrow": "←",
+        r"\Rightarrow": "⇒", r"\Leftrightarrow": "⇔",
+        r"\uparrow": "↑", r"\downarrow": "↓",
+        # 集合 & 逻辑
+        r"\forall": "∀", r"\exists": "∃", r"\in": "∈", r"\notin": "∉",
+        r"\subset": "⊂", r"\subseteq": "⊆", r"\cup": "∪", r"\cap": "∩",
+        r"\emptyset": "∅", r"\infty": "∞", r"\partial": "∂",
+        r"\nabla": "∇", r"\int": "∫", r"\sum": "∑", r"\prod": "∏",
+        r"\sqrt": "√",
+        # 杂项
+        r"\ldots": "…", r"\cdots": "⋯", r"\vdots": "⋮", r"\ddots": "⋱",
+        r"\angle": "∠", r"\degree": "°", r"\triangle": "△",
+        r"\circ": "∘", r"\bullet": "•", r"\star": "★",
+        # 间距
+        r"\quad": "  ", r"\qquad": "    ", r"\,": " ", r"\;": "  ",
+    }
+
+    @classmethod
+    def _render_latex_block(cls, latex: str) -> str:
+        """将单个 LaTeX 块转换为 HTML。
+
+        处理顺序：
+        1. \\text{...} → 普通文本
+        2. \\frac{a}{b} → 带分数线的 HTML
+        3. ^{...} / _{...} → <sup>/<sub>
+        4. 常见命令 → Unicode 符号
+        5. 残留反斜杠命令 → 移除反斜杠
+        """
+        import re
+        result = latex.strip()
+
+        # 1. \text{...} → 提取内部文本
+        def _text_replacer(m: re.Match) -> str:
+            inner = m.group(1)
+            # 递归处理嵌套 LaTeX
+            return cls._render_latex_inner(inner)
+        result = re.sub(r"\\text\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
+                        _text_replacer, result)
+        # 也处理 \mathrm{...}, \mathbf{...} 等
+        result = re.sub(r"\\(?:mathrm|mathbf|mathit|mathsf|mathtt)\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
+                        _text_replacer, result)
+
+        # 2. \frac{a}{b} → 带样式的分数
+        def _frac_replacer(m: re.Match) -> str:
+            num = cls._render_latex_inner(m.group(1))
+            den = cls._render_latex_inner(m.group(2))
+            return f'<span class="math-frac"><sup>{num}</sup><span>/</span><sub>{den}</sub></span>'
+        result = re.sub(r"\\frac\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}"
+                        r"\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
+                        _frac_replacer, result)
+
+        # 3. ^{...} / _{...} → sup/sub
+        result = re.sub(r"\^\{((?:[^{}]|\{[^{}]*\})*)\}",
+                        lambda m: f"<sup>{cls._render_latex_inner(m.group(1))}</sup>", result)
+        result = re.sub(r"_\{((?:[^{}]|\{[^{}]*\})*)\}",
+                        lambda m: f"<sub>{cls._render_latex_inner(m.group(1))}</sub>", result)
+
+        # 4. 常见 LaTeX 命令 → Unicode
+        for cmd, symbol in sorted(cls._LATEX_SYMBOLS.items(), key=lambda x: -len(x[0])):
+            result = result.replace(cmd, symbol)
+
+        # 5. 转义字符 \% \$ \# \_ \{ \} \& → 对应字符
+        result = result.replace(r"\%", "%")
+        result = result.replace(r"\$", "$")
+        result = result.replace(r"\#", "#")
+        result = result.replace(r"\_", "_")
+        result = result.replace(r"\{", "{")
+        result = result.replace(r"\}", "}")
+        result = result.replace(r"\&", "&")
+
+        # 6. 残留反斜杠命令 → 移除反斜杠 (如 \FCF → FCF)
+        result = re.sub(r"\\([a-zA-Z]+)", r"\1", result)
+
+        return result
+
+    @classmethod
+    def _render_latex_inner(cls, latex: str) -> str:
+        """渲染内联 LaTeX（不包裹外层 div）。"""
+        import re
+        result = latex.strip()
+        # 应用符号替换
+        for cmd, symbol in sorted(cls._LATEX_SYMBOLS.items(), key=lambda x: -len(x[0])):
+            result = result.replace(cmd, symbol)
+        result = re.sub(r"\\([a-zA-Z]+)", r"\1", result)
+        # 处理 sup/sub
+        result = re.sub(r"\^\{((?:[^{}]|\{[^{}]*\})*)\}",
+                        lambda m: f"<sup>{m.group(1)}</sup>", result)
+        result = re.sub(r"_\{((?:[^{}]|\{[^{}]*\})*)\}",
+                        lambda m: f"<sub>{m.group(1)}</sub>", result)
+        return result
+
+    @classmethod
+    def _preprocess_latex(cls, text: str) -> str:
+        """预处理文本中的 LaTeX 数学公式，转换为 HTML。
+
+        - $$...$$ → display math block
+        - $...$   → inline math
+        """
+        import re
+
+        # 先处理 $$...$$ 显示公式
+        def _display_replacer(m: re.Match) -> str:
+            inner = m.group(1)
+            html = cls._render_latex_block(inner)
+            return f'<div class="math-block">{html}</div>'
+        text = re.sub(r"\$\$(.+?)\$\$", _display_replacer, text, flags=re.DOTALL)
+
+        # 再处理 $...$ 内联公式
+        def _inline_replacer(m: re.Match) -> str:
+            inner = m.group(1)
+            html = cls._render_latex_block(inner)
+            return f'<span class="math-inline">{html}</span>'
+        text = re.sub(r"\$(.+?)\$", _inline_replacer, text)
+
+        return text
+
+    # ── Markdown 渲染 ─────────────────────────────────────────────
+
     def _render_markdown(self, text: str) -> str:
+        # 0. 预处理 LaTeX → HTML（在 markdown 转换之前）
+        text = self._preprocess_latex(text)
+
         if MARKDOWN_AVAILABLE:
             try:
                 md = markdown.Markdown(extensions=["tables", "fenced_code"])
