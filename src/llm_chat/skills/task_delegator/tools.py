@@ -719,6 +719,13 @@ class SpawnSubagentTool(BaseTool):
                     t for t in all_tools
                     if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
                 ]
+                # Auto-include core tools always available
+                extra_names = {"calculator", "file_writer"}
+                extra_tools = [
+                    t for t in client.get_builtin_tools()
+                    if t.get("function", {}).get("name") in extra_names
+                ]
+                all_tools = list(all_tools) + extra_tools
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
@@ -803,7 +810,7 @@ class SpawnSubagentTool(BaseTool):
                         f"Subagent {agent_id} calling LLM with {len(tool_defs)} tools "
                         f"(attempt {attempt + 1}/{max_retries + 1})"
                     )
-                    return client.chat_with_tools(task, tool_defs, max_iterations=5)
+                    return client.chat_with_tools(task, tool_defs, max_iterations=8)
                 else:
                     logger.info(
                         f"Subagent {agent_id} calling LLM without tools "
