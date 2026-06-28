@@ -413,4 +413,20 @@ class LLMClientToolsMixin:
                 return self.protocol.parse_chat_response(result)
 
         logger.warning(f"达到最大迭代次数 {max_iterations}")
-        return self.protocol.parse_chat_response(result)
+        # Last response was tool_calls — ask LLM to summarize findings
+        try:
+            current_messages.append({
+                "role": "user",
+                "content": (
+                    "Reached tool call limit. "
+                    "Based on all research above, provide a concise final summary."
+                ),
+            })
+            data = self.protocol.build_chat_request(current_messages, **kwargs)
+            response = self.session.post(url, json=data, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            return self.protocol.parse_chat_response(result)
+        except Exception:
+            logger.warning("Failed to get final summary after max iterations, returning partial")
+            return "[Reached tool call limit. Partial findings available above.]"

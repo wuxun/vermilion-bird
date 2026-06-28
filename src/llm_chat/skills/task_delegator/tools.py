@@ -826,6 +826,13 @@ class SpawnSubagentTool(BaseTool):
                     time.sleep(delay)
                 except Exception:
                     pass
+            except (KeyError, IndexError, TypeError) as e:
+                # API response format issue (e.g., no 'choices' field)
+                # This is fatal — retrying won't help
+                logger.error(
+                    f"Subagent {agent_id}: API response format error: {e}"
+                )
+                raise RuntimeError(f"API response error: {e}") from e
 
         raise last_error or RuntimeError(
             f"Subagent {agent_id}: unknown LLM call failure"
