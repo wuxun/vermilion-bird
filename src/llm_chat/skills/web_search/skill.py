@@ -86,6 +86,9 @@ class WebSearchTool(BaseTool):
         proxies = {}
         if self.http_proxy:
             proxies["http"] = self.http_proxy
+            # If only http_proxy is set, use it for https too
+            if not self.https_proxy:
+                proxies["https"] = self.http_proxy
         if self.https_proxy:
             proxies["https"] = self.https_proxy
         return proxies if proxies else None
