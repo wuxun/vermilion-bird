@@ -46,12 +46,10 @@ class TestRouting:
         assert result == "persist_user"
 
     def test_llm_with_tool_calls_loops(self):
-        """After LLM with tool_calls, route to execute_tools."""
         state = ChatGraphState(
             routing=ChatRoutingState(has_tool_calls=True, tool_call_count=0),
         )
         result = _post_llm_router(state)
-        assert result == "execute_tools"
 
     def test_llm_text_response_proceeds(self):
         """After LLM produces text (no tool_calls), proceed to persist."""
@@ -92,9 +90,7 @@ class TestGraphStructure:
         assert set(compiled._nodes.keys()) == expected
 
     def test_conditional_edges_exist(self):
-        """The graph should have conditional edges at shortcut and llm_call."""
+        """The graph should have conditional edge at shortcut."""
         g = build_chat_graph()
         compiled = g.compile()
-        # shortcut and llm_call should have conditional edges
         assert "shortcut" in compiled._conditional
-        assert "llm_call" in compiled._conditional

@@ -112,6 +112,83 @@ class LLMClientToolsMixin:
             "assistant_message": assistant_message,
         }
 
+    def chat_stream_single_with_tools(
+        self,
+        tools: List[Dict[str, Any]],
+        messages: List[Dict[str, Any]],
+        chunk_callback=None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Make ONE streaming LLM call with tools. Returns result dict.
+
+        Unlike chat_stream_with_tools(), this does NOT loop for tool execution.
+        Calls chunk_callback(text) for each text chunk (for GUI streaming).
+
+        Returns {"text": str | None, "tool_calls": list | None,
+                 "assistant_message": dict | None}.
+        """
+        url = self.protocol.get_chat_url()
+        headers = self.protocol.get_headers()
+        data = self.protocol.build_chat_request_with_tools(
+            messages, tools, stream=True, **kwargs
+        )
+
+        full_text = ""
+        tool_calls_data = []
+
+        try:
+            response = self.session.post(url, json=data, headers=headers, stream=True)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line_text = line.decode("utf-8")
+                if line_text.startswith("data: "):
+                    data_str = line_text[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        content = self.protocol.parse_stream_chunk(chunk)
+                        if content:
+                            full_text += content
+                            if chunk_callback:
+                                chunk_callback(content)
+                        chunk_tool_calls = self._parse_stream_tool_calls(chunk)
+                        if chunk_tool_calls:
+                            tool_calls_data.extend(chunk_tool_calls)
+                    except json.JSONDecodeError:
+                        continue
+
+        except Exception as e:
+            logger.error(f"Stream single call failed: {e}")
+            raise
+
+        if not tool_calls_data:
+            return {"text": full_text, "tool_calls": None}
+
+        tool_calls = self._merge_tool_calls(tool_calls_data)
+        # Build assistant message in standard format for message accumulation
+        tc_list = []
+        for tc in tool_calls:
+            tc_dict = {
+                "id": tc.id if hasattr(tc, 'id') else f"tc_{tc.name}",
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else str(tc.arguments),
+                },
+            }
+            tc_list.append(tc_dict)
+        assistant_message = {"role": "assistant", "content": None, "tool_calls": tc_list}
+
+        return {
+            "text": None,
+            "tool_calls": tool_calls,
+            "assistant_message": assistant_message,
+        }
+
     @observe("llm.chat_with_tools_request")
     def _send_chat_request_with_tools(
         self,

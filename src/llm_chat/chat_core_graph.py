@@ -32,6 +32,7 @@ from llm_chat.pipeline.stage import PipelineContext
 from llm_chat.pipeline.stages import (
     IntentStage, ShortcutStage,
     PersistUserStage, SystemContextStage, HistoryStage,
+    ModelRouteStage, CompressStage,
     PersistAssistantStage, MemoryExtractStage, KnowledgeExtractStage,
     TokenRecordStage,
 )
@@ -53,15 +54,31 @@ class ChatGraphState(BaseModel):
     """State flowing through the ChatCore StateGraph.
 
     routing:  Minimal routing state for conditional edges.
-    ctx:      Full PipelineContext (carried alongside for stage compatibility).
     """
 
     routing: ChatRoutingState = Field(default_factory=ChatRoutingState)
-    # PipelineContext is carried as a non-Pydantic field via model_config
-    # (it contains non-serializable objects like threading.Event, callbacks)
-    _ctx: Optional[PipelineContext] = None
 
     model_config = {"arbitrary_types_allowed": True}
+
+
+# PipelineContext is stored in thread-local storage because it contains
+# non-serializable objects (threading.Event, callbacks) and cannot be part
+# of the Pydantic state that gets reconstructed during graph state merges.
+# Thread-local ensures isolation when multiple requests run concurrently
+# (e.g., scheduler + user message in parallel).
+import threading
+_chat_ctx_local = threading.local()
+
+
+def _ctx() -> PipelineContext:
+    """Get the current PipelineContext. Raises if not set."""
+    ctx = getattr(_chat_ctx_local, 'ctx', None)
+    assert ctx is not None, "PipelineContext not initialized"
+    return ctx
+
+
+def _set_ctx(ctx: PipelineContext) -> None:
+    _chat_ctx_local.ctx = ctx
 
 
 # ── Node functions ────────────────────────────────────────────────
@@ -70,11 +87,11 @@ class ChatGraphState(BaseModel):
 async def _intent_node(state: ChatGraphState) -> dict:
     """Intent classification node."""
     from llm_chat.intent import IntentClassifier
-    classifier = state._ctx._extra.get("intent_classifier")
-    decision = classifier.classify(state._ctx.user_message)
-    state._ctx.routing_decision = decision
+    classifier = _ctx()._extra.get("intent_classifier")
+    decision = classifier.classify(_ctx().user_message)
+    _ctx().routing_decision = decision
     if decision.override_message:
-        state._ctx.effective_message = decision.override_message
+        _ctx().effective_message = decision.override_message
 
     return {
         "routing": ChatRoutingState(
@@ -86,114 +103,123 @@ async def _intent_node(state: ChatGraphState) -> dict:
 
 async def _shortcut_node(state: ChatGraphState) -> dict:
     """Shortcut handling node."""
-    cm = state._ctx._extra.get("conversation_manager")
-    style_holder = state._ctx._extra.get("style_holder")
+    cm = _ctx()._extra.get("conversation_manager")
+    style_holder = _ctx()._extra.get("style_holder")
     stage = ShortcutStage(cm, style_holder)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
 
     return {
         "routing": ChatRoutingState(
-            should_short_circuit=state._ctx.should_short_circuit,
-            skip_llm=state._ctx.routing_decision.skip_llm if state._ctx.routing_decision else False,
+            should_short_circuit=_ctx().should_short_circuit,
+            skip_llm=_ctx().routing_decision.skip_llm if _ctx().routing_decision else False,
         ),
     }
 
 
 async def _persist_user_node(state: ChatGraphState) -> dict:
     """Persist user message to storage."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = PersistUserStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _system_context_node(state: ChatGraphState) -> dict:
     """Build system context (memory + prompts + style)."""
-    cm = state._ctx._extra.get("conversation_manager")
-    prompt_holder = state._ctx._extra.get("prompt_skills_holder")
-    style_holder = state._ctx._extra.get("style_holder")
+    cm = _ctx()._extra.get("conversation_manager")
+    prompt_holder = _ctx()._extra.get("prompt_skills_holder")
+    style_holder = _ctx()._extra.get("style_holder")
     stage = SystemContextStage(cm, prompt_holder, style_holder)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _history_node(state: ChatGraphState) -> dict:
     """Load and process conversation history."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = HistoryStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _model_route_node(state: ChatGraphState) -> dict:
     """Route to appropriate model based on intent."""
-    config = state._ctx._extra.get("config")
+    config = _ctx()._extra.get("config")
     stage = ModelRouteStage(config)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _compress_node(state: ChatGraphState) -> dict:
     """Compress conversation context if needed."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = CompressStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _llm_call_node(state: ChatGraphState) -> dict:
-    """Call LLM with tool support (single iteration — no internal loop).
+    """Call LLM — single iteration. Graph-level tool loop.
 
-    Uses client.chat_single_with_tools() which makes one LLM call and returns
-    raw result with tool_calls if present. The graph handles the loop.
+    Streaming: uses chat_stream_single_with_tools with on_chunk callback.
+    Sync: uses chat_single_with_tools.
     """
-    client = state._ctx._extra.get("client")
-    config = state._ctx._extra.get("config")
+    client = _ctx()._extra.get("client")
+    tools = client.get_builtin_tools() if client.has_builtin_tools() else []
 
-    # Card context
-    init_card_context()
+    # Build/accumulate messages
+    msgs = _ctx()._extra.get("_tool_messages")
+    if msgs is None:
+        msgs = []
+        if _ctx().system_context:
+            msgs.append({"role": "system", "content": _ctx().system_context})
+        msgs.extend(_ctx().processed_history or [])
+        msgs.append({"role": "user", "content": _ctx().processed_message})
+        _ctx()._extra["_tool_messages"] = msgs
 
-    # Build messages — first call or re-entrant after tool execution
-    if state._ctx._extra.get("_tool_messages"):
-        messages_override = state._ctx._extra["_tool_messages"]
-        result = client.chat_single_with_tools(
-            "", [], messages_override=messages_override,
-            **state._ctx.params,
+    if not tools:
+        text = client.chat(
+            _ctx().processed_message,
+            history=_ctx().processed_history,
+            system_context=_ctx().system_context,
+            **_ctx().params,
+        )
+        if _ctx().on_chunk:
+            _ctx().on_chunk(text)
+        _ctx().response = text
+        return {"routing": ChatRoutingState(has_response=True)}
+
+    # Streaming: use streaming single-call for token-by-token output
+    if _ctx().on_chunk:
+        result = client.chat_stream_single_with_tools(
+            tools, msgs, chunk_callback=_ctx().on_chunk, **_ctx().params,
         )
     else:
-        result = client.chat_single_with_tools(
-            state._ctx.processed_message,
-            client.get_builtin_tools() if client.has_builtin_tools() else [],
-            history=state._ctx.processed_history,
-            system_context=state._ctx.system_context,
-            **state._ctx.params,
-        )
-
-    # Handle card
-    state._ctx.pending_card = get_pending_card()
-    clear_card_context()
+        result = client.chat_single_with_tools("", tools, messages_override=msgs, **_ctx().params)
 
     tool_calls = result.get("tool_calls")
-    if tool_calls:
-        # Store for tool execution node
-        state._ctx._extra["_pending_tool_calls"] = tool_calls
+    if tool_calls and state.routing.tool_call_count < state.routing.max_tool_iterations:
+        # Fire tool_call_start callbacks for GUI
+        for tc in tool_calls:
+            args_json = json.dumps(tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False)
+            if _ctx().on_tool_start:
+                _ctx().on_tool_start(tc.name, args_json)
+
+        _ctx()._extra["_pending_tool_calls"] = tool_calls
         if "assistant_message" in result:
-            state._ctx._extra["_tool_messages"] = (
-                state._ctx._extra.get("_tool_messages", []) +
-                [result["assistant_message"]]
-            )
+            _ctx()._extra["_tool_messages"] = msgs + [result["assistant_message"]]
         return {
             "routing": ChatRoutingState(
                 has_tool_calls=True,
@@ -201,22 +227,20 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
             ),
         }
     else:
-        # Text response
-        state._ctx.response = result.get("text", "")
-        state._ctx._extra.pop("_tool_messages", None)
-        return {
-            "routing": ChatRoutingState(has_response=True),
-        }
+        text = result.get("text", "")
+        if not _ctx().on_chunk and text:
+            _ctx().on_chunk(text) if _ctx().on_chunk else None
+        _ctx().response = text
+        return {"routing": ChatRoutingState(has_response=True)}
 
 
 async def _execute_tools_node(state: ChatGraphState) -> dict:
-    """Execute pending tool calls and append results to messages."""
-    from llm_chat.tools import get_tool_registry
+    """Execute pending tool calls, fire GUI callbacks, append results."""
+    from llm_chat.tools import get_tool_registry, ToolExecutor
 
     registry = get_tool_registry()
-    tool_calls = state._ctx._extra.get("_pending_tool_calls", [])
+    tool_calls = _ctx()._extra.get("_pending_tool_calls", [])
 
-    # Build tool call dicts in the format ToolExecutor expects
     tool_call_dicts = []
     for tc in tool_calls:
         tc_id = tc.id if hasattr(tc, 'id') else f"tc_{tc.name}"
@@ -226,63 +250,65 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
             "function": {"name": tc.name, "arguments": json.dumps(args)},
         })
 
-    # Execute tools via ToolExecutor (handles parallel execution + retry)
-    results = registry.execute_tools_parallel(tool_call_dicts) if hasattr(registry, 'execute_tools_parallel') else []
+    executor = ToolExecutor(registry, max_workers=5)
+    results = executor.execute_tools_parallel(tool_call_dicts)
 
-    # Append tool results to messages for re-entrant LLM call
     for tc, result in zip(tool_calls, results):
         tc_id = tc.id if hasattr(tc, 'id') else f"tc_{tc.name}"
-        state._ctx._extra.setdefault("_tool_messages", []).append({
+        content = result.get("content", "")
+        # Fire tool_call_end callback for GUI
+        if _ctx().on_tool_end:
+            args_str = json.dumps(tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False)
+            _ctx().on_tool_end(tc.name, args_str, content[:200])
+        # Append tool result to messages
+        _ctx()._extra.setdefault("_tool_messages", []).append({
             "role": "tool",
             "tool_call_id": tc_id,
-            "content": result.get("content", ""),
+            "content": content,
         })
 
-    state._ctx._extra.pop("_pending_tool_calls", None)
-
-    return {
-        "routing": ChatRoutingState(has_tool_calls=False),
-    }
+    _ctx()._extra.pop("_pending_tool_calls", None)
+    return {"routing": ChatRoutingState(has_tool_calls=False)}
 
 
 
 async def _persist_assistant_node(state: ChatGraphState) -> dict:
     """Persist assistant response to storage."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = PersistAssistantStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _memory_extract_node(state: ChatGraphState) -> dict:
     """Extract memories from conversation."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = MemoryExtractStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _knowledge_extract_node(state: ChatGraphState) -> dict:
     """Extract knowledge from conversation."""
-    cm = state._ctx._extra.get("conversation_manager")
+    cm = _ctx()._extra.get("conversation_manager")
     stage = KnowledgeExtractStage(cm)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
 async def _token_record_node(state: ChatGraphState) -> dict:
     """Record token usage."""
-    config = state._ctx._extra.get("config")
+    config = _ctx()._extra.get("config")
     stage = TokenRecordStage(config)
-    await stage.setup(state._ctx)
-    await stage.process(state._ctx)
-    await stage.teardown(state._ctx)
+    await stage.setup(_ctx())
+    await stage.process(_ctx())
+    await stage.teardown(_ctx())
     return {}
 
 
@@ -363,15 +389,12 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
     g.add_edge("model_route", "compress")
     g.add_edge("compress", "llm_call")
 
-    # Conditional: LLM may have tool calls → loop, or proceed
+    # LLM → persist (tool loop handled internally by LLMCallStage/LLMClient)
+    # Graph-level tool loop: llm_call → execute_tools → llm_call (or persist)
     g.add_conditional_edge(
         "llm_call", _post_llm_router,
-        {
-            "execute_tools": "execute_tools",
-            "persist_assistant": "persist_assistant",
-        },
+        {"execute_tools": "execute_tools", "persist_assistant": "persist_assistant"},
     )
-    # After tool execution, always go back to LLM
     g.add_edge("execute_tools", "llm_call")
 
     g.add_edge("persist_assistant", "memory_extract")
@@ -441,7 +464,9 @@ class ChatCoreGraph:
             "config": self.config,
         }
 
-        state = ChatGraphState(_ctx=ctx)
+        _set_ctx(ctx)
+
+        state = ChatGraphState()
 
         try:
             result_state = asyncio.run(self._compiled.ainvoke(state))
@@ -450,11 +475,11 @@ class ChatCoreGraph:
             return f"处理消息时发生错误: {str(e)}"
 
         # Handle pending card
-        card = result_state._ctx.pending_card
+        card = _ctx().pending_card
         if card and on_card:
             on_card(card)
 
-        return result_state._ctx.response
+        return _ctx().response
 
     @observe("chat_core.send_message_stream")
     def send_message_stream(
@@ -490,7 +515,9 @@ class ChatCoreGraph:
             "config": self.config,
         }
 
-        state = ChatGraphState(_ctx=ctx)
+        _set_ctx(ctx)
+
+        state = ChatGraphState()
 
         try:
             result_state = asyncio.run(self._compiled.ainvoke(state))
@@ -498,16 +525,20 @@ class ChatCoreGraph:
             logger.error(f"send_message_stream graph failed: {e}", exc_info=True)
             return f"处理消息时发生错误: {str(e)}"
 
-        card = result_state._ctx.pending_card
+        card = _ctx().pending_card
         if card and on_card:
             on_card(card)
 
-        return result_state._ctx.response
+        return _ctx().response
 
     def cancel_generation(self) -> None:
         """Cancel ongoing stream generation."""
         if self._cancel_event:
             self._cancel_event.set()
+
+    def set_prompt_skills_context(self, context: str) -> None:
+        """Inject prompt skills context (called by App after SkillManager init)."""
+        self._prompt_skills_holder.set(context)
 
     # ── Convenience ───────────────────────────────────────────
 

@@ -5,7 +5,10 @@ from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ['src/llm_chat/cli/main.py'],
-    pathex=[],
+    pathex=[
+        'packages/ember-core/src',
+        'packages/ember-agent/src',
+    ],
     binaries=[],
     datas=[
         *collect_data_files('llm_chat'),
@@ -15,6 +18,30 @@ a = Analysis(
         'click',
         # PyQt6
         'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
+        # ember-core
+        'ember_core', 'ember_core.tools', 'ember_core.tools.base',
+        'ember_core.tools.registry', 'ember_core.tools.executor',
+        'ember_core.storage', 'ember_core.storage.sqlite',
+        'ember_core.mcp', 'ember_core.mcp.types', 'ember_core.mcp.client',
+        'ember_core.mcp.manager',
+        'ember_core.graph', 'ember_core.graph.state', 'ember_core.graph.nodes',
+        'ember_core.graph.edges', 'ember_core.graph.reducer',
+        'ember_core.graph.checkpoint',
+        'ember_core.pipeline', 'ember_core.pipeline.stage',
+        'ember_core.pipeline.runner',
+        'ember_core.memory', 'ember_core.memory.storage',
+        # ember-agent
+        'ember_agent', 'ember_agent.agent', 'ember_agent.agent.context',
+        'ember_agent.agent.registry', 'ember_agent.agent.role',
+        'ember_agent.agent.blackboard',
+        'ember_agent.workflow', 'ember_agent.workflow.nodes',
+        'ember_agent.workflow.executor',
+        'ember_agent.consensus', 'ember_agent.consensus.card',
+        'ember_agent.consensus.submit', 'ember_agent.consensus.store',
+        'ember_agent.consensus.aggregator',
+        'ember_agent.peer', 'ember_agent.peer.review',
+        'ember_agent.peer.dialogue',
+        'ember_agent.patterns',
         # Skills (懒加载，PyInstaller 无法自动检测 importlib 导入)
         'llm_chat.skills.web_search.skill',
         'llm_chat.skills.calculator.skill',
@@ -34,6 +61,9 @@ a = Analysis(
         'llm_chat.skills.shell_exec.sandbox',
         'llm_chat.skills.remember_fact.skill',
         'llm_chat.skills.knowledge_base.skill',
+        # ChatCore graph (new)
+        'llm_chat.chat_core_graph',
+        'llm_chat.pipeline.chat_state',
         # MCP (延迟导入)
         'llm_chat.mcp.config', 'llm_chat.mcp.types',
         'llm_chat.mcp.client', 'llm_chat.mcp.manager',
