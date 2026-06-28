@@ -651,9 +651,13 @@ class SpawnSubagentTool(BaseTool):
                     f"model={subagent_config.llm.model}, "
                     f"protocol={subagent_config.llm.protocol}"
                 )
+                context.model = subagent_config.llm.model
+                context.protocol = subagent_config.llm.protocol
             elif parent_client is not None:
                 # Reuse parent LLMClient — share HTTP session, avoid new connection pool
                 client = parent_client
+                context.model = client.config.llm.model
+                context.protocol = client.config.llm.protocol
                 logger.info(
                     f"Subagent {agent_id} reusing parent LLMClient "
                     f"(model={client.config.llm.model})"
@@ -661,9 +665,8 @@ class SpawnSubagentTool(BaseTool):
             else:
                 subagent_config = self.config
                 logger.info(f"Subagent {agent_id} using default config")
-
-            context.model = subagent_config.llm.model
-            context.protocol = subagent_config.llm.protocol
+                context.model = subagent_config.llm.model
+                context.protocol = subagent_config.llm.protocol
 
             # 记录初始任务到 tool_calls_log（对话回放用）
             context.tool_calls_log.append({

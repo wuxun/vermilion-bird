@@ -63,7 +63,7 @@ class CollaborationEngine:
                 pattern.stages, vars, stage_results, pattern, round_num,
             )
             total_agents += round_results["_agent_count"]
-            errors.update(round_results.get("_errors", {}))
+            failures.update(round_results.get("_errors", {}))
             del round_results["_agent_count"]
             round_results.pop("_errors", None)
 
@@ -105,11 +105,11 @@ class CollaborationEngine:
         # Structured result summary
         summary = json.dumps({
             "pattern": pattern.name,
-            "status": "completed" if not errors else "partial",
+            "status": "completed" if not failures else "partial",
             "agents": total_agents,
             "blackboard_entries": blackboard_entries,
             "time_seconds": round(elapsed, 1),
-            "errors": errors if errors else {},
+            "errors": failures if failures else {},
             "stages": {
                 sid: sr[:200] + "..." if len(sr) > 200 else sr
                 for sid, sr in stage_results.items()
@@ -119,7 +119,7 @@ class CollaborationEngine:
         logger.info(
             f"Pattern '{pattern.name}' complete: "
             f"{total_agents} agents, {blackboard_entries} findings, "
-            f"{len(errors)} errors, {elapsed:.1f}s"
+            f"{len(failures)} errors, {elapsed:.1f}s"
         )
 
         return final + "\n\n---\n" + summary
