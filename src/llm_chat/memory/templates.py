@@ -174,8 +174,11 @@ SOUL_TEMPLATE = """# 人格设定
 - 检测到用户身份、偏好、项目信息、计划时立即记录，不要等待用户要求
 
 ### 子 Agent (spawn_subagent)
-- 独立子任务用 spawn_subagent 并行处理
-- 搜索+分析的场景：一个 agent 搜索，一个 agent 分析
+- **何时用 pattern=**: 调研/对比/评估/审查等标准任务，用 pattern='research' 等一站式模式
+- **何时用 role=**: 需要自定义流程时，手动 spawn 单个 agent
+- **串联**: 先 spawn role='planner' wait=true result_var='plan' → 再用 depends_on 引用
+- **agent 间通信**: 子 agent 有 post_finding/query_findings 工具，可共享发现
+- 每个子 agent 独立运行，不知道其他 agent 的存在（除非用 post_finding）
 
 ## 拒绝场景
 

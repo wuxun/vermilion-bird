@@ -80,6 +80,64 @@ def _truncate_args(args: dict, max_len: int = 200) -> str:
     return s[:max_len] + "..."
 
 
+def _build_blackboard_tool_defs():
+    """Build tool definitions for post_finding and query_findings.
+
+    These are added to sub-agent tool sets when a SharedBlackboard is active,
+    enabling agent-to-agent communication.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "post_finding",
+                "description": (
+                    "Share a discovery with other agents working on the same task. "
+                    "Use when you find key information that might help other agents."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["key", "value"],
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "Short label, e.g. 'market_size_2025'",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The finding content",
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "description": "Confidence 0.0-1.0. Default 0.7.",
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "query_findings",
+                "description": (
+                    "Search findings posted by other agents. "
+                    "Returns up to 5 results sorted by confidence."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search keywords, e.g. 'market'",
+                        },
+                    },
+                },
+            },
+        },
+    ]
+
+
 class SpawnSubagentTool(BaseTool):
     """创建子agent并分配任务的工具"""
 
@@ -97,8 +155,18 @@ class SpawnSubagentTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "创建子agent并分配任务。子agent拥有独立的上下文和工具白名单，"
-            "且不能再创建子agent以防止递归。可以为子agent指定不同的大模型配置。"
+            "创建子agent执行任务。支持两种模式:\n"
+            "1. pattern= 一站式: 用预定义协作模式自动编排多agent。\n"
+            "   适用: 调研/对比/评估/审查 等标准任务\n"
+            "2. role= 手动: 创建单个agent，可配合depends_on串行。\n"
+            "   适用: 自定义流程，需要精细控制\n\n"
+            "示例:\n"
+            "  - 简单调研: spawn_subagent(pattern='research', task='调研XX')\n"
+            "  - 对比分析: spawn_subagent(pattern='compare', task='对比A和B')\n"
+            "  - 代码审查: spawn_subagent(pattern='review', task='审查代码')\n"
+            "  - 单步任务: spawn_subagent(role='executor', task='搜索XX', wait=true)\n"
+            "  - 串联任务: spawn_subagent(role='planner', task='拆解', result_var='plan', wait=true)\n"
+            "             spawn_subagent(role='executor', task='执行{plan.result}', depends_on=[上一步ID])"
         )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -154,11 +222,28 @@ class SpawnSubagentTool(BaseTool):
                 },
                 "role": {
                     "type": "string",
-                    "enum": ["planner", "executor", "critic", "synthesizer"],
+                    "enum": self._build_role_enum(),
+                    "description": self._build_role_description(),
+                },
+                "pattern": {
+                    "type": "string",
+                    "enum": self._build_pattern_enum(),
+                    "description": self._build_pattern_description(),
+                },
+                "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "子Agent的角色预设。planner=分解复杂任务, executor=执行具体任务, "
-                        "critic=审查其他Agent输出, synthesizer=综合多Agent结果。"
-                        "选择角色后自动注入对应的system_prompt和默认工具。"
+                        "该agent依赖的其他agent ID列表。系统自动等待这些agent完成，"
+                        "并将其结果注入task模板。在task中用 {agent_id.result} 引用。"
+                        "例如 depends_on=[\"abc-123\"]，task中用 {abc-123.result}。"
+                    ),
+                },
+                "result_var": {
+                    "type": "string",
+                    "description": (
+                        "将本agent的结果绑定到指定变量名，方便下游agent引用。"
+                        "例如 result_var=\"plan\"，下游用 {plan.result} 引用。"
                     ),
                 },
             },
@@ -197,6 +282,123 @@ class SpawnSubagentTool(BaseTool):
             return self.config.tools.work_dir
         return os.path.expanduser("~/.vermilion-bird/work")
 
+    def _build_role_enum(self) -> list:
+        """Get available role names from registered presets (incl. YAML custom)."""
+        try:
+            from ember_agent.agent.role import list_presets
+            return list_presets()
+        except ImportError:
+            return ["planner", "executor", "critic", "synthesizer"]
+
+    def _build_role_description(self) -> str:
+        """Build role description from registered presets, one line per role."""
+        try:
+            from ember_agent.agent.role import get_preset, list_presets
+            lines = ["子Agent角色预设，每行格式: key=简述。"]
+            for key in list_presets():
+                preset = get_preset(key)
+                if preset:
+                    prompt_preview = preset.system_prompt.split(".")[0][:80]
+                    tools_str = ", ".join(preset.default_tools) if preset.default_tools else "无默认工具"
+                    lines.append(f"{key}: {prompt_preview}... (tools: {tools_str})")
+            return "\n".join(lines)
+        except ImportError:
+            return ""
+
+    def _build_pattern_enum(self) -> list:
+        """Get available collaboration pattern names (incl. YAML custom)."""
+        try:
+            from ember_agent.patterns import list_patterns
+            return list_patterns()
+        except ImportError:
+            return []
+
+    def _build_pattern_description(self) -> str:
+        """Build pattern description from registered patterns."""
+        try:
+            from ember_agent.patterns import list_patterns, get_pattern
+            lines = ["预定义多Agent协作模式。role和pattern互斥，选其一。"]
+            for name in list_patterns():
+                pat = get_pattern(name)
+                if pat:
+                    lines.append(f"{name}: {pat.description}")
+            return "\n".join(lines)
+        except ImportError:
+            return ""
+
+    def _execute_pattern(
+        self, pattern_name: str, task: str, timeout: int,
+    ) -> str:
+        """Execute a named collaboration pattern."""
+        try:
+            from ember_agent.patterns import get_pattern
+        except ImportError:
+            return json.dumps({
+                "error": "ember-agent not available", "status": "failed",
+            })
+
+        pattern = get_pattern(pattern_name)
+        if not pattern:
+            return json.dumps({
+                "error": f"Unknown pattern: {pattern_name}",
+                "available": list(
+                    __import__("ember_agent.patterns", fromlist=["list_patterns"])
+                    .list_patterns()
+                ),
+                "status": "failed",
+            }, ensure_ascii=False)
+
+        from llm_chat.skills.task_delegator.engine import CollaborationEngine
+        engine = CollaborationEngine(self)
+
+        try:
+            final_result = engine.execute(pattern, task)
+            return json.dumps({
+                "pattern": pattern_name,
+                "status": "completed",
+                "result": final_result,
+            }, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Pattern '{pattern_name}' failed: {e}")
+            return json.dumps({
+                "pattern": pattern_name,
+                "status": "failed",
+                "error": str(e),
+            }, ensure_ascii=False)
+
+    def _resolve_dependencies(
+        self, depends_on: list, task: str,
+    ) -> str:
+        """Wait for dependency agents and inject their results into task.
+
+        Replaces {agent_id.result} and {var_name.result} in task.
+        """
+        from llm_chat.skills.task_delegator.registry import SubAgentRegistry
+        from llm_chat.skills.task_delegator.tools import GetSubagentStatusTool
+        reg = self.registry or SubAgentRegistry()
+        status_tool = GetSubagentStatusTool(registry=reg)
+
+        for dep_id in depends_on:
+            # Wait for dependency
+            logger.info(f"Waiting for dependency: {dep_id}")
+            ctx = reg.get(dep_id)
+            if ctx and ctx.status == "running":
+                reg.wait_for(dep_id, timeout=ctx.timeout)
+
+            # Get result
+            status = json.loads(status_tool.execute(agent_id=dep_id))
+            result = status.get("result", "[no result]")
+
+            # Inject into task
+            task = task.replace("{" + dep_id + ".result}", str(result))
+
+            # Also inject aliases (result_var mappings)
+            varname = ctx.result_var if (ctx and hasattr(ctx, 'result_var')) else ""
+            if varname:
+                task = task.replace("{" + varname + ".result}", str(result))
+
+        return task
+
     @observe("spawn_subagent")
     def execute(self, **kwargs) -> str:
         task = kwargs.get("task", "")
@@ -208,7 +410,19 @@ class SpawnSubagentTool(BaseTool):
         model_config = kwargs.get("model_config")
         complexity = kwargs.get("complexity")
         role_name = kwargs.get("role", "")
+        pattern_name = kwargs.get("pattern", "")
+        depends_on = kwargs.get("depends_on", [])
+        result_var = kwargs.get("result_var", "")
+        blackboard = kwargs.get("blackboard", None)
         work_dir_arg = kwargs.get("work_dir")
+
+        # Dependency resolution: wait for upstream agents, inject results into task
+        if depends_on:
+            task = self._resolve_dependencies(depends_on, task)
+
+        # Pattern mode: execute a predefined collaboration pattern
+        if pattern_name:
+            return self._execute_pattern(pattern_name, task, timeout)
 
         # 角色预设：自动注入 system_prompt 和默认工具
         if role_name and not allowed_tools:
@@ -290,6 +504,10 @@ class SpawnSubagentTool(BaseTool):
             timeout=timeout,
         )
 
+        # Store result variable name for downstream dependency resolution
+        if result_var:
+            context.result_var = result_var
+
         self.registry.spawn(agent_id, context)
 
         model_info = ""
@@ -300,10 +518,22 @@ class SpawnSubagentTool(BaseTool):
             agent_id, model_info, enhanced_task[:50]
         )
 
+        # Capture parent LLMClient for reuse (avoids creating new HTTP sessions)
+        parent_client = None
+        parent_cancel_event = None
+        try:
+            from llm_chat.chat_core_graph import _ctx
+            parent_ctx = _ctx()
+            parent_client = parent_ctx._extra.get("client")
+            parent_cancel_event = parent_ctx.cancel_event
+        except (ImportError, AssertionError):
+            pass  # Not in a chat pipeline context (tests, scheduler, etc.)
+
         future = self.registry.submit(
             agent_id,
             self._execute_async,
             agent_id, enhanced_task, filtered_tools, timeout, context, model_config,
+            parent_client, parent_cancel_event, blackboard,
         )
 
         wait = kwargs.get("wait", False)
@@ -379,13 +609,17 @@ class SpawnSubagentTool(BaseTool):
         timeout: int,
         context: AgentContext,
         model_config: Optional[Dict[str, Any]] = None,
+        parent_client=None,
+        parent_cancel_event=None,
+        blackboard=None,
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
         # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
         _set_agent_id(agent_id)
         try:
             return self._execute_async_inner(
-                agent_id, task, allowed_tools, timeout, context, model_config
+                agent_id, task, allowed_tools, timeout, context, model_config,
+                parent_client, parent_cancel_event, blackboard,
             )
         finally:
             _set_agent_id(None)
@@ -398,12 +632,15 @@ class SpawnSubagentTool(BaseTool):
         timeout: int,
         context: AgentContext,
         model_config: Optional[Dict[str, Any]] = None,
+        parent_client=None,
+        parent_cancel_event=None,
+        blackboard=None,
     ) -> str:
         client = None
-        # 僵死检测：用实际 timeout 刷新 deadline（make_agent_context 已设默认值，
-        # 此处在子 agent 真正启动后覆盖为精确值）
+        own_client = False  # Track if we created this client (needs close)
+        # 僵死检测：用实际 timeout 刷新 deadline
         context.started_at = time.time()
-        context.deadline = context.started_at + max(timeout, 60) + 120  # 额外 120s 容错
+        context.deadline = context.started_at + max(timeout, 60) + 120
         try:
             from llm_chat.client import LLMClient
 
@@ -412,8 +649,14 @@ class SpawnSubagentTool(BaseTool):
                 logger.info(
                     f"Subagent {agent_id} using custom model: "
                     f"model={subagent_config.llm.model}, "
-                    f"protocol={subagent_config.llm.protocol}, "
-                    f"base_url={subagent_config.llm.base_url}"
+                    f"protocol={subagent_config.llm.protocol}"
+                )
+            elif parent_client is not None:
+                # Reuse parent LLMClient — share HTTP session, avoid new connection pool
+                client = parent_client
+                logger.info(
+                    f"Subagent {agent_id} reusing parent LLMClient "
+                    f"(model={client.config.llm.model})"
                 )
             else:
                 subagent_config = self.config
@@ -440,23 +683,43 @@ class SpawnSubagentTool(BaseTool):
                 })
                 self.registry._notify_status_change(agent_id)
 
-            # 为子 agent 创建独立的 ToolRegistry，加载安全技能子集
-            # 排除递归危险技能 (task_delegator, scheduler 等)
-            subagent_registry = ToolRegistry()
-            # 复制父 registry 中的 MCP 工具
-            for tool in self._tool_registry.get_all_tools():
-                if hasattr(tool, '_is_mcp_tool') or tool.name.startswith("mcp__"):
-                    subagent_registry.register(tool)
+            if client is None:
+                # No parent client, no model_config override — create dedicated client
+                subagent_config = self.config
+                context.model = subagent_config.llm.model
+                context.protocol = subagent_config.llm.protocol
 
-            client = LLMClient(
-                subagent_config, skip_skills_setup=False,
-                tool_call_hook=_on_tool_call,
-                tool_registry=subagent_registry,
-                skills_filter=SpawnSubagentTool.SAFE_SKILLS,
-            )
+                # 为子 agent 创建独立的 ToolRegistry，加载安全技能子集
+                subagent_registry = ToolRegistry()
+                for tool in self._tool_registry.get_all_tools():
+                    if hasattr(tool, '_is_mcp_tool') or tool.name.startswith("mcp__"):
+                        subagent_registry.register(tool)
+
+                client = LLMClient(
+                    subagent_config, skip_skills_setup=False,
+                    tool_call_hook=_on_tool_call,
+                    tool_registry=subagent_registry,
+                    skills_filter=SpawnSubagentTool.SAFE_SKILLS,
+                )
+                own_client = True
+
+                # Register blackboard tools on the dedicated registry
+                if blackboard:
+                    from llm_chat.skills.task_delegator.blackboard_tools import (
+                        PostFindingTool, QueryFindingsTool,
+                    )
+                    subagent_registry.register(PostFindingTool(blackboard))
+                    subagent_registry.register(QueryFindingsTool(blackboard))
+
+            all_tools = client.get_builtin_tools()
+
+            # Add blackboard tools if provided (agent-to-agent communication)
+            if blackboard:
+                _bb_tools = _build_blackboard_tool_defs()
+                all_tools = list(all_tools) + _bb_tools
+                logger.debug(f"Subagent {agent_id}: blackboard tools added")
 
             if allowed_tools:
-                all_tools = client.get_builtin_tools()
                 all_names = {t.get("function", {}).get("name") for t in all_tools}
                 _internal_tools = {
                     "spawn_subagent", "get_subagent_status", "cancel_subagent",
@@ -468,18 +731,18 @@ class SpawnSubagentTool(BaseTool):
                     logger.info(
                         f"Subagent {agent_id} auto-included external tools: {extra}"
                     )
-
                 filtered_tool_defs = [
                     t for t in all_tools
                     if t.get("function", {}).get("name") in merged_allowed
                 ]
                 result = self._call_llm_with_retry(
-                    client, agent_id, task, filtered_tool_defs, context
+                    client, agent_id, task, filtered_tool_defs, context,
+                    parent_cancel_event,
                 )
             else:
                 logger.info(f"Subagent {agent_id} calling LLM without tools")
                 result = self._call_llm_with_retry(
-                    client, agent_id, task, None, context
+                    client, agent_id, task, None, context, parent_cancel_event,
                 )
 
             if context._cancelled.is_set():
@@ -500,7 +763,7 @@ class SpawnSubagentTool(BaseTool):
             context.result = error_msg
             return error_msg
         finally:
-            if client is not None:
+            if own_client and client is not None:
                 client.close()
 
     def _call_llm_with_retry(
@@ -510,14 +773,23 @@ class SpawnSubagentTool(BaseTool):
         task: str,
         tool_defs: Optional[List[Dict[str, Any]]],
         context: "AgentContext",
+        parent_cancel_event=None,
     ) -> str:
-        """带指数退避重试的 LLM 调用。仅对网络/超时错误重试。"""
+        """带指数退避重试的 LLM 调用。检查 parent 和 sub-agent 取消信号。"""
         tools_cfg = getattr(self.config, 'tools', None)
         max_retries = tools_cfg.subagent_max_retries if tools_cfg else 2
         retry_delay = tools_cfg.subagent_retry_delay if tools_cfg else 2.0
 
         last_error = None
         for attempt in range(max_retries + 1):
+            # Check parent cancellation (cascade from main request)
+            if parent_cancel_event and parent_cancel_event.is_set():
+                logger.info(f"Subagent {agent_id}: parent request cancelled")
+                raise RuntimeError("Parent request cancelled")
+            # Check sub-agent cancellation
+            if context._cancelled.is_set():
+                raise RuntimeError("Cancelled")
+
             try:
                 if tool_defs:
                     logger.info(

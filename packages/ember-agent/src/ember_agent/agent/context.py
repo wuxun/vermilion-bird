@@ -31,6 +31,7 @@ class AgentContext:
     status: str
     task: str = ""                        # Task description for GUI display
     result: Optional[str] = None
+    result_var: str = ""                   # Alias for downstream agents to reference
     work_dir: Optional[str] = None
     # Execution metadata — for GUI display
     model: str = ""

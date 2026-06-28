@@ -329,3 +329,28 @@ mcp:
 #     simple: "gpt-4o-mini"
 #     medium: "gpt-4o"
 #     complex: "claude-3-5-sonnet"
+
+# ============================================================
+# 🎭 自定义 AgentRole (YAML 配置，不改代码)
+# ============================================================
+#
+# 内置角色: planner, executor, critic, synthesizer
+# 自定义角色只需在 config.yaml 中添加 roles: 段:
+#
+# roles:
+#   researcher:
+#     name: "深度研究员"
+#     system_prompt: |
+#       你是一个深度研究员。每个问题至少搜索 3 个来源，
+#       交叉验证后给出结论。必须标注信息来源。
+#     default_tools: ["web_search", "web_fetch", "file_writer"]
+#
+#   translator:
+#     name: "翻译专家"
+#     system_prompt: |
+#       你是一个专业翻译。输出格式:
+#       1) 直译 2) 意译 (如有必要) 3) 关键术语解释
+#       保持原文语气和风格。
+#     default_tools: ["web_search"]
+#
+# 使用: LLM 调用 spawn_subagent(role="researcher", task="调研XX")

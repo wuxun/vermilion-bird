@@ -52,6 +52,8 @@ class App:
         # 组件分层初始化（保持依赖顺序）
         self.tool_registry = self._init_tool_registry()
         _t1 = time.time(); logger.info(f"⏱ _init_tool_registry: {_t1-_t0:.3f}s")
+        self._init_role_presets()
+        _t1b = time.time(); logger.info(f"⏱ _init_role_presets: {_t1b-_t1:.3f}s")
         self.storage = self._init_storage()
         _t2 = time.time(); logger.info(f"⏱ _init_storage: {_t2-_t1:.3f}s")
         self.client = self._init_client()
@@ -84,6 +86,18 @@ class App:
         s = Storage()
         Storage.set_instance(s)
         return s
+
+    def _init_role_presets(self):
+        """Load custom agent roles and patterns from YAML config."""
+        from ember_agent.agent.role import load_presets_from_yaml
+        role_count = load_presets_from_yaml()
+        from ember_agent.patterns import load_patterns_from_yaml
+        pat_count = load_patterns_from_yaml()
+        if role_count or pat_count:
+            logger.info(
+                f"Loaded {role_count} custom role(s) and "
+                f"{pat_count} pattern(s) from config.yaml"
+            )
 
     def _init_client(self):
         return LLMClient(self.config, tool_registry=self.tool_registry)

@@ -168,19 +168,25 @@ class LLMClientToolsMixin:
         if not tool_calls_data:
             return {"text": full_text, "tool_calls": None}
 
-        tool_calls = self._merge_tool_calls(tool_calls_data)
-        # Build assistant message in standard format for message accumulation
+        tool_calls_raw = self._merge_tool_calls(tool_calls_data)
+        # Normalize to SimpleNamespace for attribute access compatibility
+        from types import SimpleNamespace as _SN
+        tool_calls = []
         tc_list = []
-        for tc in tool_calls:
-            tc_dict = {
-                "id": tc.id if hasattr(tc, 'id') else f"tc_{tc.name}",
-                "type": "function",
-                "function": {
-                    "name": tc.name,
-                    "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else str(tc.arguments),
-                },
-            }
-            tc_list.append(tc_dict)
+        for tc in tool_calls_raw:
+            fn = tc.get("function", {})
+            args_str = fn.get("arguments", "{}")
+            try:
+                args = json.loads(args_str) if isinstance(args_str, str) else args_str
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            name = fn.get("name", "")
+            tc_id = tc.get("id", f"tc_{name}")
+            tool_calls.append(_SN(id=tc_id, name=name, arguments=args))
+            tc_list.append({
+                "id": tc_id, "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            })
         assistant_message = {"role": "assistant", "content": None, "tool_calls": tc_list}
 
         return {

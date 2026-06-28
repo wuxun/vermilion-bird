@@ -7,13 +7,28 @@ An AgentRole defines:
     - output_schema: optional Pydantic model for structured output
 
 Preset roles: planner, executor, critic, synthesizer
+
+YAML config: add custom roles to config.yaml under `roles`:
+
+    roles:
+      researcher:
+        name: "Deep Researcher"
+        system_prompt: "你是一个深度研究员..."
+        default_tools: ["web_search", "web_fetch"]
 """
 
 from __future__ import annotations
 
+import os
+import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Type
 
+import yaml
+
 from pydantic import BaseModel, Field, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 # ── Preset registry (module-level, not on the model class) ────────
@@ -140,3 +155,56 @@ register_preset(
         default_tools=["file_writer"],
     ),
 )
+
+
+# ── YAML config loader ──────────────────────────────────────────
+
+def load_presets_from_yaml(path: str = "config.yaml") -> int:
+    """Load custom agent roles from YAML config.
+
+    Config format (under `roles` key in config.yaml):
+
+        roles:
+          researcher:
+            name: "Deep Researcher"
+            system_prompt: "你是一个深度研究员..."
+            default_tools: ["web_search", "web_fetch"]
+
+    Returns count of loaded presets.
+    """
+    try:
+        config_path = Path(path)
+        if not config_path.exists():
+            # Also try ~/.vermilion-bird/config.yaml
+            alt = Path.home() / ".vermilion-bird" / "config.yaml"
+            if alt.exists():
+                config_path = alt
+            else:
+                return 0
+
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+
+        roles = data.get("roles", {})
+        count = 0
+        for key, spec in roles.items():
+            if not isinstance(spec, dict):
+                continue
+            if key in _PRESETS:
+                logger.warning(
+                    f"Role preset '{key}' already exists, overwriting"
+                )
+            role = AgentRole(
+                name=spec.get("name", key),
+                system_prompt=spec.get("system_prompt", ""),
+                default_tools=spec.get("default_tools", []),
+            )
+            register_preset(key, role)
+            count += 1
+            logger.info(f"Loaded role preset: {key} ({role.name})")
+
+        return count
+
+    except Exception as e:
+        logger.warning(f"Failed to load role presets from YAML: {e}")
+        return 0

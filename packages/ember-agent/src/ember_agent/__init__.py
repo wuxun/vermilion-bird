@@ -7,9 +7,14 @@ Subpackages:
     peer        — PeerReviewTool, PeerDialogue
 
 Top-level:
-    MultiAgentPattern — manager_worker / debate / pipeline / critique_refine
+    CollaborationPattern — YAML-definable multi-agent orchestration recipes
+    (research, debate, review, compare, pipeline, critique_refine)
 """
 
-from ember_agent.patterns import MultiAgentPattern
+from ember_agent.patterns import (
+    CollaborationPattern, PatternStage,
+    register_pattern, get_pattern, list_patterns,
+    load_patterns_from_yaml,
+)
 
 # No __all__ here — submodule imports are the primary API
