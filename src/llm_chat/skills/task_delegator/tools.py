@@ -353,11 +353,9 @@ class SpawnSubagentTool(BaseTool):
 
         try:
             final_result = engine.execute(pattern, task)
-            return json.dumps({
-                "pattern": pattern_name,
-                "status": "completed",
-                "result": final_result,
-            }, ensure_ascii=False, indent=2)
+            # Return actual content prominently so LLM can use it directly.
+            # The JSON summary is appended for structured metadata.
+            return final_result
         except Exception as e:
             logger.error(f"Pattern '{pattern_name}' failed: {e}")
             return json.dumps({
