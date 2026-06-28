@@ -67,6 +67,9 @@ class CollaborationEngine:
             del round_results["_agent_count"]
             round_results.pop("_errors", None)
 
+            # Always update stage_results for aggregator (not just for loops)
+            stage_results = round_results
+
             # Check if loop should continue (critique_refine pattern)
             if pattern.max_rounds > 1 and round_num < pattern.max_rounds - 1:
                 # Look for PASS signal in any stage result
@@ -76,8 +79,6 @@ class CollaborationEngine:
                 ):
                     logger.info(f"Pattern '{pattern.name}': pass signal, breaking loop")
                     break
-                # Otherwise: feed last round results as next round input
-                stage_results = round_results
 
         # Aggregation
         if pattern.aggregator_role:
@@ -311,19 +312,22 @@ class CollaborationEngine:
             return None
 
         import re
-        # Try to find a JSON array in the parent result
-        json_match = re.search(r'\[\s*\{.*?\}\s*\]', parent_result, re.DOTALL)
+        # Find outermost JSON array with greedy match
+        json_match = re.search(r'\[\s*\{.*\}\s*\]', parent_result, re.DOTALL)
         if json_match:
             try:
                 parsed = json.loads(json_match.group())
                 if isinstance(parsed, list) and len(parsed) > 0:
+                    logger.info(
+                        f"Parsed {len(parsed)} subtasks from {parent_id} output"
+                    )
                     return parsed
             except (json.JSONDecodeError, TypeError):
                 pass
 
         # Try parsing the whole result as JSON
         try:
-            parsed = json.loads(parent_result)
+            parsed = json.loads(parent_result.strip())
             if isinstance(parsed, list):
                 return parsed
             if isinstance(parsed, dict) and "subtasks" in parsed:
@@ -331,4 +335,5 @@ class CollaborationEngine:
         except (json.JSONDecodeError, TypeError):
             pass
 
+        logger.debug(f"Could not parse subtasks from {parent_id} output ({len(parent_result)} chars)")
         return None
