@@ -82,11 +82,7 @@ register_pattern(CollaborationPattern(
         PatternStage(id="planner", role="planner",
             task="Decompose: {user_task}. Output as JSON: [{\"id\":1,\"query\":\"...\"},...]"),
         PatternStage(id="executors", role="executor", parallel=3,
-            task=(
-                "The planner's analysis plan:\n\n{planner.result}\n\n"
-                "Execute your assigned sub-task using search tools. "
-                "Post key findings with post_finding so others can avoid duplication."
-            ),
+            task="Execute your assigned sub-task using search tools.",
             depends_on=["planner"],
             collect="numbered"),
     ],

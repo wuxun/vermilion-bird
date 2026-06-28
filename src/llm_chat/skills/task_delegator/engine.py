@@ -173,14 +173,29 @@ class CollaborationEngine:
                             raise
                         logger.warning(f"Stage '{stage.id}' failed (continuing): {e}")
                 else:
+                    # Try to parse parent result for subtask distribution
+                    subtasks = self._parse_subtasks(task, stage_results, stage.depends_on)
+
                     agent_ids = []
                     for i in range(stage.parallel):
-                        indexed_task = (
-                            f"{task}\n\n=== Sub-task #{i + 1} of {stage.parallel} ===\n"
-                            f"Process sub-task #{i + 1}. Use query_findings to check what others have done."
-                        )
+                        if subtasks and i < len(subtasks):
+                            # Assign specific subtask to this executor
+                            sub = subtasks[i]
+                            sub_task = (
+                                f"Your specific assignment:\n"
+                                f"  Task: {sub.get('query', sub.get('title', str(sub)))}\n"
+                                f"{'  Context: ' + sub.get('description', '') if sub.get('description') else ''}\n\n"
+                                f"Execute ONLY this task using search tools. "
+                                f"Report what you find. Do NOT work on other subtasks."
+                            )
+                        else:
+                            # Fallback: generic task with index
+                            sub_task = (
+                                f"{task}\n\n=== Sub-task #{i + 1} of {stage.parallel} ===\n"
+                                f"Process sub-task #{i + 1}."
+                            )
                         agent_ids.append(
-                            self._spawn_async(stage.role, indexed_task, pattern.timeout_per_agent)
+                            self._spawn_async(stage.role, sub_task, pattern.timeout_per_agent)
                         )
                     parallel_results = []
                     for aid in agent_ids:
@@ -278,3 +293,42 @@ class CollaborationEngine:
             return json.dumps(results, ensure_ascii=False, indent=2)
         else:
             return "\n\n".join(results)
+
+    def _parse_subtasks(
+        self, task: str, stage_results: Dict[str, str],
+        depends_on: List[str],
+    ) -> Optional[List[dict]]:
+        """Parse subtask list from a parent stage's result.
+
+        Tries to extract a JSON array from parent result.
+        Supports: [{"query":"..."},...], {"subtasks":[...]}, plain list
+        """
+        if not depends_on:
+            return None
+        parent_id = depends_on[0]
+        parent_result = stage_results.get(parent_id, "")
+        if not parent_result:
+            return None
+
+        import re
+        # Try to find a JSON array in the parent result
+        json_match = re.search(r'\[\s*\{.*?\}\s*\]', parent_result, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Try parsing the whole result as JSON
+        try:
+            parsed = json.loads(parent_result)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and "subtasks" in parsed:
+                return parsed["subtasks"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return None
