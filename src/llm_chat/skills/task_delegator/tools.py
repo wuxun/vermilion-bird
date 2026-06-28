@@ -746,7 +746,7 @@ class SpawnSubagentTool(BaseTool):
                 all_names = {t.get("function", {}).get("name") for t in all_tools}
                 _internal_tools = {
                     "spawn_subagent", "get_subagent_status", "cancel_subagent",
-                    "list_subagents", "execute_workflow", "get_workflow_status",
+                    "list_subagents",
                 }
                 merged_allowed = set(allowed_tools) | (all_names - _internal_tools)
                 if merged_allowed != set(allowed_tools):

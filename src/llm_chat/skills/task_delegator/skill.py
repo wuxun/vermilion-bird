@@ -10,9 +10,8 @@ from llm_chat.skills.task_delegator.tools import (
     GetSubagentStatusTool,
     CancelSubagentTool,
     ListSubagentsTool,
-    ExecuteWorkflowTool,
-    GetWorkflowStatusTool,
 )
+# Deprecated: ExecuteWorkflowTool, GetWorkflowStatusTool replaced by spawn_subagent(pattern=...)
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
 logger = logging.getLogger(__name__)
@@ -76,28 +75,7 @@ class TaskDelegatorSkill(BaseSkill):
             GetSubagentStatusTool(registry=self._registry),
             CancelSubagentTool(registry=self._registry),
             ListSubagentsTool(registry=self._registry),
-            ExecuteWorkflowTool(
-                registry=self._registry,
-                spawn_tool=spawn,
-                executor_ref=self._executor_ref,
-            ),
-            GetWorkflowStatusTool(executor_ref=self._executor_ref),
         ]
-
-        # Wire up workflow executor (shared between execute & status tools)
-        # New interface: WorkflowExecutor(registry, execute_fn, timeout_padding)
-        from llm_chat.skills.task_delegator.workflow import WorkflowExecutor
-        # Wrap spawn._execute_async as the executor function
-        timeout_padding = (
-            self._config.tools.workflow_timeout_padding
-            if self._config and hasattr(self._config, "tools") else 30
-        )
-        self._workflow_executor = WorkflowExecutor(
-            self._registry,
-            execute_fn=spawn._execute_async,
-            timeout_padding=timeout_padding,
-        )
-        self._executor_ref["executor"] = self._workflow_executor
 
         return tools
 
