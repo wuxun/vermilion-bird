@@ -1,8 +1,25 @@
 # Vermilion Bird - 项目知识库
 
-**更新时间**: 2026-05-16
-**评分**: A (综合) | 35 项审计修复完成 + 8 项增量优化
+**更新时间**: 2026-06-28
+**评分**: A (综合) | 35 项审计修复完成 + 8 项增量优化 + 三层架构拆分完成
 **Branch**: main
+
+## 🆕 三层架构拆分 (全部完成 ✅)
+
+项目已拆分为三层独立包：
+
+```
+ember-core  (零 LLM 感知)  →  ember-agent  (Agent 协作)  →  vermilion-bird  (桌面应用)
+    pip install ember-core       pip install ember-agent
+```
+
+| 包 | 位置 | 内容 |
+|----|------|------|
+| **ember-core** | `packages/ember-core/` | tools, storage, mcp, graph, pipeline, memory |
+| **ember-agent** | `packages/ember-agent/` | agent, workflow, consensus, peer, MultiAgentPattern |
+| **vermilion-bird** | `src/llm_chat/` | 应用层，通过 re-export 使用 ember 包 |
+
+详细设计文档：[docs/ember-architecture.md](docs/ember-architecture.md)
 
 ## 概述
 
@@ -13,6 +30,24 @@
 
 ```
 vermilion-bird/
+├── packages/                  # 🆕 独立可复用包
+│   ├── ember-core/            #   零 LLM 感知基础设施
+│   │   └── src/ember_core/
+│   │       ├── tools/         #     BaseTool, ToolRegistry, ToolExecutor
+│   │       ├── storage/       #     SQLiteStore (通用，无业务表)
+│   │       ├── mcp/           #     MCPClient, MCPManager, MCP 类型
+│   │       ├── graph/         #     StateGraph, Checkpointer, ChannelReducer
+│   │       ├── pipeline/      #     PipelineStage, PipelineRunner
+│   │       └── memory/        #     MemoryStorage (原子文件读写)
+│   │
+│   └── ember-agent/           #   Agent 协作层 (依赖 ember-core)
+│       └── src/ember_agent/
+│           ├── agent/         #     AgentContext, AgentRegistry, AgentRole, SharedBlackboard
+│           ├── workflow/      #     WorkflowNode, WorkflowExecutor, AgentWorkflow
+│           ├── consensus/     #     DecisionCard, SubmitCardTool, CardAggregator, DecisionLogStore
+│           ├── peer/          #     PeerReviewTool, PeerDialogue
+│           └── patterns.py    #     MultiAgentPattern (4 种预设拓扑)
+│
 ├── src/llm_chat/              # 主包
 │   ├── __init__.py
 │   ├── app.py                 # 应用核心协调器
@@ -157,13 +192,22 @@ vermilion-bird/
 
 | 任务 | 位置 | 说明 |
 |------|------|------|
+| **ember 框架** | | |
+| 工具注册/执行 | `packages/ember-core/src/ember_core/tools/` | BaseTool, ToolRegistry, ToolExecutor |
+| 状态图引擎 | `packages/ember-core/src/ember_core/graph/` | StateGraph, Checkpointer, ChannelReducer |
+| 管道执行器 | `packages/ember-core/src/ember_core/pipeline/` | PipelineStage, PipelineRunner |
+| MCP 集成 | `packages/ember-core/src/ember_core/mcp/` | MCPClient, MCPManager |
+| Agent 生命周期 | `packages/ember-agent/src/ember_agent/agent/` | AgentContext, AgentRegistry, AgentRole |
+| 工作流编排 | `packages/ember-agent/src/ember_agent/workflow/` | WorkflowNode, WorkflowExecutor, AgentWorkflow |
+| 决策卡片共识 | `packages/ember-agent/src/ember_agent/consensus/` | DecisionCard, CardAggregator, SubmitCardTool |
+| Agent 协作拓扑 | `packages/ember-agent/src/ember_agent/patterns.py` | MultiAgentPattern (4 种预设) |
+| **vermilion-bird 应用** | | |
 | 添加新协议 | `src/llm_chat/protocols/` | 继承 BaseProtocol，注册到 PROTOCOL_MAP |
 | 添加新技能 | `src/llm_chat/skills/` | 继承 BaseSkill，实现 get_tools() |
 | 添加新前端 | `src/llm_chat/frontends/` | 继承 BaseFrontend |
 | 修改意图识别 | `src/llm_chat/intent/` | 快捷指令/模式匹配/模型路由 |
 | 修改对话管道 | `src/llm_chat/chat_core.py` | 完整对话处理管道 |
 | 修改配置 | `src/llm_chat/config.py` | Pydantic 验证 |
-| MCP 集成 | `src/llm_chat/mcp/` | 后台连接 + 健康检查 |
 | 记忆系统 | `src/llm_chat/memory/` | 四层记忆 + LLM 去重 + 风格预设 |
 | 定时/事件任务 | `src/llm_chat/scheduler/` | APScheduler + Webhook |
 | 沙箱执行 | `src/llm_chat/skills/shell_exec/sandbox.py` | Docker/bwrap/subprocess |
@@ -172,6 +216,37 @@ vermilion-bird/
 | API Key 安全 | `src/llm_chat/utils/secure_storage.py` | keyring 三层 fallback |
 
 ## 代码地图
+
+### ember 框架
+
+| 符号 | 类型 | 位置 | 职责 |
+|------|------|------|------|
+| `StateGraph[StateT]` | Class | ember-core/graph/state.py | 类型安全状态图构建器 |
+| `CompiledGraph[StateT]` | Class | ember-core/graph/state.py | 编译后可执行图 (invoke/stream/resume) |
+| `Checkpointer` | ABC | ember-core/graph/checkpoint.py | 抽象检查点接口 |
+| `SQLiteCheckpointer` | Class | ember-core/graph/checkpoint.py | SQLite 持久化检查点 |
+| `ChannelReducer` | ABC | ember-core/graph/reducer.py | 状态字段合并策略 (replace/append/merge) |
+| `PipelineRunner` | Class | ember-core/pipeline/runner.py | 顺序管道执行器 |
+| `PipelineStage` | ABC | ember-core/pipeline/stage.py | 管道阶段基类 |
+| `SQLiteStore` | Class | ember-core/storage/sqlite.py | 通用 SQLite 存储 (WAL, 线程安全) |
+| `MemoryStorage` | Class | ember-core/memory/storage.py | 原子文件读写存储 |
+| `MCPManager` | Class | ember-core/mcp/manager.py | MCP 多服务器管理器 |
+| `MCPClient` | Class | ember-core/mcp/client.py | MCP 单服务器客户端 |
+| `AgentRegistry` | Class | ember-agent/agent/registry.py | 线程安全 Agent 注册表 |
+| `AgentContext` | Class | ember-agent/agent/context.py | Agent 运行时上下文 |
+| `AgentRole` | Class | ember-agent/agent/role.py | Agent 角色定义 + 4 种预设 |
+| `SharedBlackboard` | Class | ember-agent/agent/blackboard.py | Agent 共享工作空间 |
+| `WorkflowExecutor` | Class | ember-agent/workflow/executor.py | 工作流 DAG 执行引擎 |
+| `AgentWorkflow` | Class | ember-agent/workflow/nodes.py | 工作流定义 (simple/parallel/pipeline) |
+| `DecisionCard` | Class | ember-agent/consensus/card.py | 决策卡片 Pydantic 模型 |
+| `CardAggregator` | Class | ember-agent/consensus/aggregator.py | 多 Agent 共识聚合 (vote/weighted/synthesize) |
+| `DecisionLogStore` | Class | ember-agent/consensus/store.py | 决策日志持久化 (SQLiteStore DI) |
+| `SubmitCardTool` | Class | ember-agent/consensus/submit.py | LLM tool-call 提交卡片 (contextvar 通道) |
+| `PeerReviewTool` | Class | ember-agent/peer/review.py | Agent 互相审查 |
+| `PeerDialogue` | Class | ember-agent/peer/dialogue.py | Agent 间多轮对话 |
+| `MultiAgentPattern` | Class | ember-agent/patterns.py | 预置协作拓扑 (4 种) |
+
+### vermilion-bird 应用
 
 | 符号 | 类型 | 位置 | 职责 |
 |------|------|------|------|

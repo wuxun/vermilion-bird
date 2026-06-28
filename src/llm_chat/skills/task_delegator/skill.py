@@ -85,8 +85,18 @@ class TaskDelegatorSkill(BaseSkill):
         ]
 
         # Wire up workflow executor (shared between execute & status tools)
+        # New interface: WorkflowExecutor(registry, execute_fn, timeout_padding)
         from llm_chat.skills.task_delegator.workflow import WorkflowExecutor
-        self._workflow_executor = WorkflowExecutor(self._registry, spawn)
+        # Wrap spawn._execute_async as the executor function
+        timeout_padding = (
+            self._config.tools.workflow_timeout_padding
+            if self._config and hasattr(self._config, "tools") else 30
+        )
+        self._workflow_executor = WorkflowExecutor(
+            self._registry,
+            execute_fn=spawn._execute_async,
+            timeout_padding=timeout_padding,
+        )
         self._executor_ref["executor"] = self._workflow_executor
 
         return tools

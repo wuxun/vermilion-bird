@@ -152,6 +152,15 @@ class SpawnSubagentTool(BaseTool):
                         "简单: 快速关键词搜索/简单问答 | 复杂: 深度分析/多步推理"
                     ),
                 },
+                "role": {
+                    "type": "string",
+                    "enum": ["planner", "executor", "critic", "synthesizer"],
+                    "description": (
+                        "子Agent的角色预设。planner=分解复杂任务, executor=执行具体任务, "
+                        "critic=审查其他Agent输出, synthesizer=综合多Agent结果。"
+                        "选择角色后自动注入对应的system_prompt和默认工具。"
+                    ),
+                },
             },
             "required": ["task"],
         }
@@ -167,6 +176,19 @@ class SpawnSubagentTool(BaseTool):
         self.parent_context = parent_context
         self.config = config
         self._tool_registry = tool_registry  # 注入共享 ToolRegistry
+
+    def _resolve_system_prompt(self, task: str, role_name: str = "") -> str:
+        """Resolve system prompt from AgentRole preset, or return task as-is."""
+        if role_name:
+            try:
+                from ember_agent.agent.role import get_preset
+                role = get_preset(role_name)
+                if role:
+                    return role.system_prompt + f"\n\nCurrent task: {task}"
+                logger.warning(f"AgentRole preset '{role_name}' not found, using default")
+            except ImportError:
+                logger.warning("ember-agent not available, AgentRole disabled")
+        return task
 
     def _get_work_dir(self, work_dir_arg: Optional[str] = None) -> str:
         if work_dir_arg:
@@ -185,7 +207,19 @@ class SpawnSubagentTool(BaseTool):
         timeout = kwargs.get("timeout", 300)
         model_config = kwargs.get("model_config")
         complexity = kwargs.get("complexity")
+        role_name = kwargs.get("role", "")
         work_dir_arg = kwargs.get("work_dir")
+
+        # 角色预设：自动注入 system_prompt 和默认工具
+        if role_name and not allowed_tools:
+            try:
+                from ember_agent.agent.role import get_preset
+                role = get_preset(role_name)
+                if role and role.default_tools:
+                    allowed_tools = list(role.default_tools)
+                    logger.info(f"Role '{role_name}' → default_tools={allowed_tools}")
+            except ImportError:
+                pass
 
         # 复杂度→模型映射（config.tools.subagent_models）
         if complexity and not model_config:
@@ -237,13 +271,21 @@ class SpawnSubagentTool(BaseTool):
 
         agent_id = str(uuid.uuid4())
 
+        # Resolve AgentRole system_prompt and prepend to task
+        enhanced_task = task
+        if role_name:
+            resolved_prompt = self._resolve_system_prompt(task, role_name)
+            if resolved_prompt != task:
+                enhanced_task = resolved_prompt
+                logger.info(f"Role '{role_name}' system_prompt injected ({len(resolved_prompt)} chars)")
+
         context = make_agent_context(
             agent_id=agent_id,
             parent_id=self.parent_context.agent_id if self.parent_context else None,
             depth=(self.parent_context.depth + 1) if self.parent_context else 0,
             allowed_tools=set(filtered_tools),
             conversation_id=f"conv_{uuid.uuid4()}",
-            task=task,
+            task=enhanced_task,
             work_dir=work_dir,
             timeout=timeout,
         )
@@ -255,13 +297,13 @@ class SpawnSubagentTool(BaseTool):
             model_info = f" (model: {model_config.get('model', 'default')})"
         logger.info(
             "Spawned subagent %s%s with task: %s",
-            agent_id, model_info, task[:50]
+            agent_id, model_info, enhanced_task[:50]
         )
 
         future = self.registry.submit(
             agent_id,
             self._execute_async,
-            agent_id, task, filtered_tools, timeout, context, model_config,
+            agent_id, enhanced_task, filtered_tools, timeout, context, model_config,
         )
 
         wait = kwargs.get("wait", False)

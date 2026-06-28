@@ -1,6 +1,5 @@
-"""MCP 类型定义 — 从 config/mcp_config 重新导出，保持向后兼容。"""
-
-from llm_chat.config.mcp_config import (
+# Re-export from ember-core (canonical source)
+from ember_core.mcp.types import (
     TransportType,
     MCPServerConfig,
     MCPServerInfo,

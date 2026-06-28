@@ -1,88 +1,20 @@
-"""
-PipelineStage ABC and PipelineContext dataclass.
-
-PipelineStage follows the project's ABC pattern from BaseTool (tools/base.py:6):
-    - @property @abstractmethod for abstract properties
-    - @abstractmethod for abstract methods
-    - Optional non-abstract methods with sensible defaults
-
-PipelineContext modeled after RoutingDecision (intent/types.py:27):
-    - @dataclass with field(default_factory=list/dict) for mutable defaults
-    - Optional fields for nullable state
-"""
-
 from __future__ import annotations
 
-import logging
+from ember_core.pipeline.stage import PipelineStage
+
+# PipelineStage is now from ember-core.
+# PipelineContext and MutableStrHolder remain here (vermilion-bird specific).
+
 import threading
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llm_chat.intent.types import RoutingDecision
     from llm_chat.decision.schema import DecisionCard
     from llm_chat.context.types import CompressionResult
 
-logger = logging.getLogger(__name__)
-
-
-# ── PipelineStage ABC ──
-
-
-class PipelineStage(ABC):
-    """异步管道阶段的抽象基类。
-
-    每个阶段代表对话处理管道中的一个步骤。
-    生命周期: setup(ctx) → process(ctx) → teardown(ctx)
-
-    PipelineRunner 保证 teardown() 始终执行（通过 try/finally），
-    即使 process() 抛出异常。
-    """
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """阶段名称，用于日志、指标和 insert_stage/remove_stage 定位。"""
-        pass
-
-    async def setup(self, ctx: PipelineContext) -> None:
-        """阶段前置钩子（可选）。
-
-        在 process() 之前调用。默认 no-op。
-
-        Args:
-            ctx: 管道上下文
-        """
-        pass
-
-    @abstractmethod
-    async def process(self, ctx: PipelineContext) -> PipelineContext:
-        """执行阶段主逻辑。
-
-        必须实现。PipelineRunner 在每个阶段间检查 ctx.should_short_circuit。
-
-        Args:
-            ctx: 管道上下文（可原地修改）
-
-        Returns:
-            管道上下文（通常返回同一个 ctx 对象）
-        """
-        pass
-
-    async def teardown(self, ctx: PipelineContext) -> None:
-        """阶段后置钩子（可选）。
-
-        始终被 PipelineRunner 调用（通过 try/finally），即使 process() 抛出异常。
-        默认 no-op。
-
-        Args:
-            ctx: 管道上下文
-        """
-        pass
-
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} name={self.name!r}>"
+__all__ = ["PipelineStage"]
 
 
 # ── MutableStrHolder ──

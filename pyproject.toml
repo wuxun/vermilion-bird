@@ -11,6 +11,8 @@ vermilion-bird = "llm_chat.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.10"
+ember-core = { path = "packages/ember-core", develop = true }
+ember-agent = { path = "packages/ember-agent", develop = true }
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
 pyyaml = "^6.0.0"

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 from llm_chat.client import LLMClient
 from llm_chat.config import Config
 from llm_chat.conversation import Conversation, ConversationManager
-from llm_chat.chat_core import ChatCore
+from llm_chat.chat_core_graph import ChatCoreGraph as ChatCore
 from llm_chat.frontends.base import (
     BaseFrontend,
     Message,

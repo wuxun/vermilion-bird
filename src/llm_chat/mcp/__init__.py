@@ -1,4 +1,5 @@
-from .types import (
+# Re-export from ember-core (canonical source)
+from ember_core.mcp import (
     TransportType,
     MCPServerConfig,
     MCPServerInfo,
@@ -6,10 +7,13 @@ from .types import (
     MCPTool,
     MCPToolParameter,
     MCPResource,
+    MCPConfig,
+    MCPClient,
+    MCPClientError,
+    MCPManager,
+    get_mcp_manager,
+    MCPToolAdapter,
 )
-from .config import MCPConfig
-from .client import MCPClient, MCPClientError
-from .manager import MCPManager, get_mcp_manager
 
 __all__ = [
     "TransportType",
@@ -24,4 +28,5 @@ __all__ = [
     "MCPClientError",
     "MCPManager",
     "get_mcp_manager",
+    "MCPToolAdapter",
 ]

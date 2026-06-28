@@ -47,6 +47,71 @@ class LLMClientToolsMixin:
 
         return self._send_chat_request_with_tools(messages, tools, **kwargs)
 
+    def chat_single_with_tools(
+        self,
+        message: str,
+        tools: List[Dict[str, Any]],
+        history: Optional[List[Dict[str, Any]]] = None,
+        system_context: Optional[str] = None,
+        messages_override: Optional[List[Dict[str, Any]]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Make a single LLM call with tools, return raw result.
+
+        Unlike chat_with_tools(), this does NOT loop for tool execution.
+        Returns {"text": str | None, "tool_calls": list | None, "raw": dict}.
+
+        This enables StateGraph-level tool loops where each iteration
+        is a separate graph node execution.
+
+        Args:
+            messages_override: If provided, use these messages directly
+                (for re-entrant calls after tool execution).
+        """
+        if messages_override:
+            messages = messages_override
+        else:
+            if history is None:
+                history = []
+            messages = []
+            if system_context:
+                messages.append({"role": "system", "content": system_context})
+            messages.extend(history)
+            messages.append({"role": "user", "content": message})
+
+        if not self.protocol.supports_tools():
+            url = self.protocol.get_chat_url()
+            headers = self.protocol.get_headers()
+            data = self.protocol.build_chat_request(messages, **kwargs)
+            result = self._http_post_json_with_retry(url, data, headers)
+            return {"text": self.protocol.parse_chat_response(result), "tool_calls": None}
+
+        url = self.protocol.get_chat_url()
+        headers = self.protocol.get_headers()
+        data = self.protocol.build_chat_request_with_tools(messages, tools, **kwargs)
+
+        try:
+            result = self._http_post_json_with_retry(url, data, headers, label="tools single")
+        except ContentModerationError as e:
+            def _build_req():
+                u = self.protocol.get_chat_url()
+                h = self.protocol.get_headers()
+                d = self.protocol.build_chat_request_with_tools(messages, tools, **kwargs)
+                return u, d, h
+            result = self._handle_content_moderation_fallback(e, _build_req, "tools single")
+
+        if not self.protocol.has_tool_calls(result):
+            return {"text": self.protocol.parse_chat_response(result), "tool_calls": None}
+
+        tool_calls = self.protocol.parse_tool_calls(result)
+        assistant_message = self.protocol.get_assistant_message_from_response(result)
+
+        return {
+            "text": None,
+            "tool_calls": tool_calls,
+            "assistant_message": assistant_message,
+        }
+
     @observe("llm.chat_with_tools_request")
     def _send_chat_request_with_tools(
         self,
