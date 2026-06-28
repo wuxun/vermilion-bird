@@ -810,7 +810,7 @@ class SpawnSubagentTool(BaseTool):
                         f"Subagent {agent_id} calling LLM with {len(tool_defs)} tools "
                         f"(attempt {attempt + 1}/{max_retries + 1})"
                     )
-                    return client.chat_with_tools(task, tool_defs, max_iterations=8)
+                    return client.chat_with_tools(task, tool_defs, max_iterations=20)
                 else:
                     logger.info(
                         f"Subagent {agent_id} calling LLM without tools "
