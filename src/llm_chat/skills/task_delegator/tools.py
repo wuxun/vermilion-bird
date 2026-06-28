@@ -141,12 +141,23 @@ def _build_blackboard_tool_defs():
 class SpawnSubagentTool(BaseTool):
     """创建子agent并分配任务的工具"""
 
-    # 子 agent 安全技能白名单：只保留研究/分析必需的工具
-    # executor 需要: web_search, web_fetch, post_finding, query_findings
-    # synthesizer 额外: file_writer (auto-included below)
-    SAFE_SKILLS = [
-        "web_search", "web_fetch",
-    ]
+    # Tools to REMOVE from sub-agents (dangerous or recursive)
+    BLOCKED_TOOLS = {
+        "spawn_subagent", "get_subagent_status", "cancel_subagent",
+        "list_subagents",  # task_delegator internals
+        "submit_decision_card",  # decision card (parent handles)
+        "activate_skill",  # skill management
+        "remember_fact", "read_facts",  # memory (parent handles)
+        "read_knowledge", "remember_knowledge",  # knowledge base
+        "create_scheduled_task", "list_scheduled_tasks", "delete_scheduled_task",
+        "toggle_scheduled_task", "run_scheduled_task",  # scheduler
+        "shell_exec",  # safety: no shell in sub-agents
+        "fetch_rss",  # irrelevant for research
+        "create_task_plan", "update_step_progress", "get_task_status",
+        "get_next_step", "complete_step", "list_tasks", "switch_task",  # todo
+        "add_to_watchlist", "update_scores", "update_memo", "get_alert_candidates",
+        "get_watchlist",  # stock watchlist — irrelevant
+    }
 
     @property
     def name(self) -> str:
@@ -700,7 +711,7 @@ class SpawnSubagentTool(BaseTool):
                     subagent_config, skip_skills_setup=False,
                     tool_call_hook=_on_tool_call,
                     tool_registry=subagent_registry,
-                    skills_filter=SpawnSubagentTool.SAFE_SKILLS,
+                    skills_filter=None,  # Load all skills, BLOCKED_TOOLS filters at tool level
                 )
                 own_client = True
 
@@ -713,21 +724,11 @@ class SpawnSubagentTool(BaseTool):
                     subagent_registry.register(QueryFindingsTool(blackboard))
 
             all_tools = client.get_builtin_tools()
-            # ALWAYS filter to SAFE_SKILLS for sub-agents
-            existing_names = {t.get("function", {}).get("name") for t in all_tools}
+            # Remove blocked tools (dangerous internals), keep everything else including MCP
             all_tools = [
                 t for t in all_tools
-                if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
+                if t.get("function", {}).get("name") not in SpawnSubagentTool.BLOCKED_TOOLS
             ]
-            # Auto-include file_writer (useful for synthesis agents)
-            if "file_writer" in existing_names:
-                extra_tool = next(
-                    (t for t in client.get_builtin_tools()
-                     if t.get("function", {}).get("name") == "file_writer"),
-                    None
-                )
-                if extra_tool and extra_tool not in all_tools:
-                    all_tools.append(extra_tool)
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
