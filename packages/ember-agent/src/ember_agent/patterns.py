@@ -82,7 +82,12 @@ register_pattern(CollaborationPattern(
         PatternStage(id="planner", role="planner",
             task="Decompose: {user_task}. Output as JSON: [{\"id\":1,\"query\":\"...\"},...]"),
         PatternStage(id="executors", role="executor", parallel=3,
-            task="Execute one subtask from the planner's plan.", depends_on=["planner"],
+            task=(
+                "The planner's analysis plan:\n\n{planner.result}\n\n"
+                "Execute your assigned sub-task using search tools. "
+                "Post key findings with post_finding so others can avoid duplication."
+            ),
+            depends_on=["planner"],
             collect="numbered"),
     ],
     aggregator_role="synthesizer",
@@ -96,7 +101,8 @@ register_pattern(CollaborationPattern(
         PatternStage(id="pro", role="executor",
             task="Argue FOR: {user_task}"),
         PatternStage(id="con", role="critic",
-            task="Argue AGAINST: {user_task}", depends_on=["pro"]),
+            task="Argue AGAINST: {user_task}\n\nThe pro argument was:\n{pro.result}",
+            depends_on=["pro"]),
     ],
     aggregator_role="synthesizer",
     aggregator_task="Evaluate both sides. Produce balanced verdict.",
@@ -109,7 +115,8 @@ register_pattern(CollaborationPattern(
         PatternStage(id="creator", role="planner",
             task="Create first draft: {user_task}"),
         PatternStage(id="critic", role="critic",
-            task="Review and provide actionable feedback.", depends_on=["creator"]),
+            task="Review this output and provide actionable feedback:\n\n{creator.result}",
+            depends_on=["creator"]),
     ],
     aggregator_role="executor",
     aggregator_task="Refine based on feedback. Show before/after for key changes.",
@@ -148,10 +155,11 @@ register_pattern(CollaborationPattern(
             task="Create initial output for: {user_task}"),
         PatternStage(id="critic", role="critic",
             task=(
-                "Review the creator's output. Rate on a scale of 1-10 for quality, "
-                "completeness, and polish. If all ratings >= 8, respond with 'PASS: ' "
-                "followed by a brief summary. Otherwise respond with specific improvements "
-                "needed. Output must start with PASS or FAIL."
+                "Review the creator's output below:\n\n{creator.result}\n\n"
+                "Rate on a scale of 1-10 for quality, completeness, and polish. "
+                "If all ratings >= 8, respond with 'PASS: ' followed by a brief summary. "
+                "Otherwise respond with specific improvements needed. "
+                "Output must start with PASS or FAIL."
             ),
             depends_on=["creator"]),
     ],

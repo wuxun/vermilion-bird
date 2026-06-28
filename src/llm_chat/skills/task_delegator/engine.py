@@ -173,10 +173,15 @@ class CollaborationEngine:
                             raise
                         logger.warning(f"Stage '{stage.id}' failed (continuing): {e}")
                 else:
-                    agent_ids = [
-                        self._spawn_async(stage.role, task, pattern.timeout_per_agent)
-                        for _ in range(stage.parallel)
-                    ]
+                    agent_ids = []
+                    for i in range(stage.parallel):
+                        indexed_task = (
+                            f"{task}\n\n=== Sub-task #{i + 1} of {stage.parallel} ===\n"
+                            f"Process sub-task #{i + 1}. Use query_findings to check what others have done."
+                        )
+                        agent_ids.append(
+                            self._spawn_async(stage.role, indexed_task, pattern.timeout_per_agent)
+                        )
                     parallel_results = []
                     for aid in agent_ids:
                         try:
