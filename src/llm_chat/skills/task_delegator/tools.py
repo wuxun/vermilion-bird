@@ -715,22 +715,31 @@ class SpawnSubagentTool(BaseTool):
             all_tools = client.get_builtin_tools()
             # When reusing parent client, filter to SAFE_SKILLS only
             if not own_client:
+                existing_names = {t.get("function", {}).get("name") for t in all_tools}
                 all_tools = [
                     t for t in all_tools
                     if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
                 ]
-                # Auto-include core tools always available
-                extra_names = {"calculator", "file_writer"}
-                extra_tools = [
-                    t for t in client.get_builtin_tools()
-                    if t.get("function", {}).get("name") in extra_names
-                ]
-                all_tools = list(all_tools) + extra_tools
+                # Auto-include core tools not in SAFE_SKILLS but useful for all agents
+                for extra_name in ("calculator", "file_writer"):
+                    if extra_name not in existing_names:
+                        continue
+                    extra_tool = next(
+                        (t for t in client.get_builtin_tools()
+                         if t.get("function", {}).get("name") == extra_name),
+                        None
+                    )
+                    if extra_tool and extra_tool not in all_tools:
+                        all_tools.append(extra_tool)
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
                 _bb_tools = _build_blackboard_tool_defs()
-                all_tools = list(all_tools) + _bb_tools
+                # Avoid duplicates
+                bb_names = {t.get("function", {}).get("name") for t in all_tools}
+                for bt in _bb_tools:
+                    if bt.get("function", {}).get("name") not in bb_names:
+                        all_tools.append(bt)
                 logger.debug(f"Subagent {agent_id}: blackboard tools added")
 
             if allowed_tools:
