@@ -713,24 +713,21 @@ class SpawnSubagentTool(BaseTool):
                     subagent_registry.register(QueryFindingsTool(blackboard))
 
             all_tools = client.get_builtin_tools()
-            # When reusing parent client, filter to SAFE_SKILLS only
-            if not own_client:
-                existing_names = {t.get("function", {}).get("name") for t in all_tools}
-                all_tools = [
-                    t for t in all_tools
-                    if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
-                ]
-                # Auto-include file_writer for synthesis agents
-                for extra_name in ("file_writer",):
-                    if extra_name not in existing_names:
-                        continue
-                    extra_tool = next(
-                        (t for t in client.get_builtin_tools()
-                         if t.get("function", {}).get("name") == extra_name),
-                        None
-                    )
-                    if extra_tool and extra_tool not in all_tools:
-                        all_tools.append(extra_tool)
+            # ALWAYS filter to SAFE_SKILLS for sub-agents
+            existing_names = {t.get("function", {}).get("name") for t in all_tools}
+            all_tools = [
+                t for t in all_tools
+                if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
+            ]
+            # Auto-include file_writer (useful for synthesis agents)
+            if "file_writer" in existing_names:
+                extra_tool = next(
+                    (t for t in client.get_builtin_tools()
+                     if t.get("function", {}).get("name") == "file_writer"),
+                    None
+                )
+                if extra_tool and extra_tool not in all_tools:
+                    all_tools.append(extra_tool)
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
