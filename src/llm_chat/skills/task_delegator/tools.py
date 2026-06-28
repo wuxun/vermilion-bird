@@ -142,10 +142,10 @@ class SpawnSubagentTool(BaseTool):
     """创建子agent并分配任务的工具"""
 
     # 子 agent 安全技能白名单：排除递归危险技能 (task_delegator, scheduler)
+    # 也排除与子 agent 任务无关的 GUI/工作流工具，只保留搜索+文件+计算
     SAFE_SKILLS = [
         "web_search", "web_fetch", "calculator",
-        "file_reader", "file_writer", "file_editor",
-        "shell_exec", "todo_manager",
+        "file_reader", "file_writer",
     ]
 
     @property
@@ -713,6 +713,12 @@ class SpawnSubagentTool(BaseTool):
                     subagent_registry.register(QueryFindingsTool(blackboard))
 
             all_tools = client.get_builtin_tools()
+            # When reusing parent client, filter to SAFE_SKILLS only
+            if not own_client:
+                all_tools = [
+                    t for t in all_tools
+                    if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
+                ]
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
@@ -797,7 +803,7 @@ class SpawnSubagentTool(BaseTool):
                         f"Subagent {agent_id} calling LLM with {len(tool_defs)} tools "
                         f"(attempt {attempt + 1}/{max_retries + 1})"
                     )
-                    return client.chat_with_tools(task, tool_defs)
+                    return client.chat_with_tools(task, tool_defs, max_iterations=5)
                 else:
                     logger.info(
                         f"Subagent {agent_id} calling LLM without tools "
