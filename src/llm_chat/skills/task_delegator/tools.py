@@ -141,11 +141,11 @@ def _build_blackboard_tool_defs():
 class SpawnSubagentTool(BaseTool):
     """创建子agent并分配任务的工具"""
 
-    # 子 agent 安全技能白名单：排除递归危险技能 (task_delegator, scheduler)
-    # 也排除与子 agent 任务无关的 GUI/工作流工具，只保留搜索+文件+计算
+    # 子 agent 安全技能白名单：只保留研究/分析必需的工具
+    # executor 需要: web_search, web_fetch, post_finding, query_findings
+    # synthesizer 额外: file_writer (auto-included below)
     SAFE_SKILLS = [
-        "web_search", "web_fetch", "calculator",
-        "file_reader", "file_writer",
+        "web_search", "web_fetch",
     ]
 
     @property
@@ -720,8 +720,8 @@ class SpawnSubagentTool(BaseTool):
                     t for t in all_tools
                     if t.get("function", {}).get("name") in SpawnSubagentTool.SAFE_SKILLS
                 ]
-                # Auto-include core tools not in SAFE_SKILLS but useful for all agents
-                for extra_name in ("calculator", "file_writer"):
+                # Auto-include file_writer for synthesis agents
+                for extra_name in ("file_writer",):
                     if extra_name not in existing_names:
                         continue
                     extra_tool = next(
