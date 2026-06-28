@@ -1,8 +1,9 @@
 # Vermilion Bird - 项目知识库
 
 **更新时间**: 2026-06-28
-**评分**: A (综合) | 35 项审计修复完成 + 8 项增量优化 + 三层架构拆分完成
+**评分**: A (综合) | 三层架构拆分完成 + 多 Agent 协作 v2 + Decision Card 修复
 **Branch**: main
+**Commit**: 0bd38dc
 
 ## 🆕 三层架构拆分 (全部完成 ✅)
 
@@ -16,7 +17,7 @@ ember-core  (零 LLM 感知)  →  ember-agent  (Agent 协作)  →  vermilion-b
 | 包 | 位置 | 内容 |
 |----|------|------|
 | **ember-core** | `packages/ember-core/` | tools, storage, mcp, graph, pipeline, memory |
-| **ember-agent** | `packages/ember-agent/` | agent, workflow, consensus, peer, MultiAgentPattern |
+| **ember-agent** | `packages/ember-agent/` | agent, workflow, consensus, peer, CollaborationPattern |
 | **vermilion-bird** | `src/llm_chat/` | 应用层，通过 re-export 使用 ember 包 |
 
 详细设计文档：[docs/ember-architecture.md](docs/ember-architecture.md)
@@ -46,7 +47,7 @@ vermilion-bird/
 │           ├── workflow/      #     WorkflowNode, WorkflowExecutor, AgentWorkflow
 │           ├── consensus/     #     DecisionCard, SubmitCardTool, CardAggregator, DecisionLogStore
 │           ├── peer/          #     PeerReviewTool, PeerDialogue
-│           └── patterns.py    #     MultiAgentPattern (4 种预设拓扑)
+│           └── patterns.py    #     CollaborationPattern (6 种预设, YAML 可扩展)
 │
 ├── src/llm_chat/              # 主包
 │   ├── __init__.py
@@ -200,7 +201,7 @@ vermilion-bird/
 | Agent 生命周期 | `packages/ember-agent/src/ember_agent/agent/` | AgentContext, AgentRegistry, AgentRole |
 | 工作流编排 | `packages/ember-agent/src/ember_agent/workflow/` | WorkflowNode, WorkflowExecutor, AgentWorkflow |
 | 决策卡片共识 | `packages/ember-agent/src/ember_agent/consensus/` | DecisionCard, CardAggregator, SubmitCardTool |
-| Agent 协作拓扑 | `packages/ember-agent/src/ember_agent/patterns.py` | MultiAgentPattern (4 种预设) |
+| Agent 协作拓扑 | `packages/ember-agent/src/ember_agent/patterns.py` | CollaborationPattern (6 种预设, YAML 扩展) |
 | **vermilion-bird 应用** | | |
 | 添加新协议 | `src/llm_chat/protocols/` | 继承 BaseProtocol，注册到 PROTOCOL_MAP |
 | 添加新技能 | `src/llm_chat/skills/` | 继承 BaseSkill，实现 get_tools() |
@@ -244,7 +245,7 @@ vermilion-bird/
 | `SubmitCardTool` | Class | ember-agent/consensus/submit.py | LLM tool-call 提交卡片 (contextvar 通道) |
 | `PeerReviewTool` | Class | ember-agent/peer/review.py | Agent 互相审查 |
 | `PeerDialogue` | Class | ember-agent/peer/dialogue.py | Agent 间多轮对话 |
-| `MultiAgentPattern` | Class | ember-agent/patterns.py | 预置协作拓扑 (4 种) |
+| `CollaborationPattern` | Class | ember-agent/patterns.py | 预置协作模式 (6 种 + YAML) |
 
 ### vermilion-bird 应用
 
@@ -422,6 +423,48 @@ skills:
 | **卡片提交后终止迭代** | `client/_tools.py`, `_stream_tools.py` | `card_submitted` 标志, 成功后 break 外层循环, 避免空调用浪费 token |
 | **卡片 contextvar 修复** | `proactive/agent.py` | ProactiveAgent 对齐 ChatCore 模式: init→LLM→get→clear |
 | **卡片拦截 skip execute** | `client/_tools.py`, `_stream_tools.py` | submit_decision_card 不进入正常 tool execute, 避免空参数 crash |
+
+## 🆕 多 Agent 协作 v2 (2026-06-28)
+
+| 能力 | 位置 | 说明 |
+|------|------|------|
+| **CollaborationPattern (6 种)** | `ember-agent/patterns.py` | research/debate/review/compare/pipeline/critique_refine |
+| **YAML 自定义模式** | `config.yaml → collaboration_patterns:` | 不改代码扩展协作模式 |
+| **YAML 自定义角色** | `config.yaml → roles:` | 不改代码定义新 AgentRole |
+| **CollaborationEngine** | `llm_chat/skills/task_delegator/engine.py` | DAG 执行 + 循环 + 失败恢复 |
+| **Agent 间通信** | `blackboard_tools.py` | post_finding/query_findings 共享发现 |
+| **SharedBlackboard** | `ember-agent/agent/blackboard.py` | Pattern 级共享工作空间 |
+| **共享 LLMClient** | `task_delegator/tools.py` | 子 agent 复用父 HTTP 连接池 |
+| **取消传导** | `task_delegator/tools.py` | 父 cancel → 子 agent 中止 |
+| **依赖声明** | spawn_subagent `depends_on` 参数 | `{agent_id.result}` 模板注入 |
+| **GUI 子 Agent 面板** | `frontends/subagent_panel.py` | 实时树 + 详情弹窗 + 取消 |
+| **LLM 易用性** | tool schema + SOUL 模板 | 模式指南 + 示例 |
+| **结构化输出** | engine.py merge result | JSON summary (agents, findings, errors) |
+| **Decision Card 修复** | `chat_core_graph.py` | init_card_context 正确初始化 |
+
+### 使用方式
+
+```python
+# 模式 1: 预定义 pattern (LLM 一键)
+spawn_subagent(pattern="research", task="调研三家AI公司")
+
+# 模式 2: 手动编排 (LLM 自由控制)
+spawn_subagent(role="planner", task="拆解任务", result_var="plan", wait=true)
+spawn_subagent(role="executor", task="执行 {plan.result}", depends_on=[上一步ID])
+
+# YAML 扩展
+roles:
+  researcher:
+    system_prompt: "..."
+    default_tools: ["web_search"]
+
+collaboration_patterns:
+  code_audit:
+    stages:
+      - id: auditor, role: executor
+      - id: reviewer, role: critic, depends_on: [auditor]
+    aggregator_role: synthesizer
+```
 
 ## 🆕 新增能力 (本轮 35 项修复)
 

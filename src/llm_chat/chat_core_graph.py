@@ -466,6 +466,9 @@ class ChatCoreGraph:
 
         _set_ctx(ctx)
 
+        # Initialize decision card context for submit_decision_card tool
+        init_card_context()
+
         state = ChatGraphState()
 
         try:
@@ -474,8 +477,9 @@ class ChatCoreGraph:
             logger.error(f"send_message graph failed: {e}", exc_info=True)
             return f"处理消息时发生错误: {str(e)}"
 
-        # Handle pending card
-        card = _ctx().pending_card
+        # Extract pending card from submit_decision_card tool calls
+        card = get_pending_card() or _ctx().pending_card
+        clear_card_context()
         if card and on_card:
             on_card(card)
 
@@ -517,6 +521,8 @@ class ChatCoreGraph:
 
         _set_ctx(ctx)
 
+        init_card_context()
+
         state = ChatGraphState()
 
         try:
@@ -525,7 +531,8 @@ class ChatCoreGraph:
             logger.error(f"send_message_stream graph failed: {e}", exc_info=True)
             return f"处理消息时发生错误: {str(e)}"
 
-        card = _ctx().pending_card
+        card = get_pending_card() or _ctx().pending_card
+        clear_card_context()
         if card and on_card:
             on_card(card)
 
