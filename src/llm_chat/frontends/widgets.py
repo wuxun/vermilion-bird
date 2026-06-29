@@ -17,7 +17,7 @@ try:
         QListWidget,
         QListWidgetItem,
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect
+    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QTimer
     from PyQt6.QtGui import QTextCursor
 
     PYQT_AVAILABLE = True
@@ -202,10 +202,21 @@ if PYQT_AVAILABLE:
             self.setFocus()
 
         def _on_text_changed(self):
-            """文本变化时检测是否需要显示补全弹窗。"""
+            """文本变化时延迟检测是否需要显示补全弹窗。
+
+            使用 QTimer.singleShot(0) 将弹窗操作推迟到下一事件循环，
+            避免在 keyPressEvent → textChanged 信号链中同步操作弹窗导致 Qt 重入崩溃。
+            """
             if self._completing:
                 return
             if not self.isVisible():
+                return
+            # 延迟到当前事件处理完成后再弹窗
+            QTimer.singleShot(0, self._check_and_show_popup)
+
+        def _check_and_show_popup(self):
+            """实际执行补全检测和弹窗（由 QTimer 触发，避免重入）。"""
+            if self._completing:
                 return
             word = self._current_word()
             slash_word = self._word_before_slash()
