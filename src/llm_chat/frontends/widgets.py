@@ -133,10 +133,12 @@ if PYQT_AVAILABLE:
             """在输入框下方显示补全弹窗。
 
             使用 ToolTip 窗口类型确保不抢夺焦点、不阻塞输入。
+            配色对齐整体暖棕朱雀主题 (暖白底 + 朱红选中 + 沙色边框)。
             """
             if not items or not self.isVisible():
                 self._hide_popup()
                 return
+
             if self._popup is None:
                 self._popup = QListWidget(self.window())
                 self._popup.setWindowFlags(
@@ -147,14 +149,16 @@ if PYQT_AVAILABLE:
                 self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
                 self._popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
                 self._popup.setMaximumHeight(220)
+                # 暖棕朱雀主题配色：暖白底、朱红选中、沙色边框
                 self._popup.setStyleSheet("""
                     QListWidget {
-                        background-color: #FFFFFF;
-                        border: 1px solid #C8C8C8;
+                        font-family: Arial, sans-serif;
+                        background-color: #FFFBF5;
+                        border: 1px solid #D4A574;
                         border-radius: 10px;
                         padding: 6px 2px;
                         font-size: 13px;
-                        color: #333333;
+                        color: #3D2C2E;
                     }
                     QListWidget::item {
                         padding: 6px 14px;
@@ -162,18 +166,18 @@ if PYQT_AVAILABLE:
                         border-radius: 6px;
                     }
                     QListWidget::item:selected {
-                        background-color: #E8F0FE;
-                        color: #1A73E8;
+                        background-color: #C84B31;
+                        color: white;
                     }
-                    QListWidget::item:hover {
-                        background-color: #F1F3F4;
+                    QListWidget::item:hover:!selected {
+                        background-color: #FFF8F0;
                     }
                     QScrollBar:vertical {
                         width: 6px;
                         background: transparent;
                     }
                     QScrollBar::handle:vertical {
-                        background: #DADADA;
+                        background: #D4A574;
                         border-radius: 3px;
                         min-height: 20px;
                     }
@@ -182,7 +186,7 @@ if PYQT_AVAILABLE:
 
             self._popup.clear()
             for cmd, desc in items:
-                label = QLabel(f"<b>{cmd}</b>&nbsp;&nbsp;<span style='color:#777;'>{desc}</span>")
+                label = QLabel(f"<b>{cmd}</b>&nbsp;&nbsp;<span style='color:#8B7355;'>{desc}</span>")
                 label.setStyleSheet("background: transparent; border: none;")
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, cmd)
