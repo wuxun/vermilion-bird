@@ -17,7 +17,7 @@ try:
         QListWidget,
         QListWidgetItem,
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QTimer
+    from PyQt6.QtCore import Qt, pyqtSignal, QObject
     from PyQt6.QtGui import QTextCursor
 
     PYQT_AVAILABLE = True
@@ -58,24 +58,6 @@ else:
 
 if PYQT_AVAILABLE:
 
-    # ── / 命令自动补全数据 ──────────────────────────────────────
-
-    _SLASH_COMMANDS = [
-        ("/help", "显示帮助信息"),
-        ("/new", "新建会话"),
-        ("/clear", "清空当前会话"),
-        ("/style", "切换回复风格 (academic/casual/concise/coach/architect/default)"),
-        ("/search", "搜索历史对话"),
-        ("/file", "打开文件"),
-        ("/code", "代码模式"),
-        ("/remember", "记住事实到长期记忆"),
-        ("/set", "设置模型参数 (temperature/max_tokens/top_p/reasoning)"),
-        ("/params", "显示当前模型参数"),
-        ("/reset", "重置模型参数为默认值"),
-    ]
-
-    _STYLE_NAMES = ["default", "academic", "casual", "concise", "coach", "architect"]
-
     # ────────────────────────────────────────────────────────────
 
     class InputTextEdit(QTextEdit):
@@ -87,16 +69,31 @@ if PYQT_AVAILABLE:
         """
         send_requested = pyqtSignal()
 
+        _SLASH_COMMANDS = [
+            ("/help", "显示帮助信息"),
+            ("/new", "新建会话"),
+            ("/clear", "清空当前会话"),
+            ("/style", "切换回复风格 (academic/casual/concise/coach/architect/default)"),
+            ("/search", "搜索历史对话"),
+            ("/file", "打开文件"),
+            ("/code", "代码模式"),
+            ("/remember", "记住事实到长期记忆"),
+            ("/set", "设置模型参数 (temperature/max_tokens/top_p/reasoning)"),
+            ("/params", "显示当前模型参数"),
+            ("/reset", "重置模型参数为默认值"),
+        ]
+
+        _STYLE_NAMES = ["default", "academic", "casual", "concise", "coach", "architect"]
+
         def __init__(self, parent=None):
             super().__init__(parent)
             self._min_height = 36
             self._max_height = 150
             self._popup: Optional[QListWidget] = None
-            self._completing = False  # 防止递归 textChanged
+            self._completing = False
             self.document().documentLayout().documentSizeChanged.connect(
                 self._adjust_height
             )
-            self.textChanged.connect(self._on_text_changed)
             self._adjust_height()
 
         def _adjust_height(self):
@@ -201,22 +198,11 @@ if PYQT_AVAILABLE:
             self._hide_popup()
             self.setFocus()
 
-        def _on_text_changed(self):
-            """文本变化时延迟检测是否需要显示补全弹窗。
-
-            使用 QTimer.singleShot(0) 将弹窗操作推迟到下一事件循环，
-            避免在 keyPressEvent → textChanged 信号链中同步操作弹窗导致 Qt 重入崩溃。
-            """
+        def _check_and_show_popup(self):
+            """检测当前输入是否需要显示补全弹窗（在 keyPressEvent super() 之后调用）。"""
             if self._completing:
                 return
             if not self.isVisible():
-                return
-            # 延迟到当前事件处理完成后再弹窗
-            QTimer.singleShot(0, self._check_and_show_popup)
-
-        def _check_and_show_popup(self):
-            """实际执行补全检测和弹窗（由 QTimer 触发，避免重入）。"""
-            if self._completing:
                 return
             word = self._current_word()
             slash_word = self._word_before_slash()
@@ -300,7 +286,9 @@ if PYQT_AVAILABLE:
                 event.accept()
                 return
 
+            # 默认：让 Qt 先处理按键，再检测补全（不在 textChanged 信号内操作弹窗）
             super().keyPressEvent(event)
+            self._check_and_show_popup()
 
     class CollapsibleToolCall(QFrame):
         """可折叠的工具调用展示卡片。"""
