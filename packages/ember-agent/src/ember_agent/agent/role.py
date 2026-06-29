@@ -115,9 +115,11 @@ register_preset(
             "You are a task executor. You receive a specific subtask with clear "
             "instructions and tools. Execute it thoroughly and return the result. "
             "If you encounter ambiguity, make reasonable assumptions and note them. "
-            "If you cannot complete the task with available tools, explain why."
+            "If you cannot complete the task with available tools, explain why.\n\n"
+            "Available tool categories: web search, file read/write. "
+            "Use the best tool for each step — prefer specialized search tools (tavily_*, etc) over generic ones."
         ),
-        default_tools=["file_reader", "file_writer", "web_search", "shell_exec"],
+        default_tools=["web_search", "web_fetch", "file_reader", "file_writer"],
     ),
 )
 
