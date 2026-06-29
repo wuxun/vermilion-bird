@@ -186,13 +186,10 @@ if PYQT_AVAILABLE:
 
             self._popup.clear()
             for cmd, desc in items:
-                label = QLabel(f"<b>{cmd}</b>&nbsp;&nbsp;<span style='color:#8B7355;'>{desc}</span>")
-                label.setStyleSheet("background: transparent; border: none;")
-                item = QListWidgetItem()
+                display = f"{cmd}    {desc}"
+                item = QListWidgetItem(display)
                 item.setData(Qt.ItemDataRole.UserRole, cmd)
-                item.setSizeHint(label.sizeHint())
                 self._popup.addItem(item)
-                self._popup.setItemWidget(item, label)
 
             # 定位弹窗：输入框下方
             pos = self.mapToGlobal(self.rect().bottomLeft())
