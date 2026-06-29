@@ -148,7 +148,6 @@ if PYQT_AVAILABLE:
                 self._popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
                 self._popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-                self._popup.setMaximumHeight(220)
                 # 暖棕朱雀主题配色：暖白底、朱红选中、沙色边框
                 self._popup.setStyleSheet("""
                     QListWidget {
@@ -190,6 +189,11 @@ if PYQT_AVAILABLE:
                 item = QListWidgetItem(display)
                 item.setData(Qt.ItemDataRole.UserRole, cmd)
                 self._popup.addItem(item)
+
+            # 根据条目数量动态调整高度，不浪费空白
+            item_height = 32
+            needed = len(items) * item_height + 16  # 16 = 上下 padding
+            self._popup.setFixedHeight(min(needed, 220))
 
             # 定位弹窗：输入框下方
             pos = self.mapToGlobal(self.rect().bottomLeft())
