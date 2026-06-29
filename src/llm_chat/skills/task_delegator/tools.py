@@ -92,8 +92,8 @@ def _build_blackboard_tool_defs():
             "function": {
                 "name": "post_finding",
                 "description": (
-                    "Share a discovery with other agents working on the same task. "
-                    "Use when you find key information that might help other agents."
+                    "⚠️ REQUIRED after each search: Share key finding with team. "
+                    "Other agents check this to avoid duplicate work."
                 ),
                 "parameters": {
                     "type": "object",
@@ -120,8 +120,8 @@ def _build_blackboard_tool_defs():
             "function": {
                 "name": "query_findings",
                 "description": (
-                    "Search findings posted by other agents. "
-                    "Returns up to 5 results sorted by confidence."
+                    "⚠️ Call BEFORE searching: Check what other agents have already found. "
+                    "Returns up to 5 results. If matches found, use them instead of re-searching."
                 ),
                 "parameters": {
                     "type": "object",

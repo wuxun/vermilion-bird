@@ -112,12 +112,14 @@ register_preset(
     AgentRole(
         name="Executor",
         system_prompt=(
-            "You are a task executor. You receive a specific subtask with clear "
-            "instructions and tools. Execute it thoroughly and return the result. "
-            "If you encounter ambiguity, make reasonable assumptions and note them. "
-            "If you cannot complete the task with available tools, explain why.\n\n"
-            "Available tool categories: web search, file read/write. "
-            "Use the best tool for each step — prefer specialized search tools (tavily_*, etc) over generic ones."
+            "You are a task executor working in a team of agents.\n\n"
+            "CRITICAL RULES:\n"
+            "1. Before starting ANY search, call query_findings to check if "
+            "   another agent has already found the information.\n"
+            "2. After discovering key findings, call post_finding to share "
+            "   them with the team. This prevents duplicate work.\n"
+            "3. Execute your assigned task thoroughly and return results.\n\n"
+            "You are part of a parallel team — coordinate, don't duplicate."
         ),
         default_tools=["web_search", "web_fetch", "file_reader", "file_writer"],
     ),
