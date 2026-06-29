@@ -481,6 +481,7 @@ class ChatCoreGraph:
         card = get_pending_card() or _ctx().pending_card
         clear_card_context()
         if card and on_card:
+            card.conversation_id = conversation_id
             on_card(card)
 
         return _ctx().response
@@ -534,6 +535,7 @@ class ChatCoreGraph:
         card = get_pending_card() or _ctx().pending_card
         clear_card_context()
         if card and on_card:
+            card.conversation_id = conversation_id
             on_card(card)
 
         return _ctx().response
