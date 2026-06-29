@@ -130,40 +130,65 @@ if PYQT_AVAILABLE:
             return [(cmd, desc) for cmd, desc in candidates if cmd.lower().startswith(lower)]
 
         def _show_popup(self, items: list[tuple[str, str]]):
-            """在输入框下方显示补全弹窗。"""
+            """在输入框下方显示补全弹窗。
+
+            使用 ToolTip 窗口类型确保不抢夺焦点、不阻塞输入。
+            """
             if not items or not self.isVisible():
                 self._hide_popup()
                 return
             if self._popup is None:
-                self._popup = QListWidget(self)
-                self._popup.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+                self._popup = QListWidget(self.window())
+                self._popup.setWindowFlags(
+                    Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+                )
+                self._popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
                 self._popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                self._popup.setMaximumHeight(200)
+                self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                self._popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self._popup.setMaximumHeight(220)
                 self._popup.setStyleSheet("""
                     QListWidget {
-                        background-color: #2B2B2B;
-                        border: 1px solid #555;
-                        border-radius: 6px;
-                        padding: 4px;
+                        background-color: #FFFFFF;
+                        border: 1px solid #C8C8C8;
+                        border-radius: 10px;
+                        padding: 6px 2px;
                         font-size: 13px;
-                        color: #E0E0E0;
+                        color: #333333;
                     }
                     QListWidget::item {
-                        padding: 4px 8px;
-                        border-radius: 3px;
+                        padding: 6px 14px;
+                        margin: 1px 4px;
+                        border-radius: 6px;
                     }
                     QListWidget::item:selected {
-                        background-color: #3A6EA5;
+                        background-color: #E8F0FE;
+                        color: #1A73E8;
+                    }
+                    QListWidget::item:hover {
+                        background-color: #F1F3F4;
+                    }
+                    QScrollBar:vertical {
+                        width: 6px;
+                        background: transparent;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: #DADADA;
+                        border-radius: 3px;
+                        min-height: 20px;
                     }
                 """)
                 self._popup.itemClicked.connect(self._on_popup_selected)
 
             self._popup.clear()
             for cmd, desc in items:
-                display = f"{cmd}  —  {desc}"
-                item = QListWidgetItem(display)
+                label = QLabel(f"<b>{cmd}</b>&nbsp;&nbsp;<span style='color:#777;'>{desc}</span>")
+                label.setStyleSheet("background: transparent; border: none;")
+                item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, cmd)
+                item.setSizeHint(label.sizeHint())
                 self._popup.addItem(item)
+                self._popup.setItemWidget(item, label)
 
             # 定位弹窗：输入框下方
             pos = self.mapToGlobal(self.rect().bottomLeft())
@@ -175,6 +200,7 @@ if PYQT_AVAILABLE:
         def _hide_popup(self):
             if self._popup:
                 self._popup.hide()
+            self.setFocus()
 
         def _apply_completion(self, completion: str):
             """用补全词替换当前行末尾的部分词。"""
