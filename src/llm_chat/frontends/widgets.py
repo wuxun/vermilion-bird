@@ -134,7 +134,7 @@ if PYQT_AVAILABLE:
 
         def _show_popup(self, items: list[tuple[str, str]]):
             """在输入框下方显示补全弹窗。"""
-            if not items:
+            if not items or not self.isVisible():
                 self._hide_popup()
                 return
             if self._popup is None:
@@ -181,14 +181,18 @@ if PYQT_AVAILABLE:
 
         def _apply_completion(self, completion: str):
             """用补全词替换当前行末尾的部分词。"""
-            word = self._current_word()
-            tc = self.textCursor()
-            # 删除末尾词
-            for _ in range(len(word)):
-                tc.deletePreviousChar()
-            # 插入补全词
-            tc.insertText(completion)
-            self.setTextCursor(tc)
+            self._completing = True
+            try:
+                word = self._current_word()
+                tc = self.textCursor()
+                # 删除末尾词
+                for _ in range(len(word)):
+                    tc.deletePreviousChar()
+                # 插入补全词
+                tc.insertText(completion)
+                self.setTextCursor(tc)
+            finally:
+                self._completing = False
 
         def _on_popup_selected(self, item: QListWidgetItem):
             """点击弹窗项 → 补全。"""
@@ -200,6 +204,8 @@ if PYQT_AVAILABLE:
         def _on_text_changed(self):
             """文本变化时检测是否需要显示补全弹窗。"""
             if self._completing:
+                return
+            if not self.isVisible():
                 return
             word = self._current_word()
             slash_word = self._word_before_slash()
