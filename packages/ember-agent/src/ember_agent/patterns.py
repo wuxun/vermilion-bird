@@ -87,7 +87,11 @@ register_pattern(CollaborationPattern(
             collect="numbered"),
     ],
     aggregator_role="synthesizer",
-    aggregator_task="Synthesize all findings into one cohesive report.",
+    aggregator_task=(
+        "Synthesize all executor findings into one cohesive report. "
+        "Output the report directly as your response text. "
+        "Do NOT save to file — write it inline."
+    ),
 ))
 
 register_pattern(CollaborationPattern(
