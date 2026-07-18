@@ -38,7 +38,13 @@ class MemoryManager:
         )
         self._extraction_lock = threading.Lock()
         self._pending_extractions: List[Dict] = []
-        
+
+        # 后台处理：LLM 重量操作不阻塞对话管道
+        self._processing_lock = threading.Lock()
+        self._is_processing = False
+        self._last_heavy_op_time = datetime.min  # 上次 LLM 重量操作时间
+        self._heavy_op_min_interval = self.config.get("heavy_op_min_interval_secs", 3600)  # 默认 1 小时冷却
+
         self._conversation_count = 0
         self._last_extraction_time = datetime.now()
         self._last_compress_time = datetime.now()
@@ -56,7 +62,7 @@ class MemoryManager:
         self._mid_term_compress_days = mid_cfg.get("compress_after_days", 7)
         long_cfg = self.config.get("long_term", {})
         self._long_term_auto_evolve = long_cfg.get("auto_evolve", True)
-        self._long_term_evolve_interval_days = long_cfg.get("evolve_interval_days", 7)
+        self._long_term_evolve_interval_days = long_cfg.get("evolve_interval_days", 14)  # 默认 14 天（原 7 天太频繁）
         self._long_term_consolidate_min_facts = long_cfg.get(
             "consolidate_min_facts", self._long_term_consolidate_min_facts
         )
@@ -505,7 +511,7 @@ class MemoryManager:
         保留不变：身份描述、行为准则、专业能力、拒绝场景。
         精炼范围：沟通风格 (语言/语气/格式/长度)、工具使用策略 (搜索/shell/文件/子Agent)。
 
-        触发：与 evolve_understanding 共用周期 (默认 7 天)。
+        触发：与 evolve_understanding 共用周期 (默认 14 天)。
         """
         summarizer = self._summarizer
         if not summarizer:
@@ -906,7 +912,12 @@ class MemoryManager:
             self._pending_extractions.extend(messages)
     
     def process_pending_extractions(self):
-        """处理待提取的记忆 - 短期记忆直接写入 + 周期性维护"""
+        """处理待提取的记忆 — 同步部分：短期记忆写入。
+
+        重量 LLM 操作（中期提取、进化、整理）已迁移到
+        process_pending_extractions_async() 后台线程执行，不阻塞对话管道。
+        此方法仅保留轻量同步操作。
+        """
         with self._extraction_lock:
             if not self._pending_extractions:
                 return
@@ -917,19 +928,90 @@ class MemoryManager:
         self._write_short_term_directly(messages)
         self._increment_conversation_count()
 
-        mid_term_extracted = False
-        if self._should_extract_mid_term():
-            self._extract_to_mid_term()
-            mid_term_extracted = True
+    def process_pending_extractions_async(self):
+        """分发重量 LLM 操作到后台 daemon 线程，不阻塞调用方。
 
-        # 周期性维护：压缩过期中期记忆
-        self._maybe_compress_mid_term()
+        此方法由 MemoryExtractStage 调用，替代原有的同步
+        process_pending_extractions() 完整执行。
 
-        # 周期性维护：进化长期记忆（中期记忆有更新时更频繁检查）
-        self._maybe_evolve_understanding(mid_term_extracted)
+        线程安全：_processing_lock 防止并发执行；
+        _heavy_op_min_interval 冷却防止频繁 LLM 调用。
+        """
+        with self._extraction_lock:
+            if not self._pending_extractions:
+                return
 
-        # 长期记忆整理：事实累积到阈值时触发去重+重新分类
-        self._maybe_consolidate_long_term()
+            messages = self._pending_extractions.copy()
+            self._pending_extractions.clear()
+
+        # 轻量同步部分
+        self._write_short_term_directly(messages)
+        self._increment_conversation_count()
+
+        # 重量 LLM 操作 → 后台线程
+        t = threading.Thread(
+            target=self._process_heavy_operations,
+            daemon=True,
+            name="memory-heavy-ops",
+        )
+        t.start()
+
+    def _process_heavy_operations(self):
+        """后台线程执行重量 LLM 操作：中期提取 + 压缩 + 进化 + 整理。
+
+        使用 _processing_lock 确保同一时间只有一个后台线程在执行，
+        _heavy_op_min_interval 确保 LLM 调用之间有足够的冷却时间。
+        """
+        # 快速路径：如果另一个后台线程正在处理，直接返回
+        if not self._processing_lock.acquire(blocking=False):
+            logger.debug("后台记忆处理已在运行，跳过本次")
+            return
+
+        try:
+            # 冷却检查：避免短时间内重复调用 LLM
+            elapsed_since_last = (datetime.now() - self._last_heavy_op_time).total_seconds()
+            if elapsed_since_last < self._heavy_op_min_interval:
+                # 在冷却期内，只做无 LLM 的操作（压缩 = 纯正则）
+                logger.debug(
+                    f"仍在冷却期 (距上次 {elapsed_since_last:.0f}s < {self._heavy_op_min_interval}s)，"
+                    f"仅执行非 LLM 维护"
+                )
+                self._maybe_compress_mid_term()
+                return
+
+            logger.info("后台记忆处理开始 (中期提取 + 进化检查)")
+
+            mid_term_extracted = False
+            if self._should_extract_mid_term():
+                try:
+                    self._extract_to_mid_term()
+                    mid_term_extracted = True
+                except Exception as e:
+                    logger.error(f"中期记忆提取失败: {e}")
+
+            # 周期性维护：压缩过期中期记忆（纯正则，无 LLM）
+            try:
+                self._maybe_compress_mid_term()
+            except Exception as e:
+                logger.error(f"中期记忆压缩失败: {e}")
+
+            # 周期性维护：进化长期记忆
+            try:
+                self._maybe_evolve_understanding(mid_term_extracted)
+            except Exception as e:
+                logger.error(f"长期记忆进化失败: {e}")
+
+            # 长期记忆整理
+            try:
+                self._maybe_consolidate_long_term()
+            except Exception as e:
+                logger.error(f"长期记忆整理失败: {e}")
+
+            self._last_heavy_op_time = datetime.now()
+            logger.info("后台记忆处理完成")
+
+        finally:
+            self._processing_lock.release()
 
     def _maybe_compress_mid_term(self):
         """按周期压缩过期中期记忆"""

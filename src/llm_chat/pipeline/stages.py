@@ -780,7 +780,13 @@ class PersistAssistantStage(PipelineStage):
 
 
 class MemoryExtractStage(PipelineStage):
-    """异步提取记忆到记忆系统。"""
+    """记忆提取阶段 — 短期记忆同步写入 + 重量操作后台执行。
+
+    短期记忆写入（纯文件 I/O）在管道内同步完成；
+    中期提取、长期进化、Soul 进化等 LLM 调用通过
+    process_pending_extractions_async() 分发到后台 daemon 线程，
+    不阻塞对话管道。
+    """
     name = "MemoryExtract"
 
     def __init__(self, conversation_manager) -> None:
@@ -798,7 +804,8 @@ class MemoryExtractStage(PipelineStage):
                 {"role": "assistant", "content": ctx.response},
             ]
             memory_manager.schedule_extraction(messages)
-            memory_manager.process_pending_extractions()
+            # 使用异步版本：短期记忆同步写入 + 重量 LLM 操作后台执行
+            memory_manager.process_pending_extractions_async()
         except Exception as e:
             logger.warning(f"[MemoryExtractStage] failed: {e}")
         return ctx

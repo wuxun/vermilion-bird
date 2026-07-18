@@ -214,6 +214,7 @@ class App:
             "extraction_time_interval": self.config.memory.extraction_time_interval,
             "short_term_max_entries": self.config.memory.short_term_max_entries,
             "max_memory_tokens": self.config.memory.max_memory_tokens,
+            "heavy_op_min_interval_secs": self.config.memory.heavy_op_min_interval_secs,
         }
 
     def _build_knowledge_config(self) -> Dict[str, Any]:

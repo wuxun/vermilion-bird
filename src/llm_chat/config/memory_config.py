@@ -32,7 +32,7 @@ class LongTermMemoryConfig(BaseSettings):
     """长期记忆配置。"""
 
     auto_evolve: bool = Field(default=True, description="是否自动进化记忆")
-    evolve_interval_days: int = Field(default=7, description="记忆进化间隔天数")
+    evolve_interval_days: int = Field(default=14, description="记忆进化间隔天数")
     consolidate_min_facts: int = Field(
         default=8, description="累积多少条事实后触发长期记忆去重整理"
     )
@@ -66,6 +66,10 @@ class MemoryConfig(BaseSettings):
     short_term_max_entries: int = Field(default=50, description="短期记忆最大条目数")
     max_memory_tokens: int = Field(
         default=2000, description="注入 LLM 系统提示的记忆 token 预算上限"
+    )
+    heavy_op_min_interval_secs: int = Field(
+        default=3600,
+        description="LLM 重量记忆操作最小冷却秒数（防止频繁 LLM 调用阻塞）",
     )
 
     class Config:
