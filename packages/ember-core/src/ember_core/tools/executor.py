@@ -123,7 +123,15 @@ class ToolExecutor:
                     "content": f"Error: invalid tool arguments - {e}",
                     "is_error": True,
                 }]
-            return [self.execute_single_tool(tool_name, tool_args, tool_call["id"])]
+            try:
+                return [self.execute_single_tool(tool_name, tool_args, tool_call["id"])]
+            except ValueError as e:
+                logger.error(f"工具 {tool_name} 参数错误: {e}")
+                return [{
+                    "tool_call_id": tool_call["id"],
+                    "content": str(e),
+                    "is_error": True,
+                }]
 
         logger.info(f"并行执行 {len(tool_calls)} 个工具调用")
 

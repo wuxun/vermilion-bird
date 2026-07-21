@@ -80,6 +80,23 @@ class ToolRegistry:
         tool = self.get_tool(name)
         if tool is None:
             raise ValueError(f"Tool not found: {name}")
+
+        # Pre-check: if arguments is empty dict but tool has required params,
+        # bail early with a clear error instead of letting tool.execute(**{}) fail.
+        if arguments is not None and arguments == {}:
+            import inspect
+            sig = inspect.signature(tool.execute)
+            required = [
+                p.name for p in sig.parameters.values()
+                if p.default is inspect.Parameter.empty and p.name != 'self'
+            ]
+            if required:
+                msg = (
+                    f"参数错误：缺少必填参数 {', '.join(required)}。"
+                    f"请提供所有必填参数后重新调用工具 {name}。"
+                )
+                raise ValueError(msg)
+
         if arguments is not None:
             try:
                 return tool.execute(**arguments)
