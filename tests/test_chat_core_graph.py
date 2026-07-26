@@ -93,9 +93,9 @@ class TestRouting:
 
         updated = _routing_update(state, has_tool_calls=False)
 
-        assert updated.tool_call_count == 3
-        assert updated.max_tool_iterations == 7
-        assert updated.has_tool_calls is False
+        assert updated["tool_call_count"] == 3
+        assert updated["max_tool_iterations"] == 7
+        assert updated["has_tool_calls"] is False
 
     def test_disabled_tools_use_plain_chat(self):
         client = MagicMock()
@@ -115,11 +115,11 @@ class TestRouting:
         }
         state = ChatGraphState.from_pipeline_context(ctx)
         runtime = Runtime(context=ChatRuntimeContext.from_pipeline_context(ctx))
-        update = asyncio.run(_llm_call_node(state, runtime))
+        update = _llm_call_node(state, runtime)
 
         client.chat.assert_called_once()
         client.chat_single_with_tools.assert_not_called()
-        assert update["routing"].has_response is True
+        assert update["routing"]["has_response"] is True
 
 
 # ── Graph structure test ────────────────────────────────────────

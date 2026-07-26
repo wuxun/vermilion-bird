@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from llm_chat.intent.types import Intent, RoutingDecision
 from llm_chat.pipeline.chat_state import ChatRoutingState
@@ -67,9 +67,18 @@ class ChatGraphState(BaseModel):
     error: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     tool_messages: List[Dict[str, Any]] = Field(default_factory=list)
-    pending_tool_calls: List[SerializableToolCall] = Field(default_factory=list)
+    pending_tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     pending_card: Optional[Dict[str, Any]] = None
-    routing: ChatRoutingState = Field(default_factory=ChatRoutingState)
+    routing: Dict[str, Any] = Field(
+        default_factory=lambda: ChatRoutingState().model_dump()
+    )
+
+    @field_validator("routing", mode="before")
+    @classmethod
+    def _serialize_routing(cls, value: Any) -> Dict[str, Any]:
+        if isinstance(value, ChatRoutingState):
+            return value.model_dump()
+        return dict(value or {})
 
     @classmethod
     def from_request(
@@ -107,7 +116,7 @@ class ChatGraphState(BaseModel):
             status=ctx.status,
             error=ctx.error,
             metadata=dict(ctx.metadata),
-            routing=routing or ChatRoutingState(),
+            routing=(routing or ChatRoutingState()).model_dump(),
         )
 
     def to_pipeline_context(
@@ -238,4 +247,3 @@ def _load_routing_decision(
         suggested_tools=list(value.get("suggested_tools", [])),
         force_reasoning=bool(value.get("force_reasoning", False)),
     )
-

@@ -49,3 +49,25 @@ def test_foreign_keys_are_enabled_on_every_connection(storage):
         ).fetchone()[0]
 
     assert remaining == 0
+
+
+def test_message_execution_key_makes_recovery_write_idempotent(storage):
+    storage.create_conversation("conv-idempotent")
+
+    first = storage.add_message(
+        "conv-idempotent",
+        "assistant",
+        "first result",
+        execution_key="chat-message:run-1:assistant",
+    )
+    repeated = storage.add_message(
+        "conv-idempotent",
+        "assistant",
+        "would be duplicated",
+        execution_key="chat-message:run-1:assistant",
+    )
+
+    messages = storage.get_messages("conv-idempotent")
+    assert repeated == first
+    assert len(messages) == 1
+    assert messages[0]["content"] == "first result"

@@ -85,13 +85,13 @@ def test_graph_proposes_instead_of_executing_high_impact_tool():
                     id="call-1",
                     name="write_file",
                     arguments={"file_path": "a.txt", "content": "hello"},
-                )
+                ).model_dump()
             ]
         }
     )
     runtime = Runtime(context=ChatRuntimeContext.from_pipeline_context(ctx))
     try:
-        update = asyncio.run(_execute_tools_node(state, runtime))
+        update = _execute_tools_node(state, runtime)
     finally:
         ToolRegistry.reset()
 

@@ -590,27 +590,28 @@ class ExecutionCenterDialog(QDialog):
 
     def _set_run_buttons(self, run: Optional[Any]) -> None:
         busy = run is None or run.id == self._busy_run_id
-        is_graph = bool(run and run.metadata.get("graph_runtime"))
-        is_tool_approval = bool(run and run.metadata.get("approval_kind") == "tool")
+        can_resume = bool(run and run.can_resume)
+        can_retry = bool(run and run.can_retry)
+        can_replay = bool(
+            run
+            and run.metadata.get("graph_runtime")
+            and run.status.terminal
+            and run.metadata.get("approval_kind") != "tool"
+        )
+        if run and hasattr(self._app, "can_resume_run"):
+            can_resume = self._app.can_resume_run(run.id)
+        if run and hasattr(self._app, "can_retry_run"):
+            can_retry = self._app.can_retry_run(run.id)
+        if run and hasattr(self._app, "can_replay_run"):
+            can_replay = self._app.can_replay_run(run.id)
         self._resume_run_button.setEnabled(
-            bool(not busy and hasattr(self._app, "resume_run") and run.can_resume)
+            bool(not busy and hasattr(self._app, "resume_run") and can_resume)
         )
         self._retry_run_button.setEnabled(
-            bool(
-                not busy
-                and hasattr(self._app, "retry_run")
-                and run.can_retry
-                and not is_tool_approval
-            )
+            bool(not busy and hasattr(self._app, "retry_run") and can_retry)
         )
         self._replay_run_button.setEnabled(
-            bool(
-                not busy
-                and hasattr(self._app, "replay_run")
-                and is_graph
-                and run.status.terminal
-                and not is_tool_approval
-            )
+            bool(not busy and hasattr(self._app, "replay_run") and can_replay)
         )
 
     def _set_action_buttons(self, enabled: bool) -> None:

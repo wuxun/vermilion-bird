@@ -70,6 +70,16 @@ class LangGraphRuntime(GraphRuntime):
                 raise ValueError(f"Graph already registered: {graph_name}")
             self._graphs[graph_name] = graph
 
+    def get_compiled(self, graph_name: str) -> Any:
+        """返回已注册图，供需要 LangGraph 原生 async/context API 的适配层使用。"""
+
+        return self._require_graph(graph_name)
+
+    def has_graph(self, graph_name: str) -> bool:
+        with self._lock:
+            self._ensure_open()
+            return graph_name in self._graphs
+
     def invoke(
         self,
         graph_name: str,

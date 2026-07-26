@@ -28,6 +28,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _message_execution_key(
+    ctx: PipelineContext,
+    role: str,
+) -> Optional[str]:
+    """为 durable Chat 节点生成稳定消息键；旧管道无 run_id 时保持原行为。"""
+
+    run_id = ctx.metadata.get("run_id")
+    return f"chat-message:{run_id}:{role}" if run_id else None
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Stage 0: IntentStage — 意图分类
 # ═══════════════════════════════════════════════════════════════════
@@ -130,7 +140,10 @@ class ShortcutStage(PipelineStage):
         conv = self._conversation_manager.get_conversation(ctx.conversation_id)
 
         # 持久化用户消息（使用原始输入）
-        conv.add_user_message(ctx.user_message)
+        conv.add_user_message(
+            ctx.user_message,
+            execution_key=_message_execution_key(ctx, "user"),
+        )
 
         override = decision.override_message
 
@@ -138,7 +151,10 @@ class ShortcutStage(PipelineStage):
         if override and override.startswith("__style__:"):
             style_name = override.split(":", 1)[1]
             response = self._apply_style(style_name)
-            conv.add_assistant_message(response)
+            conv.add_assistant_message(
+                response,
+                execution_key=_message_execution_key(ctx, "assistant"),
+            )
             if ctx.on_chunk:
                 ctx.on_chunk(response)
             logger.info(f"[ShortcutStage] 风格切换: {style_name}")
@@ -159,7 +175,10 @@ class ShortcutStage(PipelineStage):
                 logger.info(f"[ShortcutStage] 记住事实: {content[:80]}...")
             else:
                 response = "请提供要记住的内容，例如：/记住 我最常用的 Python 版本是 3.11"
-            conv.add_assistant_message(response)
+            conv.add_assistant_message(
+                response,
+                execution_key=_message_execution_key(ctx, "assistant"),
+            )
             if ctx.on_chunk:
                 ctx.on_chunk(response)
             ctx.response = response
@@ -170,7 +189,10 @@ class ShortcutStage(PipelineStage):
         if override == "__new_conversation__":
             if conv.conversation_id.startswith("feishu_"):
                 response = "已开始新会话 ✓"
-                conv.add_assistant_message(response)
+                conv.add_assistant_message(
+                    response,
+                    execution_key=_message_execution_key(ctx, "assistant"),
+                )
                 if ctx.on_chunk:
                     ctx.on_chunk(response)
                 logger.info(f"[ShortcutStage] 飞书新建会话: {conv.conversation_id}")
@@ -183,7 +205,10 @@ class ShortcutStage(PipelineStage):
             response = f"已创建新会话: {new_conv.conversation_id}"
             if title:
                 response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
-            conv.add_assistant_message(response)
+            conv.add_assistant_message(
+                response,
+                execution_key=_message_execution_key(ctx, "assistant"),
+            )
             if ctx.on_chunk:
                 ctx.on_chunk(response)
             logger.info(f"[ShortcutStage] 新建会话: {new_conv.conversation_id}")
@@ -206,7 +231,10 @@ class ShortcutStage(PipelineStage):
             else:
                 model_list = "、".join(model_ids) if model_ids else "无可用模型列表"
                 response = f"未知模型: {model_name}。可用: {model_list}"
-            conv.add_assistant_message(response)
+            conv.add_assistant_message(
+                response,
+                execution_key=_message_execution_key(ctx, "assistant"),
+            )
             if ctx.on_chunk:
                 ctx.on_chunk(response)
             logger.info(f"[ShortcutStage] 模型切换: {model_name}")
@@ -220,7 +248,10 @@ class ShortcutStage(PipelineStage):
             if decision.direct_response == "对话已清空。开始新的对话吧！":
                 conv.clear_history()
 
-            conv.add_assistant_message(decision.direct_response)
+            conv.add_assistant_message(
+                decision.direct_response,
+                execution_key=_message_execution_key(ctx, "assistant"),
+            )
             if ctx.on_chunk:
                 ctx.on_chunk(decision.direct_response)
             logger.info(f"[ShortcutStage] 快速回复 (跳过 LLM): {decision.intent.value}")
@@ -359,7 +390,10 @@ class PersistUserStage(PipelineStage):
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         conv = self._conversation_manager.get_conversation(ctx.conversation_id)
         # 使用 user_message（原始输入），非 effective_message
-        conv.add_user_message(ctx.user_message)
+        conv.add_user_message(
+            ctx.user_message,
+            execution_key=_message_execution_key(ctx, "user"),
+        )
         logger.debug(f"[PersistUserStage] persisted user message for {ctx.conversation_id}")
         return ctx
 
@@ -781,7 +815,10 @@ class PersistAssistantStage(PipelineStage):
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         conv = self._conversation_manager.get_conversation(ctx.conversation_id)
-        conv.add_assistant_message(ctx.response)
+        conv.add_assistant_message(
+            ctx.response,
+            execution_key=_message_execution_key(ctx, "assistant"),
+        )
         return ctx
 
 

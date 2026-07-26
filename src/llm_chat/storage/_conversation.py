@@ -122,27 +122,43 @@ class StorageConversationMixin:
         role: str,
         content: str,
         metadata: Optional[Dict] = None,
+        execution_key: Optional[str] = None,
     ) -> int:
         with self._get_connection() as conn:
             now = datetime.now().isoformat()
             cursor = conn.execute(
-                "INSERT INTO messages "
-                "(conversation_id, role, content, created_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO messages "
+                "(conversation_id, role, content, created_at, metadata, execution_key) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     role,
                     content,
                     now,
                     json.dumps(metadata) if metadata else None,
+                    execution_key,
                 ),
             )
-            message_id = cursor.lastrowid
+            if cursor.rowcount:
+                message_id = cursor.lastrowid
+            elif execution_key:
+                existing = conn.execute(
+                    "SELECT id FROM messages WHERE execution_key = ?",
+                    (execution_key,),
+                ).fetchone()
+                if existing is None:
+                    raise RuntimeError(
+                        f"Idempotent message write failed: {execution_key}"
+                    )
+                message_id = existing["id"]
+            else:
+                raise RuntimeError("Message write was ignored without an execution key")
 
-            conn.execute(
-                "UPDATE conversations SET updated_at = ? WHERE id = ?",
-                (now, conversation_id),
-            )
+            if cursor.rowcount:
+                conn.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (now, conversation_id),
+                )
 
             return message_id
 

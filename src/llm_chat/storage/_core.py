@@ -124,6 +124,7 @@ class StorageCore:
                 content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT,
+                execution_key TEXT,
                 FOREIGN KEY (conversation_id)
                     REFERENCES conversations(id) ON DELETE CASCADE
             );
@@ -132,6 +133,16 @@ class StorageCore:
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
                 ON messages(created_at);
         """
+        )
+        columns = {
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+            for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "execution_key" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN execution_key TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_execution_key "
+            "ON messages(execution_key) WHERE execution_key IS NOT NULL"
         )
 
     def _create_fts_index_in(self, conn):

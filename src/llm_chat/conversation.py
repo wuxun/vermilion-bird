@@ -114,9 +114,22 @@ class Conversation:
         if not existing:
             self.storage.create_conversation(self.conversation_id)
 
-    def add_message(self, role: str, content: str, **kwargs):
+    def add_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        execution_key: Optional[str] = None,
+        **kwargs,
+    ):
         metadata = kwargs if kwargs else None
-        self.storage.add_message(self.conversation_id, role, content, metadata)
+        self.storage.add_message(
+            self.conversation_id,
+            role,
+            content,
+            metadata,
+            execution_key=execution_key,
+        )
 
         if role == "user" and not self._get_title():
             title = content[:30]
@@ -124,14 +137,29 @@ class Conversation:
                 title += "..."
             self.storage.update_conversation(self.conversation_id, title=title)
 
-    def add_user_message(self, content: str):
-        self.add_message("user", content)
+    def add_user_message(
+        self,
+        content: str,
+        *,
+        execution_key: Optional[str] = None,
+    ):
+        self.add_message("user", content, execution_key=execution_key)
 
     def add_assistant_message(
-        self, content: str, tool_calls: Optional[List[Dict]] = None
+        self,
+        content: str,
+        tool_calls: Optional[List[Dict]] = None,
+        *,
+        execution_key: Optional[str] = None,
     ):
         metadata = {"tool_calls": tool_calls} if tool_calls else None
-        self.storage.add_message(self.conversation_id, "assistant", content, metadata)
+        self.storage.add_message(
+            self.conversation_id,
+            "assistant",
+            content,
+            metadata,
+            execution_key=execution_key,
+        )
 
     def add_tool_message(
         self, tool_call_id: str, content: str, tool_name: str = "unknown"

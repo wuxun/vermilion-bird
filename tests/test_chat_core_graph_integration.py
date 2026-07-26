@@ -46,10 +46,10 @@ class MockLLMClient:
 
 
 class MockConversation:
-    def add_user_message(self, msg):
+    def add_user_message(self, msg, **_kwargs):
         pass
 
-    def add_assistant_message(self, msg):
+    def add_assistant_message(self, msg, **_kwargs):
         pass
 
     def get_messages(self, limit=None):

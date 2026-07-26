@@ -24,6 +24,8 @@ from llm_chat.runtime import (
     ActionProposal,
     ActionProposalManager,
     CapabilityPolicy,
+    RunDispatcher,
+    RunHandlerRegistry,
     RunManager,
 )
 
@@ -92,7 +94,14 @@ class App:
         self.graph_runtime = None
         self.graph_execution = None
         self._action_coordinator = None
+        self.run_handlers = RunHandlerRegistry()
+        self.run_dispatcher = RunDispatcher(
+            run_manager=self.run_manager,
+            registry=self.run_handlers,
+        )
+        self._ensure_graph_infrastructure()
         self.chat_core = self._init_chat_core()
+        self.run_handlers.register("chat", self.chat_core)
         _t5 = time.time()
         logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
         self._init_prompt_skills()
@@ -196,44 +205,67 @@ class App:
     def resume_run(self, run_id: str, value: Any = True):
         """恢复 GUI/CLI 选中的 durable Run。"""
 
-        run = self.run_manager.get(run_id)
-        if run is None:
-            raise KeyError(f"Unknown run: {run_id}")
-        proposal_id = run.metadata.get("proposal_id")
-        if proposal_id and run.metadata.get("approval_kind") == "tool":
-            if bool(value):
-                self.approve_action(
-                    str(proposal_id),
-                    conversation_id=run.conversation_id,
-                )
-            else:
-                self.reject_action(
-                    str(proposal_id),
-                    conversation_id=run.conversation_id,
-                )
-            restored = self.run_manager.get(run_id)
-            assert restored is not None
-            return restored
-        return self._ensure_action_coordinator().execution_service.resume(
-            run_id,
-            value,
-        )
+        self._ensure_handler_for_run(run_id)
+        return self.run_dispatcher.resume(run_id, value)
 
     def retry_run(self, run_id: str):
-        run = self.run_manager.get(run_id)
-        if run is None:
-            raise KeyError(f"Unknown run: {run_id}")
-        if run.metadata.get("approval_kind") == "tool":
-            raise ValueError("工具副作用结果不确定时不能自动重试，请重新发起动作")
-        return self._ensure_action_coordinator().execution_service.retry(run_id)
+        self._ensure_handler_for_run(run_id)
+        return self.run_dispatcher.retry(run_id)
 
     def replay_run(self, run_id: str):
+        self._ensure_handler_for_run(run_id)
+        return self.run_dispatcher.replay(run_id)
+
+    def can_resume_run(self, run_id: str) -> bool:
+        try:
+            self._ensure_handler_for_run(run_id)
+        except (KeyError, ValueError):
+            return False
+        return self.run_dispatcher.can_resume(run_id)
+
+    def can_retry_run(self, run_id: str) -> bool:
+        try:
+            self._ensure_handler_for_run(run_id)
+        except (KeyError, ValueError):
+            return False
+        return self.run_dispatcher.can_retry(run_id)
+
+    def can_replay_run(self, run_id: str) -> bool:
+        try:
+            self._ensure_handler_for_run(run_id)
+        except (KeyError, ValueError):
+            return False
+        return self.run_dispatcher.can_replay(run_id)
+
+    def _ensure_handler_for_run(self, run_id: str) -> None:
         run = self.run_manager.get(run_id)
         if run is None:
             raise KeyError(f"Unknown run: {run_id}")
-        if run.metadata.get("approval_kind") == "tool":
-            raise ValueError("审批动作不能直接重放，请重新发起以生成新的授权记录")
-        return self._ensure_action_coordinator().execution_service.replay(run_id)
+        if run.metadata.get("run_handler") == "action":
+            self._ensure_action_coordinator()
+
+    def _ensure_graph_infrastructure(self):
+        with self._graph_lock:
+            if self.graph_runtime is not None:
+                return self.graph_runtime
+
+            from llm_chat.runtime import GraphExecutionService, LangGraphRuntime
+
+            graph_runtime = LangGraphRuntime(self.storage._db_path)
+            graph_execution = GraphExecutionService(
+                run_manager=self.run_manager,
+                graph_runtime=graph_runtime,
+            )
+            self.graph_runtime = graph_runtime
+            self.graph_execution = graph_execution
+            if not hasattr(self, "run_handlers"):
+                self.run_handlers = RunHandlerRegistry()
+                self.run_dispatcher = RunDispatcher(
+                    run_manager=self.run_manager,
+                    registry=self.run_handlers,
+                )
+            self.run_handlers.register("graph", graph_execution, replace=True)
+            return graph_runtime
 
     def _ensure_action_coordinator(self):
         with self._graph_lock:
@@ -242,32 +274,22 @@ class App:
 
             from llm_chat.runtime import (
                 DurableActionCoordinator,
-                GraphExecutionService,
-                LangGraphRuntime,
                 build_tool_approval_graph,
             )
 
-            graph_runtime = LangGraphRuntime(self.storage._db_path)
-            graph_execution = GraphExecutionService(
-                run_manager=self.run_manager,
-                graph_runtime=graph_runtime,
-            )
+            graph_runtime = self._ensure_graph_infrastructure()
             coordinator = DurableActionCoordinator(
                 proposals=self.action_proposals,
-                execution_service=graph_execution,
+                execution_service=self.graph_execution,
                 tool_registry=self.tool_registry,
             )
-            try:
+            if not graph_runtime.has_graph(coordinator.GRAPH_NAME):
                 graph_runtime.register_builder(
                     coordinator.GRAPH_NAME,
                     build_tool_approval_graph(coordinator.execute_approved),
                 )
-            except Exception:
-                graph_runtime.close()
-                raise
-            self.graph_runtime = graph_runtime
-            self.graph_execution = graph_execution
             self._action_coordinator = coordinator
+            self.run_handlers.register("action", coordinator, replace=True)
             return coordinator
 
     def _init_role_presets(self):
@@ -353,6 +375,7 @@ class App:
             action_prepare=self.prepare_action,
             action_approve=self.approve_action,
             action_reject=self.reject_action,
+            graph_runtime=self.graph_runtime,
         )
         logger.info("ChatCore initialized")
         return chat_core
