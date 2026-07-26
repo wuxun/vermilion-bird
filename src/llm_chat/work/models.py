@@ -82,8 +82,10 @@ class Artifact(BaseModel):
     kind: ArtifactKind = ArtifactKind.OTHER
     name: str
     uri: Optional[str] = None
+    content: Optional[str] = None
     content_preview: Optional[str] = None
     checksum: Optional[str] = None
+    idempotency_key: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 

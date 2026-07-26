@@ -8,7 +8,7 @@ from llm_chat.config import Config
 from llm_chat.app import App
 from llm_chat.frontends import get_frontend
 from llm_chat.scheduler.models import Task, TaskType
-from llm_chat.cli import memory, skills, schedule
+from llm_chat.cli import memory, skills, schedule, task
 from llm_chat.cli.ghost_cli import ghost_group
 import signal
 import threading
@@ -265,6 +265,7 @@ def feishu(config_path, background, log_file, log_level):
 cli.add_command(memory)
 cli.add_command(skills)
 cli.add_command(schedule)
+cli.add_command(task)
 cli.add_command(ghost_group)
 
 

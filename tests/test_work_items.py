@@ -70,7 +70,15 @@ def test_work_item_tracks_primary_run_and_artifacts(storage):
         kind=ArtifactKind.REPORT,
         name="architecture-report.md",
         uri="/workspace/architecture-report.md",
+        content="# Architecture",
         checksum="sha256:test",
+        idempotency_key=f"{child.id}:report",
+    )
+    duplicate_artifact = service.add_artifact(
+        item.id,
+        run_id=child.id,
+        name="不会重复创建",
+        idempotency_key=f"{child.id}:report",
     )
     runs.complete(child.id, {"path": artifact.uri})
     runs.complete(run.id, {"artifact_id": artifact.id})
@@ -82,6 +90,8 @@ def test_work_item_tracks_primary_run_and_artifacts(storage):
     assert detail.work_item.latest_run_id == run.id
     assert {candidate.id for candidate in detail.runs} == {run.id, child.id}
     assert detail.artifacts == [artifact]
+    assert duplicate_artifact.id == artifact.id
+    assert detail.artifacts[0].content == "# Architecture"
 
 
 def test_only_primary_run_projects_work_item_status(storage):
@@ -96,6 +106,21 @@ def test_only_primary_run_projects_work_item_status(storage):
 
     runs.fail(root.id, "主流程失败")
     assert service.get(item.id).status == WorkItemStatus.FAILED
+
+
+def test_new_root_run_becomes_latest_work_item_execution(storage):
+    runs = RunManager(repository=storage)
+    service = WorkItemService(repository=storage, runs=runs)
+    item = service.create(objective="允许新的执行尝试")
+    first = service.start(item.id)
+    runs.complete(first.id, "first")
+
+    second = runs.start(RunType.WORKFLOW, work_item_id=item.id)
+
+    restored = service.get(item.id)
+    assert restored.root_run_id == first.id
+    assert restored.latest_run_id == second.id
+    assert restored.status == WorkItemStatus.RUNNING
 
 
 def test_artifact_rejects_run_from_another_work_item(storage):

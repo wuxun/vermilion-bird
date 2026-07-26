@@ -138,27 +138,52 @@ class StorageWorkMixin:
             conn.execute(
                 """
                 INSERT INTO artifacts (
-                    id, work_item_id, run_id, kind, name, uri, content_preview,
-                    checksum, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, work_item_id, run_id, kind, name, uri, content,
+                    content_preview, checksum, idempotency_key, metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     work_item_id = excluded.work_item_id,
                     run_id = excluded.run_id,
                     kind = excluded.kind,
                     name = excluded.name,
                     uri = excluded.uri,
+                    content = excluded.content,
                     content_preview = excluded.content_preview,
                     checksum = excluded.checksum,
+                    idempotency_key = excluded.idempotency_key,
                     metadata_json = excluded.metadata_json
                 """,
                 self._artifact_values(artifact),
             )
+
+    def create_artifact(self, artifact: Artifact) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO artifacts (
+                    id, work_item_id, run_id, kind, name, uri, content,
+                    content_preview, checksum, idempotency_key, metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._artifact_values(artifact),
+            )
+            return cursor.rowcount == 1
 
     def get_artifact(self, artifact_id: str) -> Optional[Artifact]:
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM artifacts WHERE id = ?",
                 (artifact_id,),
+            ).fetchone()
+        return self._row_to_artifact(row) if row else None
+
+    def get_artifact_by_idempotency_key(self, idempotency_key: str) -> Optional[Artifact]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE idempotency_key = ?",
+                (idempotency_key,),
             ).fetchone()
         return self._row_to_artifact(row) if row else None
 
@@ -209,8 +234,10 @@ class StorageWorkMixin:
             artifact.kind.value,
             artifact.name,
             artifact.uri,
+            artifact.content,
             artifact.content_preview,
             artifact.checksum,
+            artifact.idempotency_key,
             _dump_json(artifact.metadata),
             artifact.created_at.isoformat(),
         )
@@ -245,8 +272,10 @@ class StorageWorkMixin:
             kind=ArtifactKind(row["kind"]),
             name=row["name"],
             uri=row["uri"],
+            content=row["content"],
             content_preview=row["content_preview"],
             checksum=row["checksum"],
+            idempotency_key=row["idempotency_key"],
             metadata=_load_json(row["metadata_json"], {}),
             created_at=_parse_datetime(row["created_at"]) or datetime.now(timezone.utc),
         )

@@ -578,8 +578,10 @@ class StorageCore:
                 kind TEXT NOT NULL,
                 name TEXT NOT NULL,
                 uri TEXT,
+                content TEXT,
                 content_preview TEXT,
                 checksum TEXT,
+                idempotency_key TEXT,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (work_item_id)
@@ -591,5 +593,19 @@ class StorageCore:
                 ON artifacts(work_item_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_artifacts_run
                 ON artifacts(run_id);
+            """
+        )
+        artifact_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
+        }
+        if "content" not in artifact_columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN content TEXT")
+        if "idempotency_key" not in artifact_columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN idempotency_key TEXT")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_idempotency
+            ON artifacts(idempotency_key)
+            WHERE idempotency_key IS NOT NULL
             """
         )

@@ -32,6 +32,8 @@ from llm_chat.runtime import (
     RunHandlerRegistry,
     RunRecoveryCoordinator,
     RunManager,
+    RunStatus,
+    RunType,
 )
 from llm_chat.work import ArtifactKind, WorkItemKind, WorkItemService, WorkItemStatus
 
@@ -230,6 +232,66 @@ class App:
     def get_work_item_detail(self, work_item_id: str):
         return self.work_items.detail(work_item_id)
 
+    def execute_work_item(self, work_item_id: str):
+        """通过主 ChatGraph 执行用户任务，并将文本结果固化为 Artifact。"""
+
+        item = self.work_items.get(work_item_id)
+        if item is None:
+            raise KeyError(f"Unknown work item: {work_item_id}")
+        conversation_id = item.conversation_id
+        if not conversation_id:
+            conversation = self.conversation_manager.create_conversation(title=item.title)
+            conversation_id = conversation.conversation_id
+            item = self.work_items.bind_conversation(item.id, conversation_id)
+        elif self.storage.get_conversation(conversation_id) is None:
+            self.storage.create_conversation(conversation_id, item.title)
+
+        self.chat_core.send_message(
+            conversation_id=conversation_id,
+            message=item.objective,
+            work_item_id=item.id,
+            run_type=RunType.WORKFLOW,
+        )
+        self.work_items.reconcile()
+        return self._materialize_work_item_result(item.id)
+
+    def _materialize_work_item_result(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        latest = next(
+            (run for run in detail.runs if run.id == detail.work_item.latest_run_id),
+            None,
+        )
+        if latest and latest.status == RunStatus.COMPLETED and isinstance(latest.result, str):
+            self.work_items.add_artifact(
+                work_item_id,
+                run_id=latest.id,
+                kind=ArtifactKind.TEXT,
+                name=f"{detail.work_item.title} - 结果",
+                content=latest.result,
+                content_preview=latest.result[:500],
+                idempotency_key=f"{latest.id}:primary-result",
+                metadata={"role": "primary_result"},
+            )
+            detail = self.work_items.detail(work_item_id)
+        return detail
+
+    def cancel_work_item(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        latest_run_id = detail.work_item.latest_run_id
+        if not latest_run_id:
+            raise ValueError(f"Work item {work_item_id} has no active run")
+        self.run_manager.cancel(latest_run_id)
+        return self.work_items.detail(work_item_id)
+
+    def retry_work_item(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        latest_run_id = detail.work_item.latest_run_id
+        if not latest_run_id:
+            raise ValueError(f"Work item {work_item_id} has no run to retry")
+        self.retry_run(latest_run_id)
+        self.work_items.reconcile()
+        return self._materialize_work_item_result(work_item_id)
+
     def add_work_item_artifact(
         self,
         work_item_id: str,
@@ -238,8 +300,10 @@ class App:
         kind: ArtifactKind = ArtifactKind.OTHER,
         run_id: Optional[str] = None,
         uri: Optional[str] = None,
+        content: Optional[str] = None,
         content_preview: Optional[str] = None,
         checksum: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
         return self.work_items.add_artifact(
@@ -248,8 +312,10 @@ class App:
             kind=kind,
             run_id=run_id,
             uri=uri,
+            content=content,
             content_preview=content_preview,
             checksum=checksum,
+            idempotency_key=idempotency_key,
             metadata=metadata,
         )
 

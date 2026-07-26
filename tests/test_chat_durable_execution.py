@@ -7,6 +7,7 @@ from llm_chat.runtime import (
     LangGraphRuntime,
     RunManager,
     RunStatus,
+    RunType,
 )
 from llm_chat.storage import Storage
 
@@ -107,4 +108,30 @@ def test_failed_chat_retries_from_sqlite_checkpoint_after_restart(tmp_path):
     assert restored_runtime.get_state("chat", thread_id=failed.id).checkpoint_id
 
     restored_runtime.close()
+    Storage.set_instance(None)
+
+
+def test_chat_run_keeps_product_work_item_identity(tmp_path):
+    db_path = tmp_path / "chat-work-item.db"
+    Storage.set_instance(None)
+    storage = Storage(str(db_path))
+    runs, runtime, core = _build_core(
+        db_path,
+        storage,
+        RecoveringClient(fail=False),
+    )
+
+    result = core.send_message(
+        "conv",
+        "hello",
+        work_item_id="work_product_task",
+        run_type=RunType.WORKFLOW,
+    )
+    run = runs.list()[0]
+
+    assert result == "recovered"
+    assert run.work_item_id == "work_product_task"
+    assert run.type == RunType.WORKFLOW
+
+    runtime.close()
     Storage.set_instance(None)

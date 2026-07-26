@@ -5,11 +5,13 @@
 - memory:    记忆管理命令组
 - skills:    技能管理命令组
 - schedule:  调度任务管理命令组
+- task:      用户任务与交付物
 """
 
 from llm_chat.cli.memory import memory
 from llm_chat.cli.skills import skills
 from llm_chat.cli.schedule import schedule
+from llm_chat.cli.task import task
 from llm_chat.cli.main import main, cli
 
-__all__ = ["main", "cli", "memory", "skills", "schedule"]
+__all__ = ["main", "cli", "memory", "skills", "schedule", "task"]

@@ -51,7 +51,13 @@ class WorkItemRepository(Protocol):
     def save_artifact(self, artifact: Artifact) -> None:
         ...
 
+    def create_artifact(self, artifact: Artifact) -> bool:
+        ...
+
     def get_artifact(self, artifact_id: str) -> Optional[Artifact]:
+        ...
+
+    def get_artifact_by_idempotency_key(self, idempotency_key: str) -> Optional[Artifact]:
         ...
 
     def list_artifacts(
@@ -193,8 +199,10 @@ class WorkItemService:
         kind: ArtifactKind = ArtifactKind.OTHER,
         run_id: Optional[str] = None,
         uri: Optional[str] = None,
+        content: Optional[str] = None,
         content_preview: Optional[str] = None,
         checksum: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Artifact:
         self._require(work_item_id)
@@ -203,6 +211,12 @@ class WorkItemService:
             raise ValueError("artifact name cannot be empty")
         if not isinstance(kind, ArtifactKind):
             kind = ArtifactKind(kind)
+        if idempotency_key:
+            existing = self.repository.get_artifact_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                if existing.work_item_id != work_item_id:
+                    raise ValueError("artifact idempotency key belongs to another work item")
+                return existing
         if run_id:
             run = self.runs.get(run_id)
             if run is None:
@@ -215,12 +229,33 @@ class WorkItemService:
             kind=kind,
             name=name,
             uri=uri,
+            content=content,
             content_preview=content_preview,
             checksum=checksum,
+            idempotency_key=idempotency_key,
             metadata=metadata or {},
         )
-        self.repository.save_artifact(artifact)
+        created = self.repository.create_artifact(artifact)
+        if not created and idempotency_key:
+            existing = self.repository.get_artifact_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return existing
+        if not created:
+            raise ValueError(f"artifact already exists: {artifact.id}")
         return artifact.model_copy(deep=True)
+
+    def bind_conversation(self, work_item_id: str, conversation_id: str) -> WorkItem:
+        conversation_id = conversation_id.strip()
+        if not conversation_id:
+            raise ValueError("conversation id cannot be empty")
+        item = self._require(work_item_id)
+        if item.conversation_id and item.conversation_id != conversation_id:
+            raise ValueError(f"work item {work_item_id} is already bound to another conversation")
+        item.conversation_id = conversation_id
+        item.updated_at = utc_now()
+        self.repository.save_work_item(item)
+        self._notify(item)
+        return item.model_copy(deep=True)
 
     def get(self, work_item_id: str) -> Optional[WorkItem]:
         item = self.repository.get_work_item(work_item_id)
@@ -304,11 +339,27 @@ class WorkItemService:
         if not run.work_item_id:
             return
         item = self.repository.get_work_item(run.work_item_id)
-        if item is None or item.latest_run_id != run.id:
+        if item is None:
             return
-        previous = (item.status, item.completed_at)
+        previous = (
+            item.status,
+            item.completed_at,
+            item.root_run_id,
+            item.latest_run_id,
+        )
+        if event.type == "run.started" and not run.parent_run_id:
+            item.root_run_id = item.root_run_id or run.id
+            item.latest_run_id = run.id
+        elif item.latest_run_id != run.id:
+            return
         self._apply_run_status(item, run)
-        if previous == (item.status, item.completed_at):
+        current = (
+            item.status,
+            item.completed_at,
+            item.root_run_id,
+            item.latest_run_id,
+        )
+        if previous == current:
             return
         self.repository.save_work_item(item)
         self._notify(item)

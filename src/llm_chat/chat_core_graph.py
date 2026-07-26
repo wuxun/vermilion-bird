@@ -714,6 +714,7 @@ class ChatCoreGraph:
         on_card: Optional[CardCallback] = None,
         *,
         parent_run_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
         run_type: RunType = RunType.CHAT,
         **model_params,
     ) -> str:
@@ -722,6 +723,7 @@ class ChatCoreGraph:
             run_type,
             conversation_id=conversation_id,
             parent_run_id=parent_run_id,
+            work_item_id=work_item_id,
             input={"message": message, "model_params": model_params, "stream": False},
             metadata=self._run_metadata(),
             recovery_policy=RecoveryPolicy.RESUME,
@@ -790,6 +792,7 @@ class ChatCoreGraph:
         on_card: Optional[CardCallback] = None,
         *,
         parent_run_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
         run_type: RunType = RunType.CHAT,
         **model_params,
     ) -> str:
@@ -798,6 +801,7 @@ class ChatCoreGraph:
             run_type,
             conversation_id=conversation_id,
             parent_run_id=parent_run_id,
+            work_item_id=work_item_id,
             input={"message": message, "model_params": model_params, "stream": True},
             metadata=self._run_metadata(),
             recovery_policy=RecoveryPolicy.RESUME,
