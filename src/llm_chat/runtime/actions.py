@@ -73,6 +73,7 @@ class ActionProposal(BaseModel):
 
     id: str = Field(default_factory=lambda: f"action_{uuid4().hex}")
     run_id: str
+    execution_run_id: Optional[str] = None
     conversation_id: Optional[str] = None
     tool_name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
@@ -273,6 +274,27 @@ class ActionProposalManager:
                 )
         return None
 
+    def link_execution(
+        self,
+        proposal_id: str,
+        execution_run_id: str,
+    ) -> ActionProposal:
+        """将提案关联到负责 interrupt/resume 的 durable Run。"""
+
+        if not execution_run_id:
+            raise ValueError("execution_run_id cannot be empty")
+        with self._lock:
+            proposal = self._require_locked(proposal_id)
+            if proposal.execution_run_id not in {None, execution_run_id}:
+                raise ValueError(
+                    f"Action {proposal_id} is already linked to " f"{proposal.execution_run_id}"
+                )
+            proposal.execution_run_id = execution_run_id
+            snapshot = proposal.model_copy(deep=True)
+            self._persist_locked(proposal)
+        self._notify(snapshot)
+        return snapshot
+
     def list(
         self,
         *,
@@ -327,15 +349,14 @@ class ActionProposalManager:
         self._notify(snapshot)
         return snapshot
 
-    def approve_and_execute(
+    def approve(
         self,
         proposal_id: str,
         *,
-        tool_registry,
-        run_manager: RunManager,
-        parent_run_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
     ) -> ActionProposal:
+        """只记录授权决定，不在调用线程中执行副作用。"""
+
         with self._lock:
             proposal = self._require_locked(proposal_id)
             self._verify_conversation(proposal, conversation_id)
@@ -343,21 +364,30 @@ class ActionProposalManager:
                 raise ValueError(f"Action {proposal_id} is {proposal.status.value}, not pending")
             proposal.status = ActionStatus.APPROVED
             proposal.decided_at = _utc_now()
+            snapshot = proposal.model_copy(deep=True)
+            self._persist_locked(proposal)
+        self._notify(snapshot)
+        return snapshot
+
+    def execute_approved(
+        self,
+        proposal_id: str,
+        *,
+        tool_registry,
+    ) -> ActionProposal:
+        """执行已批准提案；已完成记录直接返回，避免正常重入。"""
+
+        with self._lock:
+            proposal = self._require_locked(proposal_id)
+            if proposal.status == ActionStatus.COMPLETED:
+                return proposal.model_copy(deep=True)
+            if proposal.status != ActionStatus.APPROVED:
+                raise ValueError(f"Action {proposal_id} is {proposal.status.value}, not approved")
             proposal.status = ActionStatus.EXECUTING
             snapshot = proposal.model_copy(deep=True)
             self._persist_locked(proposal)
         self._notify(snapshot)
 
-        action_run = run_manager.start(
-            RunType.TOOL,
-            parent_run_id=parent_run_id or snapshot.run_id,
-            input={
-                "proposal_id": snapshot.id,
-                "tool": snapshot.tool_name,
-                "arguments": snapshot.arguments,
-            },
-            metadata={"proposal_origin_run_id": snapshot.run_id},
-        )
         try:
             result = tool_registry.execute_tool(
                 snapshot.tool_name,
@@ -371,17 +401,55 @@ class ActionProposalManager:
                 proposal.finished_at = _utc_now()
                 snapshot = proposal.model_copy(deep=True)
                 self._persist_locked(proposal)
-            run_manager.fail(action_run.id, str(exc))
-        else:
-            with self._lock:
-                proposal = self._require_locked(proposal_id)
-                proposal.status = ActionStatus.COMPLETED
-                proposal.result = str(result)
-                proposal.finished_at = _utc_now()
-                snapshot = proposal.model_copy(deep=True)
-                self._persist_locked(proposal)
-            run_manager.complete(action_run.id, str(result))
+            self._notify(snapshot)
+            return snapshot
+
+        with self._lock:
+            proposal = self._require_locked(proposal_id)
+            proposal.status = ActionStatus.COMPLETED
+            proposal.result = str(result)
+            proposal.error = None
+            proposal.finished_at = _utc_now()
+            snapshot = proposal.model_copy(deep=True)
+            self._persist_locked(proposal)
         self._notify(snapshot)
+        return snapshot
+
+    def approve_and_execute(
+        self,
+        proposal_id: str,
+        *,
+        tool_registry,
+        run_manager: RunManager,
+        parent_run_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+    ) -> ActionProposal:
+        snapshot = self.approve(
+            proposal_id,
+            conversation_id=conversation_id,
+        )
+
+        action_run = run_manager.start(
+            RunType.TOOL,
+            parent_run_id=parent_run_id or snapshot.run_id,
+            input={
+                "proposal_id": snapshot.id,
+                "tool": snapshot.tool_name,
+                "arguments": snapshot.arguments,
+            },
+            metadata={"proposal_origin_run_id": snapshot.run_id},
+        )
+        snapshot = self.execute_approved(
+            proposal_id,
+            tool_registry=tool_registry,
+        )
+        if snapshot.status == ActionStatus.FAILED:
+            run_manager.fail(
+                action_run.id,
+                snapshot.error or "Action failed",
+            )
+        else:
+            run_manager.complete(action_run.id, snapshot.result)
         return snapshot
 
     def subscribe(self, observer: ActionProposalObserver) -> Callable[[], None]:
@@ -412,7 +480,10 @@ class ActionProposalManager:
 
         with self._lock:
             for proposal in reversed(restored):
-                if proposal.status in {ActionStatus.APPROVED, ActionStatus.EXECUTING}:
+                interrupted_legacy_approval = (
+                    proposal.status == ActionStatus.APPROVED and not proposal.execution_run_id
+                )
+                if proposal.status == ActionStatus.EXECUTING or interrupted_legacy_approval:
                     proposal.status = ActionStatus.FAILED
                     proposal.error = "应用重启前动作未正常结束，请重新发起"
                     proposal.finished_at = _utc_now()

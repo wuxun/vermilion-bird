@@ -83,6 +83,7 @@ def test_action_proposal_round_trip_and_filters(storage):
     proposal = ActionProposal(
         id="action_persisted",
         run_id="run-origin",
+        execution_run_id="run-execution",
         conversation_id="conversation-3",
         tool_name="write_file",
         arguments={"path": "notes.md", "content": "hello"},
@@ -102,6 +103,7 @@ def test_action_proposal_round_trip_and_filters(storage):
     restored = storage.get_action_proposal(proposal.id)
     assert restored is not None
     assert restored.status == ActionStatus.REJECTED
+    assert restored.execution_run_id == "run-execution"
     assert restored.capabilities == {Capability.WORKSPACE_WRITE}
     assert restored.arguments["path"] == "notes.md"
     assert restored.reversible is True

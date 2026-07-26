@@ -16,6 +16,9 @@ from .graph_runtime import (
     GraphSnapshot,
 )
 from .langgraph_runtime import LangGraphRuntime
+from .execution_service import GraphExecutionService
+from .builtin_graphs import build_tool_approval_graph
+from .action_coordinator import DurableActionCoordinator
 from .actions import (
     ActionProposal,
     ActionProposalManager,
@@ -31,7 +34,9 @@ __all__ = [
     "ActionStatus",
     "Capability",
     "CapabilityPolicy",
+    "DurableActionCoordinator",
     "GraphExecutionResult",
+    "GraphExecutionService",
     "GraphInterrupt",
     "GraphRuntime",
     "GraphSnapshot",
@@ -44,4 +49,5 @@ __all__ = [
     "RunStatus",
     "RunType",
     "RunManager",
+    "build_tool_approval_graph",
 ]

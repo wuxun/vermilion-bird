@@ -61,6 +61,17 @@ class GraphRuntime(ABC):
         ...
 
     @abstractmethod
+    def continue_run(
+        self,
+        graph_name: str,
+        *,
+        thread_id: str,
+    ) -> GraphExecutionResult:
+        """从最近检查点继续非 interrupt 失败的图执行。"""
+
+        ...
+
+    @abstractmethod
     def get_state(
         self,
         graph_name: str,

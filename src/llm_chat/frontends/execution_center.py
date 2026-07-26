@@ -36,6 +36,7 @@ _RUN_STATUS_LABELS: Dict[RunStatus, str] = {
     RunStatus.PENDING: "等待",
     RunStatus.RUNNING: "执行中",
     RunStatus.WAITING_APPROVAL: "待审批",
+    RunStatus.PAUSED: "已暂停",
     RunStatus.COMPLETED: "已完成",
     RunStatus.FAILED: "失败",
     RunStatus.CANCELLED: "已取消",
@@ -71,6 +72,7 @@ class ExecutionCenterDialog(QDialog):
         self._unsubscribe_run = None
         self._unsubscribe_action = None
         self._busy_action_id: Optional[str] = None
+        self._busy_run_id: Optional[str] = None
 
         self.setWindowTitle("执行与审批中心")
         self.resize(1080, 720)
@@ -197,9 +199,39 @@ class ExecutionCenterDialog(QDialog):
         )
         splitter.addWidget(self._runs_table)
 
+        detail_container = QFrame()
+        detail_layout = QVBoxLayout(detail_container)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
         self._run_detail = QTextBrowser()
         self._run_detail.setPlaceholderText("选择一条运行记录查看输入、输出和事件时间线。")
-        splitter.addWidget(self._run_detail)
+        detail_layout.addWidget(self._run_detail, 1)
+        run_buttons = QHBoxLayout()
+        run_buttons.addStretch()
+        self._retry_run_button = QPushButton("重试")
+        self._retry_run_button.clicked.connect(self._retry_selected_run)
+        run_buttons.addWidget(self._retry_run_button)
+        self._replay_run_button = QPushButton("重放")
+        self._replay_run_button.clicked.connect(self._replay_selected_run)
+        run_buttons.addWidget(self._replay_run_button)
+        self._resume_run_button = QPushButton("恢复执行")
+        self._resume_run_button.clicked.connect(self._resume_selected_run)
+        self._resume_run_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {Colors.PRIMARY};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            """
+        )
+        run_buttons.addWidget(self._resume_run_button)
+        detail_layout.addLayout(run_buttons)
+        splitter.addWidget(detail_container)
         splitter.setSizes([390, 230])
         layout.addWidget(splitter, 1)
         return tab
@@ -336,6 +368,7 @@ class ExecutionCenterDialog(QDialog):
         self._run_summary_label.setText(f"显示 {len(runs)} 条运行")
         if not runs:
             self._run_detail.clear()
+            self._set_run_buttons(None)
 
     def refresh_actions(self) -> None:
         selected_id = self._selected_id(self._actions_table)
@@ -379,8 +412,86 @@ class ExecutionCenterDialog(QDialog):
         run = self._run_by_id.get(self._selected_id(self._runs_table) or "")
         if run is None:
             self._run_detail.clear()
+            self._set_run_buttons(None)
             return
         self._run_detail.setPlainText(self._format_run_detail(run))
+        self._set_run_buttons(run)
+
+    def _resume_selected_run(self) -> None:
+        run = self._selected_run()
+        if run is None or not run.can_resume:
+            return
+        is_tool_approval = run.metadata.get("approval_kind") == "tool"
+        title = "批准并恢复" if is_tool_approval else "恢复执行"
+        message = "恢复后将执行已提议的工具副作用，是否批准？" if is_tool_approval else "是否从最近的持久化检查点继续执行？"
+        answer = QMessageBox.question(
+            self,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._start_run_operation("resume_run", run.id, "恢复")
+
+    def _retry_selected_run(self) -> None:
+        run = self._selected_run()
+        if run is None or not run.can_retry:
+            return
+        self._start_run_operation("retry_run", run.id, "重试")
+
+    def _replay_selected_run(self) -> None:
+        run = self._selected_run()
+        if run is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认重放",
+            "重放会以相同输入创建新的 Run，是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._start_run_operation("replay_run", run.id, "重放")
+
+    def _start_run_operation(
+        self,
+        method_name: str,
+        run_id: str,
+        label: str,
+    ) -> None:
+        self._busy_run_id = run_id
+        self._set_run_buttons(self._run_by_id.get(run_id))
+        threading.Thread(
+            target=self._execute_run_operation,
+            args=(method_name, run_id, label),
+            daemon=True,
+            name=f"{method_name}-{run_id[-8:]}",
+        ).start()
+
+    def _execute_run_operation(
+        self,
+        method_name: str,
+        run_id: str,
+        label: str,
+    ) -> None:
+        try:
+            method = getattr(self._app, method_name)
+            result = method(run_id)
+        except Exception as exc:
+            self._safe_emit(
+                self._signals.operation_finished,
+                False,
+                f"{label}失败：{exc}",
+            )
+            return
+        self._safe_emit(
+            self._signals.operation_finished,
+            True,
+            f"Run {result.id} {label}操作已完成。",
+        )
 
     def _show_selected_action(self) -> None:
         proposal = self._selected_proposal()
@@ -464,6 +575,7 @@ class ExecutionCenterDialog(QDialog):
 
     def _on_operation_finished(self, success: bool, message: str) -> None:
         self._busy_action_id = None
+        self._busy_run_id = None
         self.refresh_all()
         if success:
             QMessageBox.information(self, "执行完成", message)
@@ -472,6 +584,34 @@ class ExecutionCenterDialog(QDialog):
 
     def _selected_proposal(self) -> Optional[Any]:
         return self._proposal_by_id.get(self._selected_id(self._actions_table) or "")
+
+    def _selected_run(self) -> Optional[Any]:
+        return self._run_by_id.get(self._selected_id(self._runs_table) or "")
+
+    def _set_run_buttons(self, run: Optional[Any]) -> None:
+        busy = run is None or run.id == self._busy_run_id
+        is_graph = bool(run and run.metadata.get("graph_runtime"))
+        is_tool_approval = bool(run and run.metadata.get("approval_kind") == "tool")
+        self._resume_run_button.setEnabled(
+            bool(not busy and hasattr(self._app, "resume_run") and run.can_resume)
+        )
+        self._retry_run_button.setEnabled(
+            bool(
+                not busy
+                and hasattr(self._app, "retry_run")
+                and run.can_retry
+                and not is_tool_approval
+            )
+        )
+        self._replay_run_button.setEnabled(
+            bool(
+                not busy
+                and hasattr(self._app, "replay_run")
+                and is_graph
+                and run.status.terminal
+                and not is_tool_approval
+            )
+        )
 
     def _set_action_buttons(self, enabled: bool) -> None:
         self._approve_button.setEnabled(enabled)
@@ -536,6 +676,8 @@ class ExecutionCenterDialog(QDialog):
             f"会话: {run.conversation_id or '-'}",
             f"创建: {cls._format_time(run.created_at)}",
             f"耗时: {cls._duration(run)}",
+            f"尝试次数: {run.attempt} / {run.max_attempts}",
+            f"恢复策略: {run.recovery_policy.value}",
             "",
             "输入",
             json.dumps(run.input, ensure_ascii=False, indent=2, default=str),
@@ -545,6 +687,19 @@ class ExecutionCenterDialog(QDialog):
         ]
         if run.error:
             lines.extend(["", "错误", run.error])
+        if run.checkpoint:
+            lines.extend(
+                [
+                    "",
+                    "恢复点",
+                    json.dumps(
+                        run.checkpoint.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        indent=2,
+                        default=str,
+                    ),
+                ]
+            )
         if run.metadata:
             lines.extend(
                 [

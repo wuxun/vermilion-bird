@@ -101,6 +101,22 @@ class LangGraphRuntime(GraphRuntime):
         )
         return self._result(graph, config, output)
 
+    def continue_run(
+        self,
+        graph_name: str,
+        *,
+        thread_id: str,
+    ) -> GraphExecutionResult:
+        graph = self._require_graph(graph_name)
+        config = self._config(thread_id)
+        snapshot = graph.get_state(config)
+        if snapshot is None or not snapshot.next:
+            raise ValueError(f"Graph thread {thread_id} has no pending work")
+        if getattr(snapshot, "interrupts", ()):
+            raise ValueError(f"Graph thread {thread_id} is interrupted and requires a resume value")
+        output = graph.invoke(None, config=config, version="v2")
+        return self._result(graph, config, output)
+
     def get_state(
         self,
         graph_name: str,
@@ -111,7 +127,12 @@ class LangGraphRuntime(GraphRuntime):
         snapshot = graph.get_state(self._config(thread_id))
         if snapshot is None or snapshot.config is None:
             return None
-        return self._snapshot(snapshot)
+        portable = self._snapshot(snapshot)
+        # LangGraph 对未知 thread 返回一个空 StateSnapshot，而不是 None。
+        # checkpoint_id 才表示该 thread 已真正持久化过。
+        if portable.checkpoint_id is None:
+            return None
+        return portable
 
     def get_history(
         self,

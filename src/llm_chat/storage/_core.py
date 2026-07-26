@@ -415,6 +415,7 @@ class StorageCore:
             CREATE TABLE IF NOT EXISTS action_proposals (
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
+                execution_run_id TEXT,
                 conversation_id TEXT,
                 tool_name TEXT NOT NULL,
                 arguments_json TEXT NOT NULL DEFAULT '{}',
@@ -441,7 +442,7 @@ class StorageCore:
         self._migrate_runtime_columns(conn)
 
     def _migrate_runtime_columns(self, conn):
-        """为已有 runs 表增量补齐恢复控制字段。"""
+        """为已有运行时表增量补齐恢复控制字段。"""
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
         additions = {
@@ -457,6 +458,11 @@ class StorageCore:
         for name, definition in additions.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+        action_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(action_proposals)").fetchall()
+        }
+        if "execution_run_id" not in action_columns:
+            conn.execute("ALTER TABLE action_proposals ADD COLUMN execution_run_id TEXT")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency_key
@@ -468,5 +474,11 @@ class StorageCore:
             """
             CREATE INDEX IF NOT EXISTS idx_runs_lease
             ON runs(status, lease_expires_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_execution_run
+            ON action_proposals(execution_run_id)
             """
         )

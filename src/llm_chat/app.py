@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
@@ -87,6 +88,10 @@ class App:
         self.run_manager = RunManager(repository=self.storage)
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
+        self._graph_lock = threading.RLock()
+        self.graph_runtime = None
+        self.graph_execution = None
+        self._action_coordinator = None
         self.chat_core = self._init_chat_core()
         _t5 = time.time()
         logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
@@ -129,13 +134,23 @@ class App:
     ) -> ActionProposal:
         """批准并执行持久化动作，由 CLI 与 GUI 共用。"""
 
-        proposal = self.action_proposals.approve_and_execute(
-            proposal_id,
-            tool_registry=self.tool_registry,
-            run_manager=self.run_manager,
-            parent_run_id=parent_run_id,
-            conversation_id=conversation_id,
-        )
+        current = self.action_proposals.get(proposal_id)
+        if current is None:
+            raise KeyError(f"Unknown action proposal: {proposal_id}")
+        if current.execution_run_id:
+            proposal = self._ensure_action_coordinator().approve(
+                proposal_id,
+                conversation_id=conversation_id,
+            )
+        else:
+            # 兼容升级前已持久化、尚未绑定 durable Run 的提案。
+            proposal = self.action_proposals.approve_and_execute(
+                proposal_id,
+                tool_registry=self.tool_registry,
+                run_manager=self.run_manager,
+                parent_run_id=parent_run_id,
+                conversation_id=conversation_id,
+            )
         if self.run_manager.get(proposal.run_id):
             self.run_manager.emit(
                 proposal.run_id,
@@ -152,10 +167,19 @@ class App:
     ) -> ActionProposal:
         """拒绝持久化动作并记录来源 Run 事件。"""
 
-        proposal = self.action_proposals.reject(
-            proposal_id,
-            conversation_id=conversation_id,
-        )
+        current = self.action_proposals.get(proposal_id)
+        if current is None:
+            raise KeyError(f"Unknown action proposal: {proposal_id}")
+        if current.execution_run_id:
+            proposal = self._ensure_action_coordinator().reject(
+                proposal_id,
+                conversation_id=conversation_id,
+            )
+        else:
+            proposal = self.action_proposals.reject(
+                proposal_id,
+                conversation_id=conversation_id,
+            )
         if self.run_manager.get(proposal.run_id):
             self.run_manager.emit(
                 proposal.run_id,
@@ -163,6 +187,88 @@ class App:
                 {"proposal_id": proposal.id},
             )
         return proposal
+
+    def prepare_action(self, proposal: ActionProposal) -> ActionProposal:
+        """为待审批工具创建持久化 interrupt Run。"""
+
+        return self._ensure_action_coordinator().prepare(proposal)
+
+    def resume_run(self, run_id: str, value: Any = True):
+        """恢复 GUI/CLI 选中的 durable Run。"""
+
+        run = self.run_manager.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        proposal_id = run.metadata.get("proposal_id")
+        if proposal_id and run.metadata.get("approval_kind") == "tool":
+            if bool(value):
+                self.approve_action(
+                    str(proposal_id),
+                    conversation_id=run.conversation_id,
+                )
+            else:
+                self.reject_action(
+                    str(proposal_id),
+                    conversation_id=run.conversation_id,
+                )
+            restored = self.run_manager.get(run_id)
+            assert restored is not None
+            return restored
+        return self._ensure_action_coordinator().execution_service.resume(
+            run_id,
+            value,
+        )
+
+    def retry_run(self, run_id: str):
+        run = self.run_manager.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        if run.metadata.get("approval_kind") == "tool":
+            raise ValueError("工具副作用结果不确定时不能自动重试，请重新发起动作")
+        return self._ensure_action_coordinator().execution_service.retry(run_id)
+
+    def replay_run(self, run_id: str):
+        run = self.run_manager.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        if run.metadata.get("approval_kind") == "tool":
+            raise ValueError("审批动作不能直接重放，请重新发起以生成新的授权记录")
+        return self._ensure_action_coordinator().execution_service.replay(run_id)
+
+    def _ensure_action_coordinator(self):
+        with self._graph_lock:
+            if self._action_coordinator is not None:
+                return self._action_coordinator
+
+            from llm_chat.runtime import (
+                DurableActionCoordinator,
+                GraphExecutionService,
+                LangGraphRuntime,
+                build_tool_approval_graph,
+            )
+
+            graph_runtime = LangGraphRuntime(self.storage._db_path)
+            graph_execution = GraphExecutionService(
+                run_manager=self.run_manager,
+                graph_runtime=graph_runtime,
+            )
+            coordinator = DurableActionCoordinator(
+                proposals=self.action_proposals,
+                execution_service=graph_execution,
+                tool_registry=self.tool_registry,
+            )
+            try:
+                graph_runtime.register_builder(
+                    coordinator.GRAPH_NAME,
+                    build_tool_approval_graph(coordinator.execute_approved),
+                )
+            except Exception:
+                graph_runtime.close()
+                raise
+            self.graph_runtime = graph_runtime
+            self.graph_execution = graph_execution
+            self._action_coordinator = coordinator
+            return coordinator
 
     def _init_role_presets(self):
         """Load custom agent roles and patterns from YAML config."""
@@ -244,6 +350,9 @@ class App:
             run_manager=self.run_manager,
             capability_policy=self.capability_policy,
             action_proposals=self.action_proposals,
+            action_prepare=self.prepare_action,
+            action_approve=self.approve_action,
+            action_reject=self.reject_action,
         )
         logger.info("ChatCore initialized")
         return chat_core
@@ -932,5 +1041,10 @@ class App:
         # 释放 HTTP 会话
         if self.client:
             self.client.close()
+        if self.graph_runtime:
+            self.graph_runtime.close()
+            self.graph_runtime = None
+            self.graph_execution = None
+            self._action_coordinator = None
         if self.current_frontend:
             self.current_frontend.stop()

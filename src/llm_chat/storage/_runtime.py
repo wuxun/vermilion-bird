@@ -351,12 +351,14 @@ class StorageRuntimeMixin:
             conn.execute(
                 """
                 INSERT INTO action_proposals (
-                    id, run_id, conversation_id, tool_name, arguments_json,
+                    id, run_id, execution_run_id, conversation_id, tool_name,
+                    arguments_json,
                     capabilities_json, reason, impact, risk, reversible, status,
                     created_at, decided_at, finished_at, result_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     run_id = excluded.run_id,
+                    execution_run_id = excluded.execution_run_id,
                     conversation_id = excluded.conversation_id,
                     tool_name = excluded.tool_name,
                     arguments_json = excluded.arguments_json,
@@ -374,6 +376,7 @@ class StorageRuntimeMixin:
                 (
                     proposal.id,
                     proposal.run_id,
+                    proposal.execution_run_id,
                     proposal.conversation_id,
                     proposal.tool_name,
                     _dump_json(proposal.arguments),
@@ -438,6 +441,7 @@ class StorageRuntimeMixin:
         return ActionProposal(
             id=row["id"],
             run_id=row["run_id"],
+            execution_run_id=row["execution_run_id"],
             conversation_id=row["conversation_id"],
             tool_name=row["tool_name"],
             arguments=_load_json(row["arguments_json"], {}),
