@@ -22,6 +22,9 @@
 6. ember-core StateGraph 保持零 LangGraph/LLM 依赖，供独立包和确定性轻量场景使用。
 7. ember-agent 的领域协作模型不直接暴露 LangGraph 类型；后续可通过 GraphRuntime 增加适配。
 8. LangChain 不作为核心依赖抽象，仅允许在模型、工具或文档适配边界按需使用。
+9. ChatGraph 的持久化 state 只包含 JSON 可序列化业务数据；客户端、存储、策略、回调和
+   cancel event 通过 LangGraph runtime context 显式注入，不使用线程局部变量。
+10. `RunHandlerRegistry` / `RunDispatcher` 是 GUI、CLI 和 Scheduler 的统一控制入口。
 
 ## 状态所有权
 
@@ -42,6 +45,8 @@
 - 对处于 `executing` 时进程崩溃的动作，不承诺 exactly-once；因外部系统结果不确定，
   自动重试和直接重放均被禁止，必须重新发起并生成新的授权记录。
 - 能支持幂等键的外部工具应使用 proposal ID 作为幂等键。
+- 项目内会话消息使用 `run_id + role` 唯一执行键，覆盖 checkpoint 边界上的
+  at-least-once 节点重入。
 
 ## 后果
 
@@ -49,6 +54,7 @@
 
 - 获得成熟的 durable execution、checkpoint history 和 human-in-the-loop 语义。
 - GUI/CLI/Chat 指令共用一条审批恢复链路。
+- Chat、通用 Graph、审批和定时任务使用同一 Run 控制分发协议。
 - 框架被限制在适配器和应用编排层，领域模型仍可替换、测试和独立演化。
 
 代价：

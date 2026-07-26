@@ -22,11 +22,27 @@ SQLite 新增三张表：
 ## 重启语义
 
 - 已完成、失败或取消的 Run 原样恢复。
-- 重启前处于 `pending` 或 `running` 的 Run 会标记为失败，并追加
-  `run.recovered` 事件；系统不会假装继续已经中断的执行。
+- `RecoveryPolicy.RESUME` 且已有 checkpoint 的 Chat/Graph Run 会恢复为 `paused`，
+  可从原 LangGraph 节点继续；没有恢复点的中断 Run 会安全失败。
+- `RecoveryPolicy.RETRY` 的定时任务会恢复为可重试状态，不会静默重复执行。
 - `pending` 动作审批保持待审批，可以在新进程中继续批准或拒绝。
 - 重启前已批准或正在执行的动作会标记为失败，避免自动重复产生副作用。
 - 相同审批只能从 `pending` 原子地进入执行状态，并发点击不会重复执行。
+- Chat 用户消息和助手消息使用 `run_id + role` 幂等键，节点重入不会重复写入会话。
+
+## 执行分发
+
+`RunDispatcher` 根据 `run.metadata.run_handler` 将恢复、重试和重放交给唯一 handler：
+
+| handler | 用途 | 支持操作 |
+|---|---|---|
+| `chat` | 主 ChatGraph + SQLite checkpoint | 恢复、重试、重放 |
+| `graph` | 通用 LangGraph 工作流 | 恢复、重试、重放 |
+| `action` | 高风险工具审批图 | 仅恢复审批，不允许重试/重放副作用 |
+| `scheduled` | Scheduler/Webhook/Proactive 外层任务 | 重试、重放 |
+
+GUI 不再猜测 Run 类型，而是调用应用层 `can_resume_run()`、`can_retry_run()` 和
+`can_replay_run()` 获取 handler 的实际能力。
 
 ## GUI 使用
 
@@ -49,5 +65,5 @@ SQLite 新增三张表：
 ## 安全边界
 
 GUI 不直接绕过策略执行工具。批准操作统一调用应用层 `approve_action()`，再由
-`ActionProposalManager` 校验状态和会话归属、创建子 Tool Run，并使用共享
+`DurableActionCoordinator` 校验状态和会话归属、恢复审批图，再使用共享
 `ToolRegistry` 执行。审批记录和执行 Run 会分别持久化，形成完整审计链。

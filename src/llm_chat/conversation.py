@@ -161,9 +161,7 @@ class Conversation:
             execution_key=execution_key,
         )
 
-    def add_tool_message(
-        self, tool_call_id: str, content: str, tool_name: str = "unknown"
-    ):
+    def add_tool_message(self, tool_call_id: str, content: str, tool_name: str = "unknown"):
         metadata = {
             "tool_call_id": tool_call_id,
             "is_tool_result": True,
@@ -210,9 +208,7 @@ class Conversation:
             }
         return None
 
-    def create_subagent_context(
-        self, task_description: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    def create_subagent_context(self, task_description: str, **kwargs) -> List[Dict[str, Any]]:
         """
         创建子代理上下文
         :param task_description: 子代理任务描述
@@ -221,9 +217,7 @@ class Conversation:
         """
         if not self._context_manager:
             # 上下文管理器未初始化时返回基础上下文
-            return [
-                {"role": "system", "content": f"请完成以下任务：{task_description}"}
-            ]
+            return [{"role": "system", "content": f"请完成以下任务：{task_description}"}]
 
         context_messages = self._context_manager.get_context_for_subagent(
             conversation_id=self.conversation_id,
@@ -345,9 +339,7 @@ class ConversationManager:
         """获取共享 KnowledgeManager 实例。"""
         return self._knowledge_manager
 
-    def list_conversations(
-        self, limit: int = 50, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    def list_conversations(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         return self.storage.list_conversations(limit, offset)
 
     def delete_conversation(self, conversation_id: str) -> bool:
@@ -361,7 +353,9 @@ class ConversationManager:
     ) -> List[Dict[str, Any]]:
         return self.storage.search_messages(query, conversation_id, limit)
 
-    def migrate_from_json(self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")) -> int:
+    def migrate_from_json(
+        self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")
+    ) -> int:
         return self.storage.migrate_from_json(json_dir)
 
     def evolve_memories(self):

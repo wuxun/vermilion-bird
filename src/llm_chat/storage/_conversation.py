@@ -61,13 +61,10 @@ class StorageConversationMixin:
                 return self._row_to_dict(row)
             return None
 
-    def list_conversations(
-        self, limit: int = 50, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    def list_conversations(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM conversations "
-                "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM conversations " "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             ).fetchall()
             return [self._row_to_dict(row) for row in rows]
@@ -88,14 +85,12 @@ class StorageConversationMixin:
                 )
             elif title is not None:
                 conn.execute(
-                    "UPDATE conversations SET title = ?, updated_at = ? "
-                    "WHERE id = ?",
+                    "UPDATE conversations SET title = ?, updated_at = ? " "WHERE id = ?",
                     (title, now, conversation_id),
                 )
             elif metadata is not None:
                 conn.execute(
-                    "UPDATE conversations SET metadata = ?, updated_at = ? "
-                    "WHERE id = ?",
+                    "UPDATE conversations SET metadata = ?, updated_at = ? " "WHERE id = ?",
                     (json.dumps(metadata), now, conversation_id),
                 )
             return True
@@ -107,9 +102,7 @@ class StorageConversationMixin:
 
     def get_conversation_count(self) -> int:
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as count FROM conversations"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) as count FROM conversations").fetchone()
             return row["count"] if row else 0
 
     # ------------------------------------------------------------------
@@ -147,9 +140,7 @@ class StorageConversationMixin:
                     (execution_key,),
                 ).fetchone()
                 if existing is None:
-                    raise RuntimeError(
-                        f"Idempotent message write failed: {execution_key}"
-                    )
+                    raise RuntimeError(f"Idempotent message write failed: {execution_key}")
                 message_id = existing["id"]
             else:
                 raise RuntimeError("Message write was ignored without an execution key")
@@ -284,7 +275,9 @@ class StorageConversationMixin:
     # Migration
     # ------------------------------------------------------------------
 
-    def migrate_from_json(self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")) -> int:
+    def migrate_from_json(
+        self, json_dir: str = os.path.expanduser("~/.vermilion-bird/history")
+    ) -> int:
         migrated = 0
         if not os.path.exists(json_dir):
             return migrated
@@ -303,9 +296,7 @@ class StorageConversationMixin:
                 if not messages:
                     continue
 
-                first_user_msg = next(
-                    (m for m in messages if m.get("role") == "user"), None
-                )
+                first_user_msg = next((m for m in messages if m.get("role") == "user"), None)
                 title = None
                 if first_user_msg and first_user_msg.get("content"):
                     title = first_user_msg["content"][:30]
@@ -319,9 +310,7 @@ class StorageConversationMixin:
                 existing_messages = self.get_messages(conversation_id)
                 existing_count = len(existing_messages)
 
-                for i, msg in enumerate(
-                    messages[existing_count:], start=existing_count
-                ):
+                for i, msg in enumerate(messages[existing_count:], start=existing_count):
                     self.add_message(
                         conversation_id,
                         msg.get("role", "user"),

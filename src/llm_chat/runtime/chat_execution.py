@@ -69,9 +69,7 @@ class ChatGraphState(BaseModel):
     tool_messages: List[Dict[str, Any]] = Field(default_factory=list)
     pending_tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     pending_card: Optional[Dict[str, Any]] = None
-    routing: Dict[str, Any] = Field(
-        default_factory=lambda: ChatRoutingState().model_dump()
-    )
+    routing: Dict[str, Any] = Field(default_factory=lambda: ChatRoutingState().model_dump())
 
     @field_validator("routing", mode="before")
     @classmethod

@@ -302,8 +302,7 @@ def _llm_call_node(
             {
                 "tool_messages": msgs,
                 "pending_tool_calls": [
-                    SerializableToolCall.from_tool_call(item).model_dump()
-                    for item in tool_calls
+                    SerializableToolCall.from_tool_call(item).model_dump() for item in tool_calls
                 ],
                 "routing": _routing_update(
                     state,
@@ -899,9 +898,10 @@ class ChatCoreGraph:
     @staticmethod
     def can_replay(run) -> bool:
         message = str(run.input.get("message", "")).strip().lower()
-        return (
-            run.metadata.get("graph_name") == ChatCoreGraph.GRAPH_NAME
-            and not message.startswith(("/approve-action", "/reject-action"))
+        return run.metadata.get(
+            "graph_name"
+        ) == ChatCoreGraph.GRAPH_NAME and not message.startswith(
+            ("/approve-action", "/reject-action")
         )
 
     def _continue_persisted_run(

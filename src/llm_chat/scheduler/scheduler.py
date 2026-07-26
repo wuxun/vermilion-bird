@@ -775,9 +775,7 @@ class SchedulerService:
                     secret=secret,
                 )
         webhook_count = sum(
-            1
-            for task in tasks
-            if task.task_type == TaskType.WEBHOOK and task.enabled
+            1 for task in tasks if task.task_type == TaskType.WEBHOOK and task.enabled
         )
         logger.info(f"Registered {webhook_count} webhook tasks")
 

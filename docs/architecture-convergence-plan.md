@@ -121,6 +121,12 @@ Infrastructure Adapters
 - Graph 只负责节点编排；Run Runtime 负责生命周期、预算、取消和事件。
 - UI 由 RunEvent 驱动，不再依赖模块级 thread-local 和散落回调。
 - 主对话编排使用 LangGraph；工具审批使用 SQLite checkpointer 和 interrupt/resume。
+- ChatGraph state 已完全可序列化，运行时依赖通过 context 注入；失败后可跨进程从
+  SQLite checkpoint 重试。
+- RunHandlerRegistry/Dispatcher 已统一 Chat、通用 Graph、审批和 Scheduler 的
+  resume/retry/replay 路由，GUI 直接读取 handler 能力。
+- SchedulerService 已收敛到 TaskExecutor，不再维护第二套 Run/重试/通知生命周期。
+- 会话消息写入具有稳定执行幂等键，节点重入不会重复落库。
 - ember-core 的轻量 StateGraph 继续服务零依赖基础包，不作为桌面应用的第二套生产运行时。
 
 **验收条件**
