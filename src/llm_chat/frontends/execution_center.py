@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -29,7 +30,13 @@ from PyQt6.QtWidgets import (
 )
 
 from llm_chat.frontends.theme import Colors
-from llm_chat.runtime import ActionStatus, RunStatus, RunType
+from llm_chat.runtime import (
+    ActionStatus,
+    EffectResolution,
+    EffectStatus,
+    RunStatus,
+    RunType,
+)
 
 
 _RUN_STATUS_LABELS: Dict[RunStatus, str] = {
@@ -51,6 +58,14 @@ _ACTION_STATUS_LABELS: Dict[ActionStatus, str] = {
     ActionStatus.FAILED: "失败",
 }
 
+_EFFECT_STATUS_LABELS: Dict[EffectStatus, str] = {
+    EffectStatus.PENDING: "等待执行",
+    EffectStatus.EXECUTING: "执行中",
+    EffectStatus.COMPLETED: "已完成",
+    EffectStatus.FAILED: "失败",
+    EffectStatus.UNCERTAIN: "待对账",
+}
+
 
 class ExecutionCenterSignals(QObject):
     """将任意后台线程的运行状态变化送回 GUI 线程。"""
@@ -69,10 +84,12 @@ class ExecutionCenterDialog(QDialog):
         self._signals = ExecutionCenterSignals()
         self._run_by_id: Dict[str, Any] = {}
         self._proposal_by_id: Dict[str, Any] = {}
+        self._effect_by_key: Dict[str, Any] = {}
         self._unsubscribe_run = None
         self._unsubscribe_action = None
         self._busy_action_id: Optional[str] = None
         self._busy_run_id: Optional[str] = None
+        self._busy_effect_key: Optional[str] = None
 
         self.setWindowTitle("执行与审批中心")
         self.resize(1080, 720)
@@ -105,6 +122,7 @@ class ExecutionCenterDialog(QDialog):
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_runs_tab(), "运行记录")
         self._tabs.addTab(self._build_approvals_tab(), "审批")
+        self._tabs.addTab(self._build_effects_tab(), "副作用对账")
         root.addWidget(self._tabs, 1)
 
         self.setStyleSheet(
@@ -308,6 +326,79 @@ class ExecutionCenterDialog(QDialog):
         layout.addWidget(splitter, 1)
         return tab
 
+    def _build_effects_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        toolbar = QHBoxLayout()
+        self._effect_summary_label = QLabel()
+        toolbar.addWidget(self._effect_summary_label)
+        toolbar.addStretch()
+        toolbar.addWidget(QLabel("状态"))
+        self._effect_status_filter = QComboBox()
+        self._effect_status_filter.addItem("待对账", EffectStatus.UNCERTAIN)
+        self._effect_status_filter.addItem("全部", None)
+        for status, label in _EFFECT_STATUS_LABELS.items():
+            if status != EffectStatus.UNCERTAIN:
+                self._effect_status_filter.addItem(label, status)
+        self._effect_status_filter.currentIndexChanged.connect(self.refresh_effects)
+        toolbar.addWidget(self._effect_status_filter)
+        refresh = QPushButton("刷新")
+        refresh.clicked.connect(self.refresh_effects)
+        toolbar.addWidget(refresh)
+        layout.addLayout(toolbar)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self._effects_table = QTableWidget(0, 6)
+        self._effects_table.setHorizontalHeaderLabels(
+            ["更新时间", "类型", "状态", "重试安全", "尝试", "Effect Key"]
+        )
+        self._configure_table(self._effects_table)
+        self._effects_table.itemSelectionChanged.connect(self._show_selected_effect)
+        self._effects_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.Stretch
+        )
+        splitter.addWidget(self._effects_table)
+
+        detail_container = QFrame()
+        detail_layout = QVBoxLayout(detail_container)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        self._effect_detail = QTextBrowser()
+        self._effect_detail.setPlaceholderText("选择待对账记录，核对外部系统、文件或命令实际结果后再做结论。")
+        detail_layout.addWidget(self._effect_detail, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        self._effect_failed_button = QPushButton("确认未生效")
+        self._effect_failed_button.clicked.connect(self._resolve_effect_not_applied)
+        buttons.addWidget(self._effect_failed_button)
+        self._effect_retry_button = QPushButton("允许安全重试")
+        self._effect_retry_button.clicked.connect(self._resolve_effect_retry)
+        buttons.addWidget(self._effect_retry_button)
+        self._effect_success_button = QPushButton("确认已成功")
+        self._effect_success_button.clicked.connect(self._resolve_effect_succeeded)
+        self._effect_success_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {Colors.PRIMARY};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            """
+        )
+        buttons.addWidget(self._effect_success_button)
+        detail_layout.addLayout(buttons)
+        splitter.addWidget(detail_container)
+        splitter.setSizes([360, 260])
+        layout.addWidget(splitter, 1)
+        return tab
+
     @staticmethod
     def _configure_table(table: QTableWidget) -> None:
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -335,6 +426,7 @@ class ExecutionCenterDialog(QDialog):
     def refresh_all(self) -> None:
         self.refresh_runs()
         self.refresh_actions()
+        self.refresh_effects()
 
     def refresh_runs(self) -> None:
         selected_id = self._selected_id(self._runs_table)
@@ -407,6 +499,48 @@ class ExecutionCenterDialog(QDialog):
         if not proposals:
             self._action_detail.clear()
             self._set_action_buttons(False)
+
+    def refresh_effects(self) -> None:
+        selected_key = self._selected_id(self._effects_table)
+        status = self._effect_status_filter.currentData()
+        effects = (
+            self._app.list_effects(status=status, limit=500)
+            if hasattr(self._app, "list_effects")
+            else []
+        )
+        uncertain = (
+            self._app.list_effects(status=EffectStatus.UNCERTAIN, limit=500)
+            if hasattr(self._app, "list_effects")
+            else []
+        )
+        self._effect_by_key = {effect.effect_key: effect for effect in effects}
+        self._effects_table.setRowCount(len(effects))
+        for row, effect in enumerate(effects):
+            values = [
+                self._format_time(effect.updated_at),
+                effect.kind,
+                _EFFECT_STATUS_LABELS.get(effect.status, effect.status.value),
+                "是" if effect.retry_safe else "否",
+                str(effect.attempts),
+                effect.effect_key,
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, effect.effect_key)
+                if effect.status == EffectStatus.UNCERTAIN:
+                    item.setForeground(QColor(Colors.DANGER))
+                elif effect.status == EffectStatus.COMPLETED:
+                    item.setForeground(QColor(Colors.SUCCESS))
+                self._effects_table.setItem(row, column, item)
+        self._restore_selection(self._effects_table, selected_key)
+        self._effect_summary_label.setText(f"待对账 {len(uncertain)} 项 · 当前显示 {len(effects)} 项")
+        self._tabs.setTabText(
+            2,
+            f"副作用对账 ({len(uncertain)})" if uncertain else "副作用对账",
+        )
+        if not effects:
+            self._effect_detail.clear()
+            self._set_effect_buttons(None)
 
     def _show_selected_run(self) -> None:
         run = self._run_by_id.get(self._selected_id(self._runs_table) or "")
@@ -504,6 +638,96 @@ class ExecutionCenterDialog(QDialog):
             proposal.status == ActionStatus.PENDING and proposal.id != self._busy_action_id
         )
 
+    def _show_selected_effect(self) -> None:
+        effect = self._selected_effect()
+        if effect is None:
+            self._effect_detail.clear()
+            self._set_effect_buttons(None)
+            return
+        self._effect_detail.setPlainText(self._format_effect_detail(effect))
+        self._set_effect_buttons(effect)
+
+    def _resolve_effect_succeeded(self) -> None:
+        effect = self._selected_effect()
+        if effect is None or effect.status != EffectStatus.UNCERTAIN:
+            return
+        note = self._ask_reconciliation_note(
+            "确认副作用已成功",
+            "请填写在目标系统中核对成功的证据或依据：",
+        )
+        if note is None:
+            return
+        result, accepted = QInputDialog.getMultiLineText(
+            self,
+            "记录实际结果",
+            "可选：填写外部 ID、文件摘要或其他实际结果：",
+        )
+        if not accepted:
+            return
+        self._resolve_effect(
+            effect,
+            EffectResolution.SUCCEEDED,
+            note,
+            result=result.strip() or None,
+        )
+
+    def _resolve_effect_not_applied(self) -> None:
+        effect = self._selected_effect()
+        if effect is None or effect.status != EffectStatus.UNCERTAIN:
+            return
+        note = self._ask_reconciliation_note(
+            "确认副作用未生效",
+            "请填写确认目标系统未发生该副作用的证据或依据：",
+        )
+        if note is None:
+            return
+        self._resolve_effect(effect, EffectResolution.NOT_APPLIED, note)
+
+    def _resolve_effect_retry(self) -> None:
+        effect = self._selected_effect()
+        if effect is None or effect.status != EffectStatus.UNCERTAIN or not effect.retry_safe:
+            return
+        note = self._ask_reconciliation_note(
+            "允许安全重试",
+            "请填写确认该操作具备幂等性、可以安全重试的依据：",
+        )
+        if note is None:
+            return
+        self._resolve_effect(effect, EffectResolution.RETRY_APPROVED, note)
+
+    def _resolve_effect(
+        self,
+        effect: Any,
+        resolution: EffectResolution,
+        note: str,
+        *,
+        result: Any = None,
+    ) -> None:
+        try:
+            self._busy_effect_key = effect.effect_key
+            self._set_effect_buttons(effect)
+            self._app.resolve_effect(
+                effect.effect_key,
+                resolution=resolution,
+                note=note,
+                result=result,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "对账失败", str(exc))
+        finally:
+            self._busy_effect_key = None
+        self.refresh_all()
+
+    def _ask_reconciliation_note(self, title: str, prompt: str) -> Optional[str]:
+        note, accepted = QInputDialog.getMultiLineText(self, title, prompt)
+        note = note.strip()
+        if not accepted:
+            return None
+        if not note:
+            QMessageBox.warning(self, "缺少依据", "必须填写人工核对依据。")
+            return None
+        return note
+
     def _approve_selected(self) -> None:
         proposal = self._selected_proposal()
         if proposal is None or proposal.status != ActionStatus.PENDING:
@@ -588,6 +812,9 @@ class ExecutionCenterDialog(QDialog):
     def _selected_run(self) -> Optional[Any]:
         return self._run_by_id.get(self._selected_id(self._runs_table) or "")
 
+    def _selected_effect(self) -> Optional[Any]:
+        return self._effect_by_key.get(self._selected_id(self._effects_table) or "")
+
     def _set_run_buttons(self, run: Optional[Any]) -> None:
         busy = run is None or run.id == self._busy_run_id
         can_resume = bool(run and run.can_resume)
@@ -617,6 +844,17 @@ class ExecutionCenterDialog(QDialog):
     def _set_action_buttons(self, enabled: bool) -> None:
         self._approve_button.setEnabled(enabled)
         self._reject_button.setEnabled(enabled)
+
+    def _set_effect_buttons(self, effect: Optional[Any]) -> None:
+        enabled = bool(
+            effect
+            and effect.status == EffectStatus.UNCERTAIN
+            and effect.effect_key != self._busy_effect_key
+            and hasattr(self._app, "resolve_effect")
+        )
+        self._effect_success_button.setEnabled(enabled)
+        self._effect_failed_button.setEnabled(enabled)
+        self._effect_retry_button.setEnabled(bool(enabled and effect.retry_safe))
 
     @staticmethod
     def _selected_id(table: QTableWidget) -> Optional[str]:
@@ -752,6 +990,45 @@ class ExecutionCenterDialog(QDialog):
             lines.extend(["", "执行结果", str(proposal.result)])
         if proposal.error:
             lines.extend(["", "错误", proposal.error])
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_effect_detail(cls, effect: Any) -> str:
+        lines = [
+            f"Effect Key: {effect.effect_key}",
+            f"Effect ID: {effect.id}",
+            f"来源 Run: {effect.run_id or '-'}",
+            f"类型 / 状态: {effect.kind} / "
+            f"{_EFFECT_STATUS_LABELS.get(effect.status, effect.status.value)}",
+            f"重试安全: {'是' if effect.retry_safe else '否'}",
+            f"尝试次数: {effect.attempts}",
+            f"创建: {cls._format_time(effect.created_at)}",
+            f"更新: {cls._format_time(effect.updated_at)}",
+            "",
+            "副作用参数",
+            json.dumps(effect.payload, ensure_ascii=False, indent=2, default=str),
+        ]
+        if effect.result is not None:
+            lines.extend(
+                [
+                    "",
+                    "实际结果",
+                    json.dumps(effect.result, ensure_ascii=False, indent=2, default=str),
+                ]
+            )
+        if effect.error:
+            lines.extend(["", "错误 / 未知原因", effect.error])
+        if effect.resolution:
+            lines.extend(
+                [
+                    "",
+                    "人工对账",
+                    f"结论: {effect.resolution.value}",
+                    f"操作人: {effect.reconciled_by or '-'}",
+                    f"时间: {cls._format_time(effect.reconciled_at)}",
+                    f"依据: {effect.reconciliation_note or '-'}",
+                ]
+            )
         return "\n".join(lines)
 
     def closeEvent(self, event: Any) -> None:

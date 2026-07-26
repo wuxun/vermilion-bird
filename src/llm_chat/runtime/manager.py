@@ -181,6 +181,40 @@ class RunManager:
     def cancel(self, run_id: str) -> Run:
         return self._finish(run_id, RunStatus.CANCELLED)
 
+    def reconcile_terminal(
+        self,
+        run_id: str,
+        *,
+        succeeded: bool,
+        note: str,
+        result: Any = None,
+    ) -> Run:
+        """按人工对账结果修正中断 Run，并追加不可变审计事件。"""
+
+        note = note.strip()
+        if not note:
+            raise ValueError("reconciliation note cannot be empty")
+        with self._lock:
+            run = self._require_locked(run_id)
+            if run.status == RunStatus.COMPLETED:
+                raise ValueError(f"Run {run_id} is already completed")
+            run.status = RunStatus.COMPLETED if succeeded else RunStatus.FAILED
+            run.result = result if succeeded else run.result
+            run.error = None if succeeded else note
+            run.finished_at = utc_now()
+            run.lease_owner = None
+            run.lease_expires_at = None
+            run.metadata["effect_reconciled"] = True
+            self._persist_run_locked(run)
+        self.emit(
+            run_id,
+            "run.effect_reconciled",
+            {"succeeded": succeeded, "note": note},
+        )
+        restored = self.get(run_id)
+        assert restored is not None
+        return restored
+
     def checkpoint(
         self,
         run_id: str,

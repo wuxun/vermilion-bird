@@ -11,6 +11,8 @@ from llm_chat.runtime import (  # noqa: E402
     ActionProposalManager,
     ActionStatus,
     Capability,
+    EffectRecord,
+    EffectStatus,
     RunManager,
     RunType,
 )
@@ -115,6 +117,42 @@ def test_execution_center_enables_recovery_controls_for_graph_run(qt_app):
     assert "恢复点" in dialog._run_detail.toPlainText()
     assert "恢复处理器" in dialog._run_detail.toPlainText()
     assert "租约到期" in dialog._run_detail.toPlainText()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_execution_center_lists_uncertain_effects_for_reconciliation(qt_app):
+    runs = RunManager()
+    proposals = ActionProposalManager()
+    effect = EffectRecord(
+        effect_key="tool-action:uncertain",
+        run_id="run-effect",
+        kind="tool",
+        payload={"tool_name": "write_file", "path": "report.md"},
+        status=EffectStatus.UNCERTAIN,
+        retry_safe=False,
+        error="外部结果未知",
+    )
+
+    def list_effects(*, status=None, limit=500):
+        return [effect] if status in {None, EffectStatus.UNCERTAIN} else []
+
+    fake_app = SimpleNamespace(
+        run_manager=runs,
+        action_proposals=proposals,
+        list_effects=list_effects,
+        resolve_effect=lambda *args, **kwargs: effect,
+    )
+    dialog = ExecutionCenterDialog(fake_app)
+    qt_app.processEvents()
+
+    assert dialog._effects_table.rowCount() == 1
+    assert dialog._tabs.tabText(2) == "副作用对账 (1)"
+    assert "report.md" in dialog._effect_detail.toPlainText()
+    assert dialog._effect_success_button.isEnabled()
+    assert dialog._effect_failed_button.isEnabled()
+    assert not dialog._effect_retry_button.isEnabled()
 
     dialog.close()
     qt_app.processEvents()

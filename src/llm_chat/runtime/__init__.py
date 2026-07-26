@@ -27,10 +27,12 @@ from .handlers import (
 from .effects import (
     EffectOutbox,
     EffectRecord,
+    EffectResolution,
     EffectStatus,
     UncertainEffectError,
 )
 from .lease import RunLeaseHeartbeat
+from .effect_reconciliation import EffectReconciliationService
 from .recovery import RecoveryReport, RunRecoveryCoordinator
 from .actions import (
     ActionProposal,
@@ -50,6 +52,8 @@ __all__ = [
     "DurableActionCoordinator",
     "EffectOutbox",
     "EffectRecord",
+    "EffectReconciliationService",
+    "EffectResolution",
     "EffectStatus",
     "GraphExecutionResult",
     "GraphExecutionService",

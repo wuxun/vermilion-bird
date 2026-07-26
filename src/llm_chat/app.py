@@ -25,6 +25,9 @@ from llm_chat.runtime import (
     ActionProposalManager,
     CapabilityPolicy,
     EffectOutbox,
+    EffectReconciliationService,
+    EffectResolution,
+    EffectStatus,
     RunDispatcher,
     RunHandlerRegistry,
     RunRecoveryCoordinator,
@@ -94,6 +97,12 @@ class App:
         self.action_proposals = ActionProposalManager(repository=self.storage)
         self.effect_outbox = EffectOutbox(self.storage)
         self.uncertain_effects = self.effect_outbox.reconcile_interrupted()
+        self.effect_reconciliation = EffectReconciliationService(
+            outbox=self.effect_outbox,
+            proposals=self.action_proposals,
+            runs=self.run_manager,
+        )
+        self.repaired_effects = self.effect_reconciliation.repair_linked_state()
         self._graph_lock = threading.RLock()
         self.graph_runtime = None
         self.graph_execution = None
@@ -205,6 +214,31 @@ class App:
                 {"proposal_id": proposal.id},
             )
         return proposal
+
+    def list_effects(
+        self,
+        *,
+        status: Optional[EffectStatus] = None,
+        limit: int = 500,
+    ):
+        return self.effect_reconciliation.list(status=status, limit=limit)
+
+    def resolve_effect(
+        self,
+        effect_key: str,
+        *,
+        resolution: EffectResolution,
+        note: str,
+        result: Any = None,
+    ):
+        """记录人工副作用核对结论，并同步 Action/Run 状态。"""
+
+        return self.effect_reconciliation.resolve(
+            effect_key,
+            resolution=resolution,
+            note=note,
+            result=result,
+        )
 
     def prepare_action(self, proposal: ActionProposal) -> ActionProposal:
         """为待审批工具创建持久化 interrupt Run。"""

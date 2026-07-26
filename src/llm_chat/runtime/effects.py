@@ -23,6 +23,12 @@ class EffectStatus(str, Enum):
     UNCERTAIN = "uncertain"
 
 
+class EffectResolution(str, Enum):
+    SUCCEEDED = "succeeded"
+    NOT_APPLIED = "not_applied"
+    RETRY_APPROVED = "retry_approved"
+
+
 class EffectRecord(BaseModel):
     id: str = Field(default_factory=lambda: f"effect_{uuid4().hex}")
     effect_key: str
@@ -34,6 +40,10 @@ class EffectRecord(BaseModel):
     attempts: int = 0
     result: Optional[Any] = None
     error: Optional[str] = None
+    resolution: Optional[EffectResolution] = None
+    reconciliation_note: Optional[str] = None
+    reconciled_by: Optional[str] = None
+    reconciled_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
     finished_at: Optional[datetime] = None
@@ -55,6 +65,14 @@ class EffectRepository(Protocol):
         status: Optional[EffectStatus] = None,
         limit: int = 1000,
     ) -> List[EffectRecord]:
+        ...
+
+    def resolve_effect(
+        self,
+        effect: EffectRecord,
+        *,
+        expected_status: EffectStatus,
+    ) -> bool:
         ...
 
 
@@ -153,3 +171,57 @@ class EffectOutbox:
                 self.repository.save_effect(record)
                 reconciled.append(record.model_copy(deep=True))
         return reconciled
+
+    def resolve_uncertain(
+        self,
+        *,
+        effect_key: str,
+        resolution: EffectResolution,
+        note: str,
+        result: Any = None,
+        actor: str = "local-user",
+    ) -> EffectRecord:
+        """记录人工核对结论；不会在此方法中执行任何副作用。"""
+
+        if not isinstance(resolution, EffectResolution):
+            resolution = EffectResolution(resolution)
+        note = note.strip()
+        if not note:
+            raise ValueError("reconciliation note cannot be empty")
+        actor = actor.strip()
+        if not actor:
+            raise ValueError("reconciliation actor cannot be empty")
+
+        with self._lock:
+            record = self.repository.get_effect(effect_key)
+            if record is None:
+                raise KeyError(f"Unknown effect: {effect_key}")
+            if record.status != EffectStatus.UNCERTAIN:
+                raise ValueError(f"Effect {effect_key} is {record.status.value}, not uncertain")
+            if resolution == EffectResolution.RETRY_APPROVED and not record.retry_safe:
+                raise ValueError(f"Effect {effect_key} is not declared safe to retry")
+
+            now = _utc_now()
+            record.resolution = resolution
+            record.reconciliation_note = note
+            record.reconciled_by = actor
+            record.reconciled_at = now
+            record.updated_at = now
+            record.finished_at = now
+
+            if resolution == EffectResolution.SUCCEEDED:
+                record.status = EffectStatus.COMPLETED
+                record.result = result
+                record.error = None
+            else:
+                record.status = EffectStatus.FAILED
+                record.error = note
+
+            if not self.repository.resolve_effect(
+                record,
+                expected_status=EffectStatus.UNCERTAIN,
+            ):
+                raise ValueError(
+                    f"Effect {effect_key} was reconciled by another process"
+                )
+            return record.model_copy(deep=True)

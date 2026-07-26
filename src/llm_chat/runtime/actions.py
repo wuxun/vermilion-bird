@@ -415,6 +415,38 @@ class ActionProposalManager:
         self._notify(snapshot)
         return snapshot
 
+    def reconcile_effect(
+        self,
+        proposal_id: str,
+        *,
+        succeeded: bool,
+        note: str,
+        result: Any = None,
+    ) -> ActionProposal:
+        """按人工副作用核对结论修正 Action 终态，并保留审计说明。"""
+
+        note = note.strip()
+        if not note:
+            raise ValueError("reconciliation note cannot be empty")
+        with self._lock:
+            proposal = self._require_locked(proposal_id)
+            if proposal.status not in {
+                ActionStatus.APPROVED,
+                ActionStatus.EXECUTING,
+                ActionStatus.FAILED,
+            }:
+                raise ValueError(
+                    f"Action {proposal_id} is {proposal.status.value}, " "not reconcilable"
+                )
+            proposal.status = ActionStatus.COMPLETED if succeeded else ActionStatus.FAILED
+            proposal.result = str(result) if succeeded and result is not None else proposal.result
+            proposal.error = None if succeeded else note
+            proposal.finished_at = _utc_now()
+            snapshot = proposal.model_copy(deep=True)
+            self._persist_locked(proposal)
+        self._notify(snapshot)
+        return snapshot
+
     def approve_and_execute(
         self,
         proposal_id: str,

@@ -460,6 +460,10 @@ class StorageCore:
                 attempts INTEGER NOT NULL DEFAULT 0,
                 result_json TEXT,
                 error TEXT,
+                resolution TEXT,
+                reconciliation_note TEXT,
+                reconciled_by TEXT,
+                reconciled_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 finished_at TEXT
@@ -494,6 +498,18 @@ class StorageCore:
         }
         if "execution_run_id" not in action_columns:
             conn.execute("ALTER TABLE action_proposals ADD COLUMN execution_run_id TEXT")
+        effect_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(effect_outbox)").fetchall()
+        }
+        effect_additions = {
+            "resolution": "TEXT",
+            "reconciliation_note": "TEXT",
+            "reconciled_by": "TEXT",
+            "reconciled_at": "TEXT",
+        }
+        for name, definition in effect_additions.items():
+            if name not in effect_columns:
+                conn.execute(f"ALTER TABLE effect_outbox ADD COLUMN {name} {definition}")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency_key

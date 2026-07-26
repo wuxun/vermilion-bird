@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from llm_chat.runtime.actions import ActionProposal, ActionStatus, Capability
-from llm_chat.runtime.effects import EffectRecord, EffectStatus
+from llm_chat.runtime.effects import EffectRecord, EffectResolution, EffectStatus
 from llm_chat.runtime.models import (
     RecoveryPolicy,
     Run,
@@ -50,8 +50,9 @@ class StorageRuntimeMixin:
                 INSERT OR IGNORE INTO effect_outbox (
                     id, effect_key, run_id, kind, payload_json, status,
                     retry_safe, attempts, result_json, error,
+                    resolution, reconciliation_note, reconciled_by, reconciled_at,
                     created_at, updated_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._effect_values(effect),
             )
@@ -64,8 +65,9 @@ class StorageRuntimeMixin:
                 INSERT INTO effect_outbox (
                     id, effect_key, run_id, kind, payload_json, status,
                     retry_safe, attempts, result_json, error,
+                    resolution, reconciliation_note, reconciled_by, reconciled_at,
                     created_at, updated_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(effect_key) DO UPDATE SET
                     run_id = excluded.run_id,
                     kind = excluded.kind,
@@ -75,6 +77,10 @@ class StorageRuntimeMixin:
                     attempts = excluded.attempts,
                     result_json = excluded.result_json,
                     error = excluded.error,
+                    resolution = excluded.resolution,
+                    reconciliation_note = excluded.reconciliation_note,
+                    reconciled_by = excluded.reconciled_by,
+                    reconciled_at = excluded.reconciled_at,
                     updated_at = excluded.updated_at,
                     finished_at = excluded.finished_at
                 """,
@@ -88,6 +94,45 @@ class StorageRuntimeMixin:
                 (effect_key,),
             ).fetchone()
         return self._row_to_effect(row) if row else None
+
+    def resolve_effect(
+        self,
+        effect: EffectRecord,
+        *,
+        expected_status: EffectStatus,
+    ) -> bool:
+        """只允许一个进程提交人工对账结论。"""
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE effect_outbox
+                SET status = ?,
+                    result_json = ?,
+                    error = ?,
+                    resolution = ?,
+                    reconciliation_note = ?,
+                    reconciled_by = ?,
+                    reconciled_at = ?,
+                    updated_at = ?,
+                    finished_at = ?
+                WHERE effect_key = ? AND status = ?
+                """,
+                (
+                    effect.status.value,
+                    _dump_json(effect.result) if effect.result is not None else None,
+                    effect.error,
+                    effect.resolution.value if effect.resolution else None,
+                    effect.reconciliation_note,
+                    effect.reconciled_by,
+                    effect.reconciled_at.isoformat() if effect.reconciled_at else None,
+                    effect.updated_at.isoformat(),
+                    effect.finished_at.isoformat() if effect.finished_at else None,
+                    effect.effect_key,
+                    expected_status.value,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def list_effects(
         self,
@@ -119,6 +164,10 @@ class StorageRuntimeMixin:
             effect.attempts,
             _dump_json(effect.result) if effect.result is not None else None,
             effect.error,
+            effect.resolution.value if effect.resolution else None,
+            effect.reconciliation_note,
+            effect.reconciled_by,
+            effect.reconciled_at.isoformat() if effect.reconciled_at else None,
             effect.created_at.isoformat(),
             effect.updated_at.isoformat(),
             effect.finished_at.isoformat() if effect.finished_at else None,
@@ -138,6 +187,10 @@ class StorageRuntimeMixin:
             attempts=int(row["attempts"]),
             result=_load_json(row["result_json"], None),
             error=row["error"],
+            resolution=(EffectResolution(row["resolution"]) if row["resolution"] else None),
+            reconciliation_note=row["reconciliation_note"],
+            reconciled_by=row["reconciled_by"],
+            reconciled_at=_parse_datetime(row["reconciled_at"]),
             created_at=_parse_datetime(row["created_at"]) or now,
             updated_at=_parse_datetime(row["updated_at"]) or now,
             finished_at=_parse_datetime(row["finished_at"]),
