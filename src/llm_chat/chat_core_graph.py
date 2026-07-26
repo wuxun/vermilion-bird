@@ -27,6 +27,7 @@ from ember_agent.consensus import init_card_context, get_pending_card, clear_car
 from llm_chat.config import Config
 from llm_chat.client import LLMClient
 from llm_chat.conversation import ConversationManager
+from llm_chat.context import ContextHub, build_default_context_hub
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.pipeline.stage import PipelineContext
 from llm_chat.pipeline.stages import (
@@ -162,10 +163,31 @@ async def _system_context_node(state: ChatGraphState) -> dict:
     cm = _ctx()._extra.get("conversation_manager")
     prompt_holder = _ctx()._extra.get("prompt_skills_holder")
     style_holder = _ctx()._extra.get("style_holder")
-    stage = SystemContextStage(cm, prompt_holder, style_holder)
+    context_hub = _ctx()._extra.get("context_hub")
+    stage = SystemContextStage(cm, prompt_holder, style_holder, context_hub)
     await stage.setup(_ctx())
     await stage.process(_ctx())
     await stage.teardown(_ctx())
+    run_manager = _ctx()._extra.get("run_manager")
+    run_id = _ctx()._extra.get("run_id")
+    context_items = _ctx().metadata.get("context_items", [])
+    if run_manager and run_id:
+        run_manager.emit(
+            run_id,
+            "context.selected",
+            {
+                "count": len(context_items),
+                "items": [
+                    {
+                        "id": item["id"],
+                        "kind": item["kind"],
+                        "source": item["source"],
+                        "priority": item["priority"],
+                    }
+                    for item in context_items
+                ],
+            },
+        )
     return {}
 
 
@@ -566,6 +588,7 @@ class ChatCoreGraph:
         run_manager: Optional[RunManager] = None,
         capability_policy: Optional[CapabilityPolicy] = None,
         action_proposals: Optional[ActionProposalManager] = None,
+        context_hub: Optional[ContextHub] = None,
     ):
         self.client = client
         self.conversation_manager = conversation_manager
@@ -573,6 +596,7 @@ class ChatCoreGraph:
         self.run_manager = run_manager or RunManager()
         self.capability_policy = capability_policy or CapabilityPolicy()
         self.action_proposals = action_proposals or ActionProposalManager()
+        self.context_hub = context_hub or build_default_context_hub(conversation_manager)
         self._cancel_event: Optional[threading.Event] = None
         self._prompt_skills_holder = MutableStrHolder("")
         self._style_holder = MutableStrHolder("default")
@@ -635,6 +659,7 @@ class ChatCoreGraph:
             "run_manager": self.run_manager,
             "capability_policy": self.capability_policy,
             "action_proposals": self.action_proposals,
+            "context_hub": self.context_hub,
             "run_id": run.id,
         }
 
@@ -723,6 +748,7 @@ class ChatCoreGraph:
             "run_manager": self.run_manager,
             "capability_policy": self.capability_policy,
             "action_proposals": self.action_proposals,
+            "context_hub": self.context_hub,
             "run_id": run.id,
         }
 
@@ -844,6 +870,7 @@ class ChatCoreGraph:
             self.conversation_manager,
             self._prompt_skills_holder,
             self._style_holder,
+            self.context_hub,
         )
         ctx = PipelineContext(
             conversation_id=conversation_id, user_message="", effective_message=""

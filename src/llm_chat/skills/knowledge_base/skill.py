@@ -78,26 +78,19 @@ class ReadKnowledgeTool(BaseTool):
 
             if content:
                 meta = storage.get_domain_meta(domain)
-                header = (
-                    f"## 领域知识：{meta.display_name if meta else domain}\n\n"
-                )
+                header = f"## 领域知识：{meta.display_name if meta else domain}\n\n"
                 return header + content
 
             # 领域不存在 → 列出可用领域
             all_domains = storage.get_all_domains()
             if not all_domains:
-                return (
-                    f"领域 '{domain}' 不存在，且暂无任何领域知识。"
-                    f"使用 remember_knowledge 工具创建第一个领域。"
-                )
+                return f"领域 '{domain}' 不存在，且暂无任何领域知识。" f"使用 remember_knowledge 工具创建第一个领域。"
 
             lines = [
                 f"领域 '{domain}' 不存在。可用的领域：",
             ]
             for name, meta in sorted(all_domains.items()):
-                kw_preview = (
-                    ", ".join(meta.keywords[:3]) if meta.keywords else "无关键词"
-                )
+                kw_preview = ", ".join(meta.keywords[:3]) if meta.keywords else "无关键词"
                 lines.append(
                     f"  - **{meta.display_name}** (`{name}`): {meta.description}"
                     f" | 关键词: {kw_preview} | 知识点: {meta.fact_count} 条"
@@ -143,8 +136,7 @@ class RememberKnowledgeTool(BaseTool):
                 "domain": {
                     "type": "string",
                     "description": (
-                        "领域标识符，英文简写，如 'investment'、'machine-learning'。"
-                        "如果是新领域，此名称将用作文件名。"
+                        "领域标识符，英文简写，如 'investment'、'machine-learning'。" "如果是新领域，此名称将用作文件名。"
                     ),
                 },
                 "fact": {
@@ -152,7 +144,7 @@ class RememberKnowledgeTool(BaseTool):
                     "items": {"type": "string"},
                     "description": (
                         "知识点列表，每条一个字符串。支持单行事实或多行 Markdown（表格、代码块等）。"
-                        "例如：[\"PyTorch 2.0 的 torch.compile 可提速 30-50%\", \"推理时必须加 no_grad()\"]"
+                        '例如：["PyTorch 2.0 的 torch.compile 可提速 30-50%", "推理时必须加 no_grad()"]'
                     ),
                 },
                 "category": {
@@ -166,24 +158,16 @@ class RememberKnowledgeTool(BaseTool):
                 },
                 "display_name": {
                     "type": "string",
-                    "description": (
-                        "领域显示名（仅新建领域时需要）。中文名，如 '投资'、'机器学习'。"
-                        "已有领域不需要此参数。"
-                    ),
+                    "description": ("领域显示名（仅新建领域时需要）。中文名，如 '投资'、'机器学习'。" "已有领域不需要此参数。"),
                 },
                 "description": {
                     "type": "string",
-                    "description": (
-                        "领域简短描述（仅新建领域时需要）。"
-                        "一句话说明该领域涵盖什么。"
-                    ),
+                    "description": ("领域简短描述（仅新建领域时需要）。" "一句话说明该领域涵盖什么。"),
                 },
                 "keywords": {
                     "type": "string",
                     "description": (
-                        "逗号分隔的关键词（仅新建领域时需要）。"
-                        "用于自动检测对话是否涉及该领域。"
-                        "例如：'股票,基金,A股,PE,ROE'"
+                        "逗号分隔的关键词（仅新建领域时需要）。" "用于自动检测对话是否涉及该领域。" "例如：'股票,基金,A股,PE,ROE'"
                     ),
                 },
             },
@@ -193,7 +177,7 @@ class RememberKnowledgeTool(BaseTool):
     def execute(
         self,
         domain: str,
-        fact: list,
+        fact: Any,
         category: str = "other",
         display_name: str = "",
         description: str = "",
@@ -208,11 +192,7 @@ class RememberKnowledgeTool(BaseTool):
                     display_name = domain
                 if not description:
                     description = f"{display_name}领域专业知识"
-                kw_list = (
-                    [k.strip() for k in keywords.split(",") if k.strip()]
-                    if keywords
-                    else []
-                )
+                kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
 
                 try:
                     storage.create_domain(
@@ -221,16 +201,20 @@ class RememberKnowledgeTool(BaseTool):
                         description=description,
                         keywords=kw_list,
                     )
-                    logger.info(
-                        f"自动创建新领域: {display_name} ({domain}), "
-                        f"关键词: {kw_list}"
-                    )
+                    logger.info(f"自动创建新领域: {display_name} ({domain}), " f"关键词: {kw_list}")
                 except FileExistsError:
                     pass
 
+            # Schema uses a list, while the public Python API historically
+            # accepted one string. Normalize both forms instead of iterating a
+            # string character by character.
+            facts = [fact] if isinstance(fact, str) else list(fact or [])
+
             # 批量追加知识点
             written = 0
-            for f in fact:
+            for f in facts:
+                if not isinstance(f, str):
+                    continue
                 f = f.strip()
                 if not f:
                     continue
@@ -245,11 +229,7 @@ class RememberKnowledgeTool(BaseTool):
             meta = storage.get_domain_meta(domain)
             count = meta.fact_count if meta else "?"
 
-            return (
-                f"已记住 ✓ [{label}] → {domain}\n"
-                f"本次写入: {written} 条\n"
-                f"该领域累计: {count} 条"
-            )
+            return f"已记住 ✓ [{label}] → {domain}\n" f"本次写入: {written} 条\n" f"该领域累计: {count} 条"
 
         except Exception as e:
             logger.error(f"记住领域知识失败: {e}")
@@ -277,11 +257,7 @@ class KnowledgeBaseSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return (
-            "领域知识管理：LLM 可读写领域专业知识。"
-            "支持渐进式披露：默认只显示摘要，需要时加载全文。"
-            "新领域自动创建（自然涌现）。"
-        )
+        return "领域知识管理：LLM 可读写领域专业知识。" "支持渐进式披露：默认只显示摘要，需要时加载全文。" "新领域自动创建（自然涌现）。"
 
     @property
     def version(self) -> str:

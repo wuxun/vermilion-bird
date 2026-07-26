@@ -12,6 +12,15 @@ from typing import Optional, TYPE_CHECKING
 
 from llm_chat.pipeline.stage import PipelineStage, PipelineContext, MutableStrHolder
 from llm_chat.intent.types import Intent
+from llm_chat.context.hub import (
+    ContextHub,
+    ContextItem,
+    ContextKind,
+    ContextQuery,
+    ContextScope,
+    Sensitivity,
+    build_default_context_hub,
+)
 
 if TYPE_CHECKING:
     from llm_chat.intent import IntentClassifier
@@ -143,9 +152,7 @@ class ShortcutStage(PipelineStage):
             if content:
                 memory_manager = getattr(conv, "_memory_manager", None)
                 if memory_manager:
-                    memory_manager.consolidate_to_long_term(
-                        [content], is_user_told=True
-                    )
+                    memory_manager.consolidate_to_long_term([content], is_user_told=True)
                     response = f"已记住 ✓: {content}"
                 else:
                     response = f"已记录（无记忆管理器）: {content}"
@@ -166,30 +173,20 @@ class ShortcutStage(PipelineStage):
                 conv.add_assistant_message(response)
                 if ctx.on_chunk:
                     ctx.on_chunk(response)
-                logger.info(
-                    f"[ShortcutStage] 飞书新建会话: {conv.conversation_id}"
-                )
+                logger.info(f"[ShortcutStage] 飞书新建会话: {conv.conversation_id}")
                 ctx.response = response
                 ctx.should_short_circuit = True
                 return ctx
 
-            title = (
-                ctx.user_message[4:].strip()
-                if len(ctx.user_message) > 4
-                else None
-            )
+            title = ctx.user_message[4:].strip() if len(ctx.user_message) > 4 else None
             new_conv = self._conversation_manager.create_conversation(title=title)
             response = f"已创建新会话: {new_conv.conversation_id}"
             if title:
-                response = (
-                    f"已创建新会话「{title}」: {new_conv.conversation_id}"
-                )
+                response = f"已创建新会话「{title}」: {new_conv.conversation_id}"
             conv.add_assistant_message(response)
             if ctx.on_chunk:
                 ctx.on_chunk(response)
-            logger.info(
-                f"[ShortcutStage] 新建会话: {new_conv.conversation_id}"
-            )
+            logger.info(f"[ShortcutStage] 新建会话: {new_conv.conversation_id}")
             ctx.response = response
             ctx.should_short_circuit = True
             return ctx
@@ -220,17 +217,13 @@ class ShortcutStage(PipelineStage):
         # 4. /clear /reset /help 等 — 直接回复
         # 注意：严格匹配 Intent.SHORTCUT，保持与原始 _handle_shortcut (chat_core.py:379) 一致
         if decision.intent == Intent.SHORTCUT and decision.direct_response:
-            if (
-                decision.direct_response == "对话已清空。开始新的对话吧！"
-            ):
+            if decision.direct_response == "对话已清空。开始新的对话吧！":
                 conv.clear_history()
 
             conv.add_assistant_message(decision.direct_response)
             if ctx.on_chunk:
                 ctx.on_chunk(decision.direct_response)
-            logger.info(
-                f"[ShortcutStage] 快速回复 (跳过 LLM): {decision.intent.value}"
-            )
+            logger.info(f"[ShortcutStage] 快速回复 (跳过 LLM): {decision.intent.value}")
             ctx.response = decision.direct_response
             ctx.should_short_circuit = True
             return ctx
@@ -253,10 +246,7 @@ class ShortcutStage(PipelineStage):
 
         available = list(SOUL_STYLE_PRESETS.keys())
         if style_name not in available:
-            return (
-                f"未知风格「{style_name}」。可用风格: {', '.join(available)}\n"
-                f"用法: /style <风格名>"
-            )
+            return f"未知风格「{style_name}」。可用风格: {', '.join(available)}\n" f"用法: /style <风格名>"
 
         self._style_holder.set(style_name)
         description = SOUL_STYLE_PRESETS[style_name]
@@ -264,9 +254,7 @@ class ShortcutStage(PipelineStage):
             desc_preview = "直接、有用、不啰嗦"
         else:
             desc_preview = (
-                description.split("\n")[1].lstrip("- ")
-                if "\n" in description
-                else description[:60]
+                description.split("\n")[1].lstrip("- ") if "\n" in description else description[:60]
             )
 
         logger.info(f"Style switched to: {style_name}")
@@ -275,7 +263,7 @@ class ShortcutStage(PipelineStage):
 
 # ── 系统提示常量（从 chat_core.py 迁移）──
 
-_DECISION_CARD_PROMPT = '''
+_DECISION_CARD_PROMPT = """
 ## 决策卡片能力
 
 决策卡片是帮助用户在多个方案中做选择的工具。成本高（占用UI、打断阅读），只在真正需要时使用。
@@ -302,9 +290,9 @@ _DECISION_CARD_PROMPT = '''
 - 选项 id: A, B, C...每个选项必须给 confidence (0.0~1.0)
 - 只有 1 个实质选项 → 不要硬凑，用文字回复
 - recommendation 指向 confidence 最高的选项
-'''
+"""
 
-_SOCRATIC_PROMPT = '''
+_SOCRATIC_PROMPT = """
 ## 苏格拉底式对话 — 先理解再行动
 
 当面对可执行的请求（写代码、操作文件、搜索、定时任务）时，遵循：
@@ -344,7 +332,7 @@ _SOCRATIC_PROMPT = '''
 
 用户："Python 和 Rust 哪个更适合写 CLI 工具"
 → 这是明确要求对比，可以用卡片展示各方优劣
-'''
+"""
 
 # 需要注入苏格拉底提示的意图类型
 _SOCRATIC_INTENTS = {Intent.CODE, Intent.FILE_OP, Intent.SEARCH, Intent.SCHEDULE}
@@ -365,6 +353,7 @@ class PersistUserStage(PipelineStage):
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -393,85 +382,85 @@ class SystemContextStage(PipelineStage):
         conversation_manager,
         prompt_skills_holder: MutableStrHolder,
         style_holder: MutableStrHolder,
+        context_hub: Optional[ContextHub] = None,
     ) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
         self._prompt_skills_holder = prompt_skills_holder
         self._style_holder = style_holder
+        self._context_hub = context_hub or build_default_context_hub(conversation_manager)
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
-        conv = self._conversation_manager.get_conversation(ctx.conversation_id)
-        memory_manager = getattr(conv, "_memory_manager", None)
-        parts = []
-
-        # 0. 决策卡片能力提示
-        parts.append(_DECISION_CARD_PROMPT)
+        request_items = [
+            ContextItem(
+                kind=ContextKind.INSTRUCTION,
+                scope=ContextScope.GLOBAL,
+                content=_DECISION_CARD_PROMPT,
+                source="system.decision_card",
+                priority=100,
+                sensitivity=Sensitivity.PUBLIC,
+            )
+        ]
 
         # 0a. 苏格拉底式对话 (仅对可执行意图注入)
         intent = ctx.routing_decision.intent if ctx.routing_decision else None
         if intent in _SOCRATIC_INTENTS:
-            parts.append(_SOCRATIC_PROMPT)
+            request_items.append(
+                ContextItem(
+                    kind=ContextKind.INSTRUCTION,
+                    scope=ContextScope.GLOBAL,
+                    content=_SOCRATIC_PROMPT,
+                    source="system.socratic",
+                    priority=95,
+                    sensitivity=Sensitivity.PUBLIC,
+                )
+            )
             logger.debug(f"[SystemContextStage] 注入苏格拉底提示 (intent={intent.value})")
 
-        # 1. 记忆系统
-        if memory_manager is not None:
-            try:
-                mem_prompt = memory_manager.build_system_prompt()
-                if mem_prompt:
-                    parts.append(mem_prompt)
-            except Exception as e:
-                logger.warning(f"构建系统上下文失败: {e}")
-
-        # 2. 相关历史对话搜索 (FTS5)
-        if ctx.effective_message and self._conversation_manager:
-            try:
-                search_results = self._conversation_manager.search_messages(
-                    ctx.effective_message, limit=5
-                )
-                if search_results:
-                    relevant = [
-                        m for m in search_results
-                        if len(m.get("content", "")) > 20
-                    ]
-                    if relevant:
-                        fts5_ctx = "## 相关历史对话\n以下是与当前问题相关的历史对话片段，可作为回答参考：\n"
-                        for i, r in enumerate(relevant[:3], 1):
-                            role = r.get("role", "unknown")
-                            content = r.get("content", "")[:300]
-                            fts5_ctx += f"{i}. [{role}]: {content}\n"
-                        parts.append(fts5_ctx)
-            except Exception:
-                pass  # FTS 不可用时静默跳过
-
-        # 3. Prompt skills (Agent Skills 标准 — 由 App 注入)
+        # Prompt skills and style are request-local ContextItems. Memory,
+        # knowledge and history are supplied by registered providers.
         prompt_skills = self._prompt_skills_holder.get()
         if prompt_skills:
-            parts.append(prompt_skills)
-
-        # 3a. 领域知识 (渐进式披露)
-        knowledge_mgr = self._conversation_manager.knowledge_manager
-        if knowledge_mgr is not None:
-            try:
-                knowledge_ctx = knowledge_mgr.build_knowledge_context(
-                    ctx.effective_message or ctx.user_message
+            request_items.append(
+                ContextItem(
+                    kind=ContextKind.PROMPT_SKILL,
+                    scope=ContextScope.PROJECT,
+                    content=prompt_skills,
+                    source="skills.prompt",
+                    priority=80,
+                    sensitivity=Sensitivity.PRIVATE,
                 )
-                if knowledge_ctx:
-                    parts.append(knowledge_ctx)
-            except Exception as e:
-                logger.warning(f"知识注入跳过: {e}")
+            )
 
-        # 4. 当前对话风格 (非 default 时注入)
         style_context = self._get_style_context()
         if style_context:
-            parts.append(style_context)
+            request_items.append(
+                ContextItem(
+                    kind=ContextKind.STYLE,
+                    scope=ContextScope.CONVERSATION,
+                    content=style_context,
+                    source="memory.style",
+                    priority=90,
+                    sensitivity=Sensitivity.PRIVATE,
+                    conversation_id=ctx.conversation_id,
+                )
+            )
 
-        if not parts:
-            ctx.system_context = None
-        else:
-            ctx.system_context = "\n\n---\n\n".join(parts)
+        query = ContextQuery(
+            text=ctx.effective_message or ctx.user_message,
+            conversation_id=ctx.conversation_id,
+            token_budget=4000,
+        )
+        rendered, selected_items = self._context_hub.render(
+            query,
+            extra_items=request_items,
+        )
+        ctx.system_context = rendered or None
+        ctx.metadata["context_items"] = [item.model_dump(mode="json") for item in selected_items]
 
         logger.debug(
-            f"[SystemContextStage] system_context built: "
+            f"[SystemContextStage] selected {len(selected_items)} context items, "
             f"{len(ctx.system_context) if ctx.system_context else 0} chars"
         )
         return ctx
@@ -485,6 +474,7 @@ class SystemContextStage(PipelineStage):
             return None
 
         from llm_chat.memory.templates import SOUL_STYLE_PRESETS
+
         return SOUL_STYLE_PRESETS.get(current_style)
 
 
@@ -505,6 +495,7 @@ class HistoryStage(PipelineStage):
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -517,7 +508,11 @@ class HistoryStage(PipelineStage):
         filtered = []
         found_current = False
         for msg in reversed(history):
-            if not found_current and msg.get("role") == "user" and msg.get("content") == current_msg:
+            if (
+                not found_current
+                and msg.get("role") == "user"
+                and msg.get("content") == current_msg
+            ):
                 found_current = True
                 continue
             filtered.append(msg)
@@ -551,9 +546,10 @@ class ModelRouteStage(PipelineStage):
             return ctx
         if decision.suggested_model:
             from llm_chat.intent.classifier import IntentClassifier
+
             model_hint = IntentClassifier.get_model_hint(decision.intent)
-            if hasattr(self._config, 'tools') and hasattr(self._config.tools, 'intent_model_map'):
-                model_map = getattr(self._config.tools, 'intent_model_map', {})
+            if hasattr(self._config, "tools") and hasattr(self._config.tools, "intent_model_map"):
+                model_map = getattr(self._config.tools, "intent_model_map", {})
                 suggested = model_map.get(model_hint)
                 if suggested:
                     ctx.params["model"] = suggested
@@ -579,6 +575,7 @@ class CompressStage(PipelineStage):
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -595,19 +592,26 @@ class CompressStage(PipelineStage):
             if ctx.system_context:
                 context_messages.append(ContextMessage(role="system", content=ctx.system_context))
             for msg in ctx.processed_history:
-                context_messages.append(ContextMessage(
-                    role=msg["role"], content=msg["content"],
-                    metadata=msg.get("metadata"), timestamp=msg.get("timestamp"),
-                ))
+                context_messages.append(
+                    ContextMessage(
+                        role=msg["role"],
+                        content=msg["content"],
+                        metadata=msg.get("metadata"),
+                        timestamp=msg.get("timestamp"),
+                    )
+                )
             context_messages.append(ContextMessage(role="user", content=ctx.effective_message))
 
             result = context_manager.process_context(
-                conversation_id=conv.conversation_id, messages=context_messages,
+                conversation_id=conv.conversation_id,
+                messages=context_messages,
             )
 
             total_sent_tokens = sum(count_tokens(m.content) for m in result.messages)
             final_model = ctx.params.get("model", "")
-            actual_limit = get_context_limit(final_model) if final_model else context_manager.max_model_tokens
+            actual_limit = (
+                get_context_limit(final_model) if final_model else context_manager.max_model_tokens
+            )
 
             if total_sent_tokens > actual_limit * 0.9:
                 logger.warning(
@@ -615,8 +619,10 @@ class CompressStage(PipelineStage):
                     f"强制 MANUAL 重压缩"
                 )
                 result = context_manager.process_context(
-                    conversation_id=conv.conversation_id, messages=context_messages,
-                    target_level=CompressionLevel.MANUAL, force_recompress=True,
+                    conversation_id=conv.conversation_id,
+                    messages=context_messages,
+                    target_level=CompressionLevel.MANUAL,
+                    force_recompress=True,
                 )
                 ctx.metadata["was_recompressed"] = True
 
@@ -655,6 +661,7 @@ class LLMCallStage(PipelineStage):
 
     async def setup(self, ctx: PipelineContext) -> None:
         from llm_chat.decision.submit_tool import init_card_context
+
         init_card_context()
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -666,6 +673,7 @@ class LLMCallStage(PipelineStage):
 
     async def teardown(self, ctx: PipelineContext) -> None:
         from llm_chat.decision.submit_tool import get_pending_card, clear_card_context
+
         try:
             card = get_pending_card()
             if card and ctx.on_card:
@@ -706,13 +714,9 @@ class LLMCallStage(PipelineStage):
             tools = self._client.get_builtin_tools()
             if tools:
                 return self._client.chat_with_tools(
-                    message, tools, history=history,
-                    system_context=system_context, **params
+                    message, tools, history=history, system_context=system_context, **params
                 )
-        return self._client.chat(
-            message, history=history,
-            system_context=system_context, **params
-        )
+        return self._client.chat(message, history=history, system_context=system_context, **params)
 
     async def _call_llm_stream(self, ctx: PipelineContext) -> str:
         history = ctx.processed_history
@@ -724,9 +728,12 @@ class LLMCallStage(PipelineStage):
         if self._should_use_tools():
             tools = self._client.get_builtin_tools() or []
             for chunk in self._client.chat_stream_with_tools(
-                message, tools, history=history,
+                message,
+                tools,
+                history=history,
                 system_context=system_context,
-                cancel_event=ctx.cancel_event, **params,
+                cancel_event=ctx.cancel_event,
+                **params,
             ):
                 if ctx.cancel_event and ctx.cancel_event.is_set():
                     break
@@ -744,8 +751,10 @@ class LLMCallStage(PipelineStage):
                         ctx.on_chunk(chunk)
         else:
             for chunk in self._client.chat_stream(
-                message, history=history,
-                system_context=system_context, **params,
+                message,
+                history=history,
+                system_context=system_context,
+                **params,
             ):
                 if ctx.cancel_event and ctx.cancel_event.is_set():
                     break
@@ -762,10 +771,12 @@ class LLMCallStage(PipelineStage):
 
 class PersistAssistantStage(PipelineStage):
     """持久化助手回复到 SQLite。"""
+
     name = "PersistAssistant"
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -787,10 +798,12 @@ class MemoryExtractStage(PipelineStage):
     process_pending_extractions_async() 分发到后台 daemon 线程，
     不阻塞对话管道。
     """
+
     name = "MemoryExtract"
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -818,10 +831,12 @@ class MemoryExtractStage(PipelineStage):
 
 class KnowledgeExtractStage(PipelineStage):
     """将本轮对话记录到领域知识系统，触发提取/整合/提炼。"""
+
     name = "KnowledgeExtract"
 
     def __init__(self, conversation_manager) -> None:
         from llm_chat.conversation import ConversationManager as CM
+
         self._conversation_manager: CM = conversation_manager
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -829,9 +844,7 @@ class KnowledgeExtractStage(PipelineStage):
         if knowledge_mgr is None:
             return ctx
         try:
-            knowledge_mgr.record_conversation(
-                ctx.user_message, ctx.response
-            )
+            knowledge_mgr.record_conversation(ctx.user_message, ctx.response)
         except Exception as e:
             logger.warning(f"[KnowledgeExtractStage] failed: {e}")
         return ctx
@@ -844,6 +857,7 @@ class KnowledgeExtractStage(PipelineStage):
 
 class TokenRecordStage(PipelineStage):
     """记录本轮对话的 token 消耗。"""
+
     name = "TokenRecord"
 
     def __init__(self, config) -> None:
@@ -864,7 +878,7 @@ class TokenRecordStage(PipelineStage):
         prompt_tokens = count_tokens(prompt_text)
         completion_tokens = count_tokens(ctx.response)
 
-        model = self._config.llm.model if hasattr(self._config, 'llm') else "unknown"
+        model = self._config.llm.model if hasattr(self._config, "llm") else "unknown"
 
         obs.increment("tokens.prompt", prompt_tokens)
         obs.increment("tokens.completion", completion_tokens)
@@ -873,6 +887,8 @@ class TokenRecordStage(PipelineStage):
 
         logger.debug(
             "Token recorded: prompt=%d, completion=%d, model=%s",
-            prompt_tokens, completion_tokens, model,
+            prompt_tokens,
+            completion_tokens,
+            model,
         )
         return ctx
