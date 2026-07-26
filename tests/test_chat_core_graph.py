@@ -15,14 +15,20 @@ from unittest.mock import MagicMock
 from ember_core.graph import StateGraph
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.chat_core_graph import (
-    ChatGraphState, build_chat_graph,
-    _post_shortcut_router, _post_llm_router,
-    _llm_call_node, _routing_update, _set_ctx, _clear_ctx,
+    ChatGraphState,
+    build_chat_graph,
+    _post_shortcut_router,
+    _post_llm_router,
+    _llm_call_node,
+    _routing_update,
+    _set_ctx,
+    _clear_ctx,
 )
 from llm_chat.pipeline.stage import PipelineContext
 
 
 # ── Router function tests ───────────────────────────────────────
+
 
 class TestRouting:
     def test_short_circuit_skips_to_persist(self):
@@ -120,23 +126,33 @@ class TestRouting:
 
 # ── Graph structure test ────────────────────────────────────────
 
+
 class TestGraphStructure:
     def test_graph_compiles(self):
         """The full graph should compile without errors."""
         g = build_chat_graph()
         compiled = g.compile()
-        assert compiled._entry_point == "intent"
-        assert len(compiled._nodes) == 13
+        graph = compiled.get_graph()
+        assert any(edge.source == "__start__" and edge.target == "intent" for edge in graph.edges)
         expected = {
-            "intent", "shortcut", "persist_user", "system_context",
-            "history", "model_route", "compress", "llm_call",
-            "execute_tools", "persist_assistant", "memory_extract",
-            "knowledge_extract", "token_record",
+            "intent",
+            "shortcut",
+            "persist_user",
+            "system_context",
+            "history",
+            "model_route",
+            "compress",
+            "llm_call",
+            "execute_tools",
+            "persist_assistant",
+            "memory_extract",
+            "knowledge_extract",
+            "token_record",
         }
-        assert set(compiled._nodes.keys()) == expected
+        assert set(graph.nodes) - {"__start__", "__end__"} == expected
 
     def test_conditional_edges_exist(self):
         """The graph should have conditional edge at shortcut."""
         g = build_chat_graph()
-        compiled = g.compile()
-        assert "shortcut" in compiled._conditional
+        graph = g.compile().get_graph()
+        assert any(edge.source == "shortcut" and edge.conditional for edge in graph.edges)

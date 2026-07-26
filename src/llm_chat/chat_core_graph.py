@@ -1,6 +1,6 @@
-"""ChatCoreGraph — ChatCore pipeline using ember StateGraph.
+"""ChatCoreGraph — ChatCore pipeline using LangGraph.
 
-Replaces the linear PipelineRunner with a StateGraph that supports:
+Replaces the linear PipelineRunner with a LangGraph StateGraph that supports:
     - Conditional routing: greeting → skip LLM, tool calls → loop
     - Async execution via compiled.ainvoke()
     - Interrupt points for human-in-the-loop (future)
@@ -21,8 +21,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from ember_core.graph import StateGraph, AppendReducer
 from ember_agent.consensus import init_card_context, get_pending_card, clear_card_context
+from langgraph.graph import END, StateGraph
 
 from llm_chat.config import Config
 from llm_chat.client import LLMClient
@@ -541,13 +541,13 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
     g.add_edge("intent", "shortcut")
 
     # Conditional: shortcut may skip the rest
-    g.add_conditional_edge(
+    g.add_conditional_edges(
         "shortcut",
         _post_shortcut_router,
         {
             "persist_user": "persist_user",
             "persist_assistant": "persist_assistant",
-            "__finish__": "__finish__",
+            "__finish__": END,
         },
     )
 
@@ -559,7 +559,7 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
 
     # LLM → persist (tool loop handled internally by LLMCallStage/LLMClient)
     # Graph-level tool loop: llm_call → execute_tools → llm_call (or persist)
-    g.add_conditional_edge(
+    g.add_conditional_edges(
         "llm_call",
         _post_llm_router,
         {"execute_tools": "execute_tools", "persist_assistant": "persist_assistant"},
@@ -569,7 +569,7 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
     g.add_edge("persist_assistant", "memory_extract")
     g.add_edge("memory_extract", "knowledge_extract")
     g.add_edge("knowledge_extract", "token_record")
-    g.add_edge("token_record", "__finish__")
+    g.add_edge("token_record", END)
 
     return g
 

@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for Vermilion Bird macOS .app bundle (onedir mode)."""
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 a = Analysis(
     ['src/llm_chat/cli/main.py'],
@@ -42,6 +42,8 @@ a = Analysis(
         'ember_agent.peer', 'ember_agent.peer.review',
         'ember_agent.peer.dialogue',
         'ember_agent.patterns',
+        # LangGraph application runtime and durable SQLite checkpointer
+        *collect_submodules('langgraph'),
         # Skills (懒加载，PyInstaller 无法自动检测 importlib 导入)
         'llm_chat.skills.web_search.skill',
         'llm_chat.skills.calculator.skill',

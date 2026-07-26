@@ -119,7 +119,9 @@ packages/ember-core/
 
 ### graph/ 核心 API
 
-状态图是 ember-core 的核心新增。设计目标：与 LangGraph 语义兼容但零外部依赖。
+状态图是 ember-core 的轻量基础能力。设计目标：与 LangGraph 的基础语义兼容但零外部
+依赖，适合独立包和确定性内嵌流程。vermilion-bird 主应用的 ChatCore 与持久化
+interrupt/resume 已采用 LangGraph；两者不承担同一个生产用例。
 
 ```python
 from ember_core.graph import StateGraph, NodeSpec, EdgeSpec, ConditionalEdge
@@ -362,7 +364,7 @@ vermilion-bird       pip install vermilion-bird
 | 3c | ember-agent: 实现 `CardAggregator` |
 | 3d | ember-agent: 实现 `PeerReviewTool` + `PeerDialogue` |
 | 3e | ember-agent: 实现 `MultiAgentPattern` 预设 |
-| 3f | vermilion-bird: ChatCore 管道从 PipelineRunner 迁移到 StateGraph |
+| 3f | vermilion-bird: ChatCore 管道从 PipelineRunner 迁移到 StateGraph（后续生产实现已切换 LangGraph） |
 
 ---
 
@@ -393,6 +395,7 @@ vermilion-bird       pip install vermilion-bird
 | `task_delegator/workflow_tools.py` | ExecuteWorkflowTool 依赖 Skills 系统 |
 | `decision/card_panel.py` | PyQt6 GUI 渲染 |
 | `client/`, `protocols/`, `frontends/` | LLM 调用 + UI，纯应用层 |
+| `runtime/graph_runtime.py`, `langgraph_runtime.py` | 产品 Run 与 LangGraph durable execution 的适配边界 |
 
 ---
 

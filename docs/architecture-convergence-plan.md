@@ -9,14 +9,16 @@
 |---|---|
 | 可靠性 | 修复上下文压缩、Graph 工具循环、SQLite 外键/FTS、Webhook 输入、模型 fallback 和配置 round-trip |
 | Run Runtime | Chat、Tool、Workflow、Scheduler、Webhook、Proactive 统一创建父子 Run 并记录有序事件 |
-| 授权 | CapabilityPolicy + ActionProposal 状态机；副作用工具默认先提案，支持会话级批准/拒绝和一次性执行 |
+| 可恢复执行 | Run attempt、恢复策略、幂等键、租约和检查点指针持久化；LangGraph + SQLite 承担应用图检查点 |
+| 授权 | CapabilityPolicy + ActionProposal 状态机；副作用工具默认停在 durable interrupt，批准后才恢复执行 |
 | Context Hub | memory、knowledge、历史、指令和技能上下文统一为 ContextItem，集中去重、排序和预算裁剪 |
 | Agent/Workflow | Ghost/Role 收敛到 AgentProfile，Pattern 收敛到 WorkflowSpec，并保留兼容视图 |
 | 模块边界 | GUI、飞书、浏览器、安全存储、中文检索和语义知识改为可选 extras；可选适配器延迟导入 |
 | 运行可靠性 | Scheduler 恢复持久化任务、统一业务库路径、支持 interval；飞书生命周期、限流和会话映射补齐 |
 
-本轮采用内存 RunManager 和进程内 ActionProposalManager，已经覆盖当前单机桌面产品的所有生产入口。
-持久化 RunRepository、跨进程事件总线和可视化审批中心属于下一里程碑，不是当前运行链路的双轨实现。
+Run 与 ActionProposal 已由 SQLite 持久化，GUI 执行中心支持审批、恢复、重试和重放。
+产品级 Run 是身份、审计、租约和恢复策略的事实来源；LangGraph checkpoint 是节点状态的
+事实来源，外层 Run 只保存 checkpoint 指针，不复制完整图状态。
 
 ## 1. 产品与架构原则
 
@@ -41,10 +43,10 @@ Domain
   Run / ActionProposal / ContextItem / AgentProfile / WorkflowSpec
         │
 Runtime Ports
-  ModelPort / CapabilityPort / ContextPort / EventStore / RunRepository
+  ModelPort / CapabilityPort / ContextPort / EventStore / RunRepository / GraphRuntime
         │
 Infrastructure Adapters
-  OpenAI/Anthropic/Gemini / MCP/Skills / SQLite/Files / APScheduler / PyQt/Feishu
+  OpenAI/Anthropic/Gemini / MCP/Skills / SQLite/Files / LangGraph / APScheduler / PyQt/Feishu
 ```
 
 依赖只允许从上向下指向抽象；基础设施通过组合根注入，领域层不得访问全局单例、线程局部变量或 UI 回调。
@@ -112,17 +114,21 @@ Infrastructure Adapters
 
 ### Phase 1：统一 Run Runtime
 
-**结果：当前单机运行时已完成。**
+**结果：持久化单机运行时与 LangGraph 适配器已完成。**
 
 - 新增独立、无单例的 RunRepository、RunEventBus 和 CancellationToken。
 - 首先迁移 ChatCoreGraph，再迁移子 Agent，最后迁移 Scheduler/Webhook/Proactive。
 - Graph 只负责节点编排；Run Runtime 负责生命周期、预算、取消和事件。
 - UI 由 RunEvent 驱动，不再依赖模块级 thread-local 和散落回调。
+- 主对话编排使用 LangGraph；工具审批使用 SQLite checkpointer 和 interrupt/resume。
+- ember-core 的轻量 StateGraph 继续服务零依赖基础包，不作为桌面应用的第二套生产运行时。
 
 **验收条件**
 
 - 所有生产入口都产生可查询的 Run。
 - 任意 Run 可取消、可设置预算并能展示失败节点。
+- 中断的工具审批在关闭应用后仍可从同一 checkpoint 恢复。
+- 同一幂等键不会创建两次逻辑 Run，多进程租约不会重复认领执行。
 - 父子 Run 关系能够覆盖多 Agent 工作流。
 
 ### Phase 2：统一授权
@@ -163,6 +169,8 @@ Infrastructure Adapters
 - 应用层只有一个发送消息生产入口。
 - Scheduler、Webhook、Proactive 不得直接实现 LLM/工具循环。
 - Core/Domain 不得新增进程级可变单例。
+- `llm_chat` 的生产图不得重新依赖 ember-core StateGraph；必须经过 GraphRuntime 端口。
+- Run checkpoint 只保存图指针，不得复制 LangGraph 的完整 state。
 - 每个线程池、客户端和后台服务都有显式生命周期。
 - 每个包可独立安装、导入和运行测试。
 - 配置 YAML round-trip 不丢字段。

@@ -6,14 +6,20 @@ from unittest.mock import MagicMock, patch, PropertyMock
 from pydantic import BaseModel
 
 from ember_core.graph import StateGraph
-from llm_chat.chat_core_graph import ChatCoreGraph, ChatGraphState, build_chat_graph as build_ch_graph
+from llm_chat.chat_core_graph import (
+    ChatCoreGraph,
+    ChatGraphState,
+    build_chat_graph as build_ch_graph,
+)
 from llm_chat.config import Config
 
 
 # ── Mock helpers ─────────────────────────────────────────────────
 
+
 class MockLLMClient:
     """Mock LLM client that returns controlled responses."""
+
     def __init__(self, response_text="Mock response", has_tools=True):
         self._response = response_text
         self._has_tools = has_tools
@@ -33,28 +39,39 @@ class MockLLMClient:
     def chat_stream(self, message, history=None, system_context=None, **params):
         yield self._response
 
-    def chat_stream_with_tools(self, message, tools, history=None, system_context=None, cancel_event=None, **params):
+    def chat_stream_with_tools(
+        self, message, tools, history=None, system_context=None, cancel_event=None, **params
+    ):
         yield self._response
 
 
 class MockConversation:
-    def add_user_message(self, msg): pass
-    def add_assistant_message(self, msg): pass
-    def get_messages(self, limit=None): return []
+    def add_user_message(self, msg):
+        pass
+
+    def add_assistant_message(self, msg):
+        pass
+
+    def get_messages(self, limit=None):
+        return []
 
 
 class MockConversationManager:
     def __init__(self):
         self._conv = MockConversation()
+
     def get_conversation(self, cid):
         return self._conv
+
     def search_similar(self, query, limit=5):
         return []
+
     def get_or_create_conversation(self, cid, title=""):
         return self._conv
 
 
 # ── Tests ───────────────────────────────────────────────────────
+
 
 class TestChatCoreGraphIntegration:
     """End-to-end tests with mocked LLM client."""
@@ -90,11 +107,12 @@ class TestChatCoreGraphIntegration:
         """Verify the graph has all 12 nodes after compilation."""
         g = build_ch_graph()
         compiled = g.compile()
-        node_names = set(compiled._nodes.keys())
+        graph = compiled.get_graph()
+        node_names = set(graph.nodes)
         assert "intent" in node_names
         assert "llm_call" in node_names
         assert "persist_assistant" in node_names
-        assert compiled._entry_point == "intent"
+        assert any(edge.source == "__start__" and edge.target == "intent" for edge in graph.edges)
 
     def test_routing_post_shortcut(self):
         """Verify shortcut routing logic."""
