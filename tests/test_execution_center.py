@@ -1,16 +1,13 @@
-import os
 from types import SimpleNamespace
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from llm_chat.frontends.execution_center import ExecutionCenterDialog
-from llm_chat.runtime import (
+from llm_chat.frontends.execution_center import ExecutionCenterDialog  # noqa: E402
+from llm_chat.runtime import (  # noqa: E402
     ActionProposalManager,
     ActionStatus,
     Capability,

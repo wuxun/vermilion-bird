@@ -236,13 +236,14 @@ class RunManager:
             for run in self._runs.values():
                 if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                     continue
+                previous_status = run.status.value
                 run.status = RunStatus.FAILED
                 run.error = "应用重启前运行未正常结束"
                 run.finished_at = utc_now()
                 event = RunEvent(
                     sequence=len(run.events) + 1,
                     type="run.recovered",
-                    data={"previous_status": "interrupted"},
+                    data={"previous_status": previous_status},
                 )
                 run.events.append(event)
                 self._persist_run_locked(run)

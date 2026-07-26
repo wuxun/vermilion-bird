@@ -129,6 +129,7 @@ def test_run_manager_restores_history_and_recovers_interrupted_run(storage):
     assert restored_interrupted.status == RunStatus.FAILED
     assert restored_interrupted.error == "应用重启前运行未正常结束"
     assert restored_interrupted.events[-1].type == "run.recovered"
+    assert restored_interrupted.events[-1].data["previous_status"] == RunStatus.RUNNING.value
 
 
 def test_pending_action_survives_restart_and_updates_observers(storage):

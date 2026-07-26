@@ -137,7 +137,7 @@ class StorageRuntimeMixin:
                 """,
                 params,
             ).fetchall()
-            return [self._row_to_run(row, self._fetch_run_events(conn, row["id"])) for row in rows]
+            return self._rows_to_runs(conn, rows)
 
     def list_child_runs(self, parent_run_id: str) -> List[Run]:
         with self._get_connection() as conn:
@@ -149,7 +149,32 @@ class StorageRuntimeMixin:
                 """,
                 (parent_run_id,),
             ).fetchall()
-            return [self._row_to_run(row, self._fetch_run_events(conn, row["id"])) for row in rows]
+            return self._rows_to_runs(conn, rows)
+
+    @classmethod
+    def _rows_to_runs(cls, conn: Any, rows: Any) -> List[Run]:
+        """批量装配 Run，避免列表刷新时逐条读取事件。"""
+
+        if not rows:
+            return []
+        run_ids = [row["id"] for row in rows]
+        events_by_run = {run_id: [] for run_id in run_ids}
+        # 保持低于旧版 SQLite 常见的 999 个绑定参数上限。
+        for start in range(0, len(run_ids), 500):
+            chunk = run_ids[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            event_rows = conn.execute(
+                f"""
+                SELECT run_id, sequence, type, timestamp, data_json
+                FROM run_events
+                WHERE run_id IN ({placeholders})
+                ORDER BY run_id, sequence ASC
+                """,
+                chunk,
+            ).fetchall()
+            for event in event_rows:
+                events_by_run[event["run_id"]].append(event)
+        return [cls._row_to_run(row, events_by_run.get(row["id"], [])) for row in rows]
 
     @staticmethod
     def _fetch_run_events(conn: Any, run_id: str) -> Any:

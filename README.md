@@ -14,6 +14,7 @@
 - **定时任务调度** — APScheduler + Webhook 事件驱动触发器，支持飞书通知
 - **飞书（Lark）集成** — WebSocket 实时消息，自动重连 + 事件去重
 - **图形界面 (PyQt6)** — 对话、模型切换、MCP 配置、技能管理、定时任务面板
+- **执行与审批中心** — Run/事件持久化、跨会话执行历史、高风险动作人工审批与重启恢复
 - **会话管理** — SQLite（WAL + FTS5）持久化，支持中文分词搜索
 - **子 Agent 委托** — spawn_subagent 动态创建子对话，Workflow 引擎编排多工具
 - **API Key 安全存储** — 系统密钥环（macOS Keychain / Linux Secret Service）
@@ -77,6 +78,11 @@ poetry run vermilion-bird chat --gui
 # 飞书服务
 poetry run vermilion-bird feishu
 ```
+
+GUI 顶栏的 `🧭` 按钮（或 `Ctrl+Shift+R`）可打开“执行与审批中心”。“运行记录”
+页可按类型和状态筛选并查看完整事件时间线；“审批”页集中展示待执行动作的风险、
+能力、影响和参数，只有明确批准后才会执行。待审批动作和历史 Run 均保存在 SQLite
+中，重启应用后仍可查看和处理。
 
 ### 打包独立应用
 
@@ -149,6 +155,7 @@ src/llm_chat/
 ├── config.py           # Pydantic 配置管理（YAML/环境变量/CLI）
 ├── conversation.py     # 会话管理 + FTS5 搜索
 ├── storage/            # SQLite 单例（WAL + 迁移 + CRUD）
+├── runtime/            # Run 生命周期、事件流、能力策略与动作审批
 ├── protocols/          # 协议适配器（openai/anthropic/gemini）
 ├── frontends/          # 用户界面（CLI / PyQt6 GUI / 飞书）
 ├── mcp/                # MCP 客户端（stdio/SSE + 后台管理）
