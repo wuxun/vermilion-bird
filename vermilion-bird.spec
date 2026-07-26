@@ -2,6 +2,10 @@
 """PyInstaller spec for Vermilion Bird macOS .app bundle (onedir mode)."""
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+import tomllib
+
+with open('pyproject.toml', 'rb') as project_file:
+    APP_VERSION = tomllib.load(project_file)['tool']['poetry']['version']
 
 a = Analysis(
     ['src/llm_chat/cli/main.py'],
@@ -96,6 +100,7 @@ a = Analysis(
     excludes=[
         'tkinter', 'matplotlib', 'numpy', 'scipy',
         'pandas', 'PIL', 'cv2',
+        'pytest', 'pytest_cov',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -140,8 +145,8 @@ app = BUNDLE(
     bundle_identifier='com.vermilion-bird.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '0.2.1',
-        'CFBundleVersion': '0.2.1',
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion': APP_VERSION,
         'NSHumanReadableCopyright': 'Vermilion Bird - LLM Chat Client',
     },
 )

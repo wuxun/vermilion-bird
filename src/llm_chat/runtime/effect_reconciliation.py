@@ -46,6 +46,7 @@ class EffectReconciliationService:
         result: Any = None,
         actor: str = "local-user",
     ) -> EffectRecord:
+        resolution = EffectResolution(resolution)
         record = self.outbox.resolve_uncertain(
             effect_key=effect_key,
             resolution=resolution,

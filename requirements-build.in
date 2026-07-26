@@ -1,0 +1,38 @@
+# Desktop build/test dependency input (semantic ML extra intentionally excluded).
+# Regenerate with Python 3.12:
+#   python -m pip install "pip==25.3" "pip-tools==7.5.2"
+#   pip-compile --resolver=backtracking --output-file=requirements-build.lock \
+#     requirements-build.in
+
+poetry-core==2.1.3
+pydantic>=2.5,<3
+pydantic-settings>=2.1,<3
+pyyaml>=6,<7
+requests>=2.31,<3
+click>=8.1.7,<9
+mcp>=1,<2
+httpx>=0.27,<0.28
+httpx-sse>=0.4,<0.5
+langgraph>=1.2.9,<2
+langgraph-checkpoint-sqlite>=3.1,<4
+duckduckgo-search>=6,<7
+ddgs>=9,<10
+tiktoken>=0.7,<0.8
+beautifulsoup4>=4.12,<5
+apscheduler>=3.9.1,<4
+sqlalchemy>=2,<3
+trafilatura>=1.7,<2
+feedparser>=6,<7
+
+# Selected desktop extras.
+PyQt6>=6.6,<7
+markdown>=3.5,<4
+lark-oapi>=1,<2
+playwright>=1.40,<2
+keyring>=24,<25
+jieba>=0.42.1,<0.43
+
+# Test and packaging toolchain.
+pytest==7.4.4
+pytest-cov==4.1.0
+pyinstaller==6.20.0

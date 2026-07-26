@@ -1,4 +1,4 @@
-name: Build & Package
+name: Test & Package
 
 on:
   push:
@@ -10,77 +10,75 @@ on:
     types: [published]
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
-    permissions:
-      contents: write  # 用于创建 Release 和上传附件
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.10", "3.12", "3.13"]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Poetry
+      - name: Install test dependencies
         run: |
-          pip install poetry
+          pip install -r requirements-build.lock
+          pip install --no-deps --no-build-isolation \
+            -e packages/ember-core \
+            -e packages/ember-agent \
+            -e .
+          pip check
 
-      - name: Install project dependencies
-        run: |
-          poetry install --no-interaction --no-ansi
+      - name: Compile
+        run: python -m compileall -q src packages
 
-      - name: Install PyInstaller
-        run: |
-          poetry run pip install pyinstaller
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q
 
-      - name: Convert icon (PNG → ICNS)
-        run: |
-          if [ -f vermilion_bird_small.png ] && [ ! -f icon.icns ]; then
-            mkdir -p icon.iconset
-            for size in 16 32 128 256 512; do
-              sips -z $size $size vermilion_bird_small.png \
-                --out "icon.iconset/icon_${size}x${size}.png" >/dev/null
-              sips -z $((size*2)) $((size*2)) vermilion_bird_small.png \
-                --out "icon.iconset/icon_${size}x${size}@2x.png" >/dev/null
-            done
-            sips -z 1024 1024 vermilion_bird_small.png \
-              --out icon.iconset/icon_512x512@2x.png >/dev/null
-            iconutil -c icns icon.iconset -o icon.icns
-            rm -rf icon.iconset
-          fi
+  build-macos:
+    name: Package macOS arm64
+    needs: test
+    runs-on: macos-14
+    permissions:
+      contents: write
 
-      - name: Build with PyInstaller
-        run: |
-          poetry run pyinstaller vermilion-bird.spec
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Prepare artifacts
-        run: |
-          rm -rf dist/vermilion-bird-gui  # 清理 onedir 目录
-          # 打包成 zip 便于下载
-          cd dist
-          zip -r ../vermilion-bird-macos.zip \
-            vermilion-bird \
-            "Vermilion Bird.app"
-          cd ..
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build and smoke test
+        env:
+          VB_BUILD_PYTHON: python3.12
+        run: ./build.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vermilion-bird-macos-${{ github.ref_name }}
+          name: Vermilion-Bird-macOS-arm64-${{ github.ref_name }}
           path: |
-            dist/vermilion-bird
-            dist/Vermilion Bird.app
+            dist/Vermilion-Bird-macOS-arm64.zip
+            dist/Vermilion-Bird-macOS-arm64.zip.sha256
+          if-no-files-found: error
           compression-level: 0
 
-      - name: Upload to Release (if tagged)
+      - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            vermilion-bird-macos.zip
+            dist/Vermilion-Bird-macOS-arm64.zip
+            dist/Vermilion-Bird-macOS-arm64.zip.sha256

@@ -10,7 +10,7 @@
 | 可靠性 | 修复上下文压缩、Graph 工具循环、SQLite 外键/FTS、Webhook 输入、模型 fallback 和配置 round-trip |
 | Run Runtime | Chat、Tool、Workflow、Scheduler、Webhook、Proactive 统一创建父子 Run 并记录有序事件 |
 | 可恢复执行 | Run attempt、恢复策略、幂等键、租约和检查点指针持久化；LangGraph + SQLite 承担应用图检查点 |
-| 崩溃一致性 | EffectOutbox 保存副作用执行意图与结果；中断执行转 uncertain，不自动重复副作用 |
+| 崩溃一致性 | EffectOutbox 保存执行意图与结果；中断转 uncertain；GUI 对账并同步收敛 Run/审批 |
 | 自动恢复 | 启动协调器恢复安全 checkpoint/重试任务，长执行通过 heartbeat 自动续租 |
 | 授权 | CapabilityPolicy + ActionProposal 状态机；副作用工具默认停在 durable interrupt，批准后才恢复执行 |
 | Context Hub | memory、knowledge、历史、指令和技能上下文统一为 ContextItem，集中去重、排序和预算裁剪 |
@@ -132,6 +132,8 @@ Infrastructure Adapters
 - SchedulerService 已收敛到 TaskExecutor，不再维护第二套 Run/重试/通知生命周期。
 - 会话消息写入具有稳定执行幂等键，节点重入不会重复落库。
 - 副作用执行通过 EffectOutbox 落盘，崩溃边界上的未知结果转为人工对账状态。
+- 执行中心提供副作用对账工作台；成功/未发生/允许重试结论带完整审计信息，并由启动修复
+  自动补齐 Outbox 已落盘、关联 Run/ActionProposal 尚未同步的崩溃窗口。
 - Chat checkpoint 具有显式 schema version，执行中心展示 handler、恢复动作、租约与心跳。
 - ember-core 的轻量 StateGraph 继续服务零依赖基础包，不作为桌面应用的第二套生产运行时。
 
@@ -183,6 +185,7 @@ Infrastructure Adapters
 - Core/Domain 不得新增进程级可变单例。
 - `llm_chat` 的生产图不得重新依赖 ember-core StateGraph；必须经过 GraphRuntime 端口。
 - Run checkpoint 只保存图指针，不得复制 LangGraph 的完整 state。
+- 不确定副作用不得自动重放；只有人工核实后才能终结或显式恢复为可重试状态。
 - 每个线程池、客户端和后台服务都有显式生命周期。
 - 每个包可独立安装、导入和运行测试。
 - 配置 YAML round-trip 不丢字段。

@@ -14,7 +14,7 @@
 - **定时任务调度** — APScheduler + Webhook 事件驱动触发器，支持飞书通知
 - **飞书（Lark）集成** — WebSocket 实时消息，自动重连 + 事件去重
 - **图形界面 (PyQt6)** — 对话、模型切换、MCP 配置、技能管理、定时任务面板
-- **执行与审批中心** — Run/事件持久化、跨会话执行历史、高风险动作人工审批与重启恢复
+- **执行与审批中心** — Run/事件持久化、高风险动作审批、重启恢复与副作用人工对账
 - **会话管理** — SQLite（WAL + FTS5）持久化，支持中文分词搜索
 - **子 Agent 委托** — spawn_subagent 动态创建子对话，Workflow 引擎编排多工具
 - **API Key 安全存储** — 系统密钥环（macOS Keychain / Linux Secret Service）
@@ -82,7 +82,9 @@ poetry run vermilion-bird feishu
 GUI 顶栏的 `🧭` 按钮（或 `Ctrl+Shift+R`）可打开“执行与审批中心”。“运行记录”
 页可按类型和状态筛选并查看完整事件时间线；“审批”页集中展示待执行动作的风险、
 能力、影响和参数，只有明确批准后才会执行。待审批动作和历史 Run 均保存在 SQLite
-中。副作用工具由 LangGraph 持久化到审批 interrupt，应用重启后仍可继续批准或拒绝；
+中。“副作用对账”页集中处理崩溃窗口内无法确认结果的外部操作，要求填写审计说明，
+并可将 Outbox、审批记录和来源 Run 可恢复地收敛为成功或失败。副作用工具由 LangGraph
+持久化到审批 interrupt，应用重启后仍可继续批准或拒绝；
 Chat 与普通可恢复工作流可从 SQLite checkpoint 重试、恢复或重放；Scheduler、
 Webhook 和 Proactive 任务也通过同一 Run Dispatcher 管理。Chat 消息写入带执行幂等键，
 恢复节点时不会重复保存同一轮消息。
@@ -90,11 +92,17 @@ Webhook 和 Proactive 任务也通过同一 Run Dispatcher 管理。Chat 消息�
 ### 打包独立应用
 
 ```bash
-# 需要 macOS + PyInstaller
+# 需要 macOS + Python 3.12/3.13；依赖安装在隔离的 .venv-build
 ./build.sh
-# 产物: dist/vermilion-bird/vermilion-bird (CLI) + dist/Vermilion Bird.app (GUI)
+# 产物同时包含应用、Release ZIP 和 SHA-256 校验文件
+# dist/Vermilion Bird.app
+# dist/Vermilion-Bird-macOS-arm64.zip
+# dist/Vermilion-Bird-macOS-arm64.zip.sha256
 open "dist/Vermilion Bird.app"
 ```
+
+发布依赖由 `requirements-build.in` 声明并固定在 `requirements-build.lock`。更新依赖时
+应使用 Python 3.12 按输入文件顶部命令重新生成锁文件，并将二者一同提交。
 
 ## 支持的协议
 
@@ -174,7 +182,8 @@ src/llm_chat/
 
 ## GitHub Actions 自动打包
 
-推送到 `main` 分支或打 tag 会自动构建：
+CI 会先在 Python 3.10、3.12、3.13 上执行编译和完整测试，再以 Python 3.12 构建
+macOS arm64 发布包。推送到 `main` 分支或打 tag 会自动运行：
 
 ```bash
 git tag v0.0.1
