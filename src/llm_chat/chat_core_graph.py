@@ -50,6 +50,7 @@ from llm_chat.runtime import (
     CapabilityPolicy,
     PolicyDecision,
     RecoveryPolicy,
+    RunLeaseHeartbeat,
     RunManager,
     RunStatus,
     RunType,
@@ -747,11 +748,12 @@ class ChatCoreGraph:
 
         try:
             self._prepare_durable_run(run.id)
-            output = self._compiled.invoke(
-                state,
-                config=self._graph_config(run.id),
-                context=runtime_context,
-            )
+            with RunLeaseHeartbeat(self.run_manager, run.id, lease_seconds=120):
+                output = self._compiled.invoke(
+                    state,
+                    config=self._graph_config(run.id),
+                    context=runtime_context,
+                )
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run.id)
         except Exception as e:
@@ -829,11 +831,12 @@ class ChatCoreGraph:
 
         try:
             self._prepare_durable_run(run.id)
-            output = self._compiled.invoke(
-                state,
-                config=self._graph_config(run.id),
-                context=runtime_context,
-            )
+            with RunLeaseHeartbeat(self.run_manager, run.id, lease_seconds=120):
+                output = self._compiled.invoke(
+                    state,
+                    config=self._graph_config(run.id),
+                    context=runtime_context,
+                )
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run.id)
         except Exception as e:
@@ -928,11 +931,12 @@ class ChatCoreGraph:
 
         init_card_context()
         try:
-            output = self._compiled.invoke(
-                graph_input,
-                config=self._graph_config(run_id),
-                context=runtime_context,
-            )
+            with RunLeaseHeartbeat(self.run_manager, run_id, lease_seconds=120):
+                output = self._compiled.invoke(
+                    graph_input,
+                    config=self._graph_config(run_id),
+                    context=runtime_context,
+                )
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run_id)
             return self.run_manager.complete(run_id, final_state.response)

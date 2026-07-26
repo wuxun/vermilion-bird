@@ -30,6 +30,8 @@ from .effects import (
     EffectStatus,
     UncertainEffectError,
 )
+from .lease import RunLeaseHeartbeat
+from .recovery import RecoveryReport, RunRecoveryCoordinator
 from .actions import (
     ActionProposal,
     ActionProposalManager,
@@ -57,10 +59,13 @@ __all__ = [
     "LangGraphRuntime",
     "PolicyDecision",
     "RecoveryPolicy",
+    "RecoveryReport",
     "Run",
     "RunDispatcher",
     "RunHandler",
     "RunHandlerRegistry",
+    "RunLeaseHeartbeat",
+    "RunRecoveryCoordinator",
     "RunCheckpoint",
     "RunEvent",
     "RunStatus",

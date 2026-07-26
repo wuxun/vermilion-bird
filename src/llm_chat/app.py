@@ -27,6 +27,7 @@ from llm_chat.runtime import (
     EffectOutbox,
     RunDispatcher,
     RunHandlerRegistry,
+    RunRecoveryCoordinator,
     RunManager,
 )
 
@@ -105,6 +106,10 @@ class App:
         self._ensure_graph_infrastructure()
         self.chat_core = self._init_chat_core()
         self.run_handlers.register("chat", self.chat_core)
+        self.run_recovery = RunRecoveryCoordinator(
+            run_manager=self.run_manager,
+            dispatcher=self.run_dispatcher,
+        )
         _t5 = time.time()
         logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
         self._init_prompt_skills()
@@ -894,6 +899,7 @@ class App:
         # 异步启动 Docker 沙箱（不阻塞界面）
         self._start_docker_sandbox_async()
         self.service_manager.start_all()
+        self.run_recovery.start_async()
         # 调度器启动后注册主动聊天任务（add_job 在 start 之后才能持久化到 apscheduler_jobs 表）
         self._register_proactive_chat_task()
         if self.current_frontend:

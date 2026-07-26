@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from .graph_runtime import GraphExecutionResult, GraphRuntime
 from .manager import RunManager
+from .lease import RunLeaseHeartbeat
 from .models import RecoveryPolicy, Run, RunStatus, RunType
 
 logger = logging.getLogger(__name__)
@@ -157,7 +158,12 @@ class GraphExecutionService:
 
     def _execute(self, run_id: str, operation) -> Run:
         try:
-            result = operation()
+            with RunLeaseHeartbeat(
+                self.run_manager,
+                run_id,
+                lease_seconds=self.lease_seconds,
+            ):
+                result = operation()
             return self._reconcile(run_id, result)
         except Exception as exc:
             logger.exception("Graph execution failed for run %s", run_id)
