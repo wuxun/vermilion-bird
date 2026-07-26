@@ -45,12 +45,12 @@ rm -f dist/vermilion-bird-gui
 
 echo ""
 echo "=== 打包完成 ==="
-CLI_SIZE=$(ls -lh dist/vermilion-bird 2>/dev/null | awk '{print $5}')
+CLI_SIZE=$(ls -lh dist/vermilion-bird/vermilion-bird 2>/dev/null | awk '{print $5}')
 APP_SIZE=$(du -sh 'dist/Vermilion Bird.app' 2>/dev/null | awk '{print $1}')
-echo "CLI:   dist/vermilion-bird          (${CLI_SIZE:-?})"
+echo "CLI:   dist/vermilion-bird/vermilion-bird  (${CLI_SIZE:-?})"
 echo "GUI:   dist/Vermilion Bird.app      (${APP_SIZE:-?})"
 echo ""
 echo "使用方式:"
-echo "  ./dist/vermilion-bird chat              # CLI 模式"
-echo "  ./dist/vermilion-bird chat --gui        # GUI 模式"
+echo "  ./dist/vermilion-bird/vermilion-bird chat        # CLI 模式"
+echo "  ./dist/vermilion-bird/vermilion-bird chat --gui  # GUI 模式"
 echo "  open 'dist/Vermilion Bird.app'          # 双击启动 GUI"

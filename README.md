@@ -90,7 +90,7 @@ GUI 顶栏的 `🧭` 按钮（或 `Ctrl+Shift+R`）可打开“执行与审批�
 ```bash
 # 需要 macOS + PyInstaller
 ./build.sh
-# 产物: dist/vermilion-bird (CLI) + dist/Vermilion Bird.app (GUI)
+# 产物: dist/vermilion-bird/vermilion-bird (CLI) + dist/Vermilion Bird.app (GUI)
 open "dist/Vermilion Bird.app"
 ```
 
