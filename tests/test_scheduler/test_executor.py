@@ -133,6 +133,28 @@ class TestTaskExecutorInit:
         assert children == []
         assert mock_app.chat_core.send_message.call_args.kwargs["parent_run_id"] == parent.id
 
+    def test_failed_scheduled_run_can_retry_through_its_handler(
+        self,
+        mock_app,
+        mock_storage,
+        llm_chat_task,
+    ):
+        task = llm_chat_task.model_copy(update={"max_retries": 0})
+        mock_app.run_manager = RunManager()
+        mock_storage.load_task.return_value = task
+        mock_app.client.chat.side_effect = [RuntimeError("transient"), "recovered"]
+        executor = TaskExecutor(app=mock_app, task_storage=mock_storage)
+
+        failed_execution = executor.execute(task)
+        failed_run = mock_app.run_manager.list(limit=1)[0]
+        completed_run = executor.retry(failed_run.id)
+
+        assert failed_execution.status == TaskStatus.FAILED
+        assert failed_run.metadata["run_handler"] == "scheduled"
+        assert completed_run.status == RunStatus.COMPLETED
+        assert completed_run.result == "recovered"
+        assert completed_run.attempt == 2
+
 
 class TestExecuteLLMChat:
     """Tests for LLM chat task execution."""

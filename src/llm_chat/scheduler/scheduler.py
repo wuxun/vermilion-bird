@@ -8,15 +8,15 @@ from __future__ import annotations
 import logging
 import os
 import json
-import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, List, Any, Dict
 
 # APScheduler imports are delayed to avoid pkg_resources dependency at module load time
 # This is critical for Python 3.14 compatibility (pkg_resources deprecated)
 
-from .models import Task, TaskType, TaskStatus, TaskExecution
-from llm_chat.runtime import RunType
+from .models import Task, TaskType
+from .task_executor import TaskExecutor
+from llm_chat.runtime import RunHandlerRegistry
 
 if TYPE_CHECKING:
     from llm_chat.config import SchedulerConfig
@@ -96,6 +96,22 @@ class SchedulerService:
         self._scheduler_id = "default"
         # 立即注册到全局注册表
         SchedulerService._instances[self._scheduler_id] = self
+        self._task_executor = TaskExecutor(
+            app,
+            task_storage,
+            task_runner=lambda task, parent_run_id: self._run_task(
+                task,
+                parent_run_id=parent_run_id,
+            ),
+            on_complete=self._notify_task_completion,
+        )
+        run_handlers = getattr(app, "run_handlers", None)
+        if isinstance(run_handlers, RunHandlerRegistry):
+            run_handlers.register(
+                "scheduled",
+                self._task_executor,
+                replace=True,
+            )
 
         self._setup_scheduler()
 
@@ -498,59 +514,12 @@ class SchedulerService:
         raise ValueError(f"无法解析时间格式: {date_str}，支持的格式: YYYY-MM-DD HH:MM:SS 或 ISO 格式")
 
     def _execute_task(self, task_id: str, task_override: Optional[Task] = None):
-        """执行任务（由调度器调用）。
-
-        Args:
-            task_id: 任务 ID
-        """
-        execution_id = str(uuid.uuid4())
-        started_at = datetime.now()
-
+        """通过统一 TaskExecutor 执行并记录 Run、重试和通知。"""
         task = task_override or self._storage.load_task(task_id)
         if not task:
             logger.error(f"Task not found: {task_id}")
             return
-
-        run_type = {
-            TaskType.WEBHOOK: RunType.WEBHOOK,
-            TaskType.PROACTIVE_CHAT: RunType.PROACTIVE,
-        }.get(task.task_type, RunType.SCHEDULED)
-        run = self._app.run_manager.start(
-            run_type,
-            input={"task_id": task.id, "params": task.params},
-            metadata={"task_name": task.name, "task_type": task.task_type.value},
-        )
-
-        execution = TaskExecution(
-            id=execution_id,
-            task_id=task_id,
-            status=TaskStatus.RUNNING,
-            started_at=started_at,
-            retry_count=0,
-        )
-        self._storage.save_execution(execution)
-
-        try:
-            result = self._run_task(task, parent_run_id=run.id)
-
-            execution.status = TaskStatus.COMPLETED
-            execution.finished_at = datetime.now()
-            execution.result = result
-            self._storage.save_execution(execution)
-
-            logger.info(f"Task completed: {task_id}")
-            self._app.run_manager.complete(run.id, result)
-            self._notify_task_completion(task, result, success=True)
-
-        except Exception as e:
-            execution.status = TaskStatus.FAILED
-            execution.finished_at = datetime.now()
-            execution.error = str(e)
-            self._storage.save_execution(execution)
-
-            logger.error(f"Task failed: {task_id} - {e}")
-            self._app.run_manager.fail(run.id, str(e))
-            self._notify_task_completion(task, str(e), success=False)
+        return self._task_executor.execute(task)
 
     def _run_task(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """运行任务逻辑。

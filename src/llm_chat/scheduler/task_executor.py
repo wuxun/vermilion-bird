@@ -2,9 +2,9 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
-from llm_chat.runtime import RunManager, RunType
+from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
 from llm_chat.scheduler.models import Task, TaskExecution, TaskStatus, TaskType
 
 if TYPE_CHECKING:
@@ -19,9 +19,18 @@ class TaskExecutor:
     base_delay: float = 1.0
     max_delay: float = 60.0
 
-    def __init__(self, app: "App", task_storage: "Storage"):
+    def __init__(
+        self,
+        app: "App",
+        task_storage: "Storage",
+        *,
+        task_runner: Optional[Callable[[Task, Optional[str]], str]] = None,
+        on_complete: Optional[Callable[[Task, str, bool], None]] = None,
+    ):
         self.app = app
         self.task_storage = task_storage
+        self._task_runner = task_runner
+        self._on_complete = on_complete
         candidate = getattr(app, "run_manager", None)
         self.run_manager = candidate if isinstance(candidate, RunManager) else None
 
@@ -37,9 +46,31 @@ class TaskExecutor:
             run = self.run_manager.start(
                 run_type,
                 input={"task_id": task.id, "params": task.params},
-                metadata={"task_name": task.name, "task_type": task.task_type.value},
+                metadata={
+                    "task_name": task.name,
+                    "task_type": task.task_type.value,
+                    "task_id": task.id,
+                    "execution_id": execution_id,
+                    "run_handler": "scheduled",
+                },
+                recovery_policy=RecoveryPolicy.RETRY,
+                max_attempts=max(2, task.max_retries + 1),
             )
+        return self._execute_existing(
+            task,
+            execution_id=execution_id,
+            started_at=started_at,
+            run_id=run.id if run else None,
+        )
 
+    def _execute_existing(
+        self,
+        task: Task,
+        *,
+        execution_id: str,
+        started_at: datetime,
+        run_id: Optional[str],
+    ) -> TaskExecution:
         if not task.enabled:
             execution = TaskExecution(
                 id=execution_id,
@@ -52,8 +83,9 @@ class TaskExecutor:
                 retry_count=0,
             )
             self.task_storage.save_execution(execution)
-            if run:
-                self.run_manager.fail(run.id, execution.error)
+            if run_id:
+                self.run_manager.fail(run_id, execution.error)
+            self._notify(task, execution.error or "Task is disabled", False)
             return execution
 
         retry_count = 0
@@ -63,18 +95,20 @@ class TaskExecutor:
 
         while retry_count < max_attempts:
             try:
-                if task.task_type in {
+                if self._task_runner is not None:
+                    result = self._task_runner(task, run_id)
+                elif task.task_type in {
                     TaskType.LLM_CHAT,
                     TaskType.PROACTIVE_CHAT,
                 }:
                     result = self._execute_llm_chat(
                         task,
-                        parent_run_id=run.id if run else None,
+                        parent_run_id=run_id,
                     )
                 elif task.task_type == TaskType.WEBHOOK:
                     result = self._execute_webhook(
                         task,
-                        parent_run_id=run.id if run else None,
+                        parent_run_id=run_id,
                     )
                 elif task.task_type == TaskType.SKILL_EXECUTION:
                     result = self._execute_skill(task)
@@ -95,8 +129,9 @@ class TaskExecutor:
                 )
                 self.task_storage.save_execution(execution)
                 logger.info(f"Task {task.id} completed successfully after {retry_count} retries")
-                if run:
-                    self.run_manager.complete(run.id, result)
+                if run_id:
+                    self.run_manager.complete(run_id, result)
+                self._notify(task, result or "", True)
                 return execution
 
             except Exception as e:
@@ -123,9 +158,69 @@ class TaskExecutor:
         )
         self.task_storage.save_execution(execution)
         logger.error(f"Task {task.id} failed after {retry_count} attempts: {last_error}")
-        if run:
-            self.run_manager.fail(run.id, last_error or "Task execution failed")
+        if run_id:
+            self.run_manager.fail(run_id, last_error or "Task execution failed")
+        self._notify(task, last_error or "Task execution failed", False)
         return execution
+
+    def retry(self, run_id: str):
+        if self.run_manager is None:
+            raise ValueError("Scheduled run manager is unavailable")
+        run = self.run_manager.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        task = self.task_storage.load_task(str(run.metadata.get("task_id", "")))
+        if task is None:
+            raise ValueError(f"Scheduled task for run {run_id} no longer exists")
+        self.run_manager.retry(run_id)
+        self._execute_existing(
+            task,
+            execution_id=str(uuid.uuid4()),
+            started_at=datetime.now(),
+            run_id=run_id,
+        )
+        restored = self.run_manager.get(run_id)
+        assert restored is not None
+        return restored
+
+    def replay(self, run_id: str):
+        if self.run_manager is None:
+            raise ValueError("Scheduled run manager is unavailable")
+        source = self.run_manager.get(run_id)
+        if source is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        task = self.task_storage.load_task(str(source.metadata.get("task_id", "")))
+        if task is None:
+            raise ValueError(f"Scheduled task for run {run_id} no longer exists")
+        replay = self.run_manager.replay(run_id)
+        self._execute_existing(
+            task,
+            execution_id=str(uuid.uuid4()),
+            started_at=datetime.now(),
+            run_id=replay.id,
+        )
+        restored = self.run_manager.get(replay.id)
+        assert restored is not None
+        return restored
+
+    def resume(self, run_id: str, value=None):
+        raise ValueError(f"Scheduled run {run_id} cannot be resumed; retry it instead")
+
+    @staticmethod
+    def can_resume(_run) -> bool:
+        return False
+
+    @staticmethod
+    def can_retry(run) -> bool:
+        return run.status == RunStatus.FAILED
+
+    @staticmethod
+    def can_replay(run) -> bool:
+        return run.status.terminal
+
+    def _notify(self, task: Task, value: str, success: bool) -> None:
+        if self._on_complete is not None:
+            self._on_complete(task, value, success)
 
     def _execute_llm_chat(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """通过 ChatCore 完整管道执行 LLM 对话 — 包含记忆注入、工具调用、决策卡片。
