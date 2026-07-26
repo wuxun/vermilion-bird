@@ -845,7 +845,7 @@ class ChatCoreGraph:
                         parts[1].strip(),
                         conversation_id=conversation_id,
                     )
-                if self.run_manager.get(proposal.run_id):
+                if not action_reject and self.run_manager.get(proposal.run_id):
                     self.run_manager.emit(
                         proposal.run_id,
                         "action.rejected",
@@ -870,7 +870,7 @@ class ChatCoreGraph:
                         parent_run_id=command_run_id,
                         conversation_id=conversation_id,
                     )
-                if self.run_manager.get(proposal.run_id):
+                if not action_approve and self.run_manager.get(proposal.run_id):
                     self.run_manager.emit(
                         proposal.run_id,
                         f"action.{proposal.status.value}",

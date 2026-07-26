@@ -79,3 +79,40 @@ def test_execution_center_refreshes_from_runtime_observer(qt_app):
 
     dialog.close()
     qt_app.processEvents()
+
+
+def test_execution_center_enables_recovery_controls_for_graph_run(qt_app):
+    runs = RunManager()
+    run = runs.start(
+        RunType.WORKFLOW,
+        input={"task": "recover me"},
+        metadata={
+            "graph_runtime": "langgraph",
+            "graph_name": "workflow",
+        },
+    )
+    runs.checkpoint(
+        run.id,
+        cursor="approval",
+        state={"thread_id": run.id},
+    )
+    runs.pause(run.id, "test")
+    proposals = ActionProposalManager()
+    fake_app = SimpleNamespace(
+        run_manager=runs,
+        action_proposals=proposals,
+        resume_run=lambda run_id: runs.get(run_id),
+        retry_run=lambda run_id: runs.get(run_id),
+        replay_run=lambda run_id: runs.get(run_id),
+    )
+
+    dialog = ExecutionCenterDialog(fake_app)
+    qt_app.processEvents()
+
+    assert dialog._resume_run_button.isEnabled()
+    assert not dialog._retry_run_button.isEnabled()
+    assert not dialog._replay_run_button.isEnabled()
+    assert "恢复点" in dialog._run_detail.toPlainText()
+
+    dialog.close()
+    qt_app.processEvents()
