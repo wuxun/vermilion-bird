@@ -51,6 +51,7 @@ class GraphExecutionService:
                 "graph_name": graph_name,
             }
         )
+        run_metadata.setdefault("run_handler", "graph")
         run = self.run_manager.start(
             run_type,
             conversation_id=conversation_id,

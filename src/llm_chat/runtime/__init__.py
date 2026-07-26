@@ -19,6 +19,11 @@ from .langgraph_runtime import LangGraphRuntime
 from .execution_service import GraphExecutionService
 from .builtin_graphs import build_tool_approval_graph
 from .action_coordinator import DurableActionCoordinator
+from .handlers import (
+    RunDispatcher,
+    RunHandler,
+    RunHandlerRegistry,
+)
 from .actions import (
     ActionProposal,
     ActionProposalManager,
@@ -44,6 +49,9 @@ __all__ = [
     "PolicyDecision",
     "RecoveryPolicy",
     "Run",
+    "RunDispatcher",
+    "RunHandler",
+    "RunHandlerRegistry",
     "RunCheckpoint",
     "RunEvent",
     "RunStatus",
