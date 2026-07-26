@@ -23,19 +23,22 @@ def setup_logging(level=logging.INFO, log_file: str = None):
         # 自动创建日志目录 (logs/ 子目录)
         log_path = os.path.abspath(os.path.expanduser(log_file))
         log_dir = os.path.dirname(log_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        from logging.handlers import TimedRotatingFileHandler
+        try:
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+            from logging.handlers import TimedRotatingFileHandler
 
-        handlers.append(
-            TimedRotatingFileHandler(
-                log_path,
-                when="midnight",
-                interval=1,
-                backupCount=30,
-                encoding="utf-8",
+            handlers.append(
+                TimedRotatingFileHandler(
+                    log_path,
+                    when="midnight",
+                    interval=1,
+                    backupCount=30,
+                    encoding="utf-8",
+                )
             )
-        )
+        except OSError as exc:
+            click.echo(f"无法写入日志文件，已回退到终端日志: {exc}", err=True)
 
     logging.basicConfig(
         level=level,
@@ -145,7 +148,8 @@ def chat(
 
 
 @cli.command()
-@click.option("--config-path", default=None, help="配置文件路径")
+@click.option("--config-path", "--config", default=None, help="配置文件路径")
+@click.option("--background", is_flag=True, help="启动后立即返回（嵌入式/测试场景）")
 @click.option("--log-file", default=None, help="日志文件路径")
 @click.option(
     "--log-level",
@@ -153,8 +157,8 @@ def chat(
     default="INFO",
     help="日志级别",
 )
-def feishu(config_path, log_file, log_level):
-    """启动 Feishu 服务（非阻塞，后台运行）"""
+def feishu(config_path, background, log_file, log_level):
+    """启动 Feishu 服务。"""
     try:
         config = Config.from_yaml(config_path)
     except Exception as e:
@@ -224,6 +228,10 @@ def feishu(config_path, log_file, log_level):
         server.start()
     except Exception as e:
         click.echo(f"无法启动 Feishu 服务器: {e}")
+        return
+
+    if background:
+        click.echo("Feishu 服务器已在后台启动。")
         return
 
     stop_event = threading.Event()

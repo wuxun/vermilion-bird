@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import textwrap
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -29,7 +30,10 @@ feishu:
   enabled: false
 """,
     )
-    result = runner.invoke(cli, ["feishu", "--config", str(config_path)])
+    result = runner.invoke(
+        cli,
+        ["feishu", "--config", str(config_path), "--background"],
+    )
     assert result.exit_code == 0
     assert "Feishu 集成未开启" in result.output
 
@@ -45,7 +49,10 @@ feishu:
   app_secret: 
 """,
     )
-    result = runner.invoke(cli, ["feishu", "--config", str(config_path)])
+    result = runner.invoke(
+        cli,
+        ["feishu", "--config", str(config_path), "--background"],
+    )
     assert result.exit_code == 0
     assert "需要 app_id 与 app_secret" in result.output or "app_id" in result.output
 
@@ -60,9 +67,16 @@ feishu:
   app_id: test-app-id
   app_secret: test-app-secret
   tenant_key: test-tenant
+scheduler:
+  enabled: false
 """,
     )
-    result = runner.invoke(cli, ["feishu", "--config", str(config_path)])
+    with patch("llm_chat.frontends.feishu.server.FeishuServer.start") as start:
+        result = runner.invoke(
+            cli,
+            ["feishu", "--config", str(config_path), "--background"],
+        )
+    start.assert_called_once()
     # The command should succeed and start the server in background
     assert result.exit_code == 0
     assert "后台启动" in result.output or "Feishu 服务器" in result.output

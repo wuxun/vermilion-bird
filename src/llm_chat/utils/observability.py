@@ -8,7 +8,7 @@
 - get_observability(): 获取全局单例
 """
 
-import asyncio
+import inspect
 import time
 import functools
 import threading
@@ -218,7 +218,7 @@ def observe(
         op_name = operation or func.__qualname__
 
         # Async branch: wrap coroutine functions with await
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
                 meta = {}

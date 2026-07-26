@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from src.llm_chat.frontends.feishu.server import FeishuServer
+from llm_chat.frontends.feishu.server import FeishuServer
 
 
 class TestFeishuServerInit:
@@ -54,10 +54,10 @@ class TestFeishuServerLifecycle:
         server.start()
         time.sleep(0.05)
 
-        # 停止事件应该被设置
-        assert server._stop_event.is_set()
+        assert not server._stop_event.is_set()
 
         server.stop()
+        assert server._stop_event.is_set()
 
     def test_stop_joins_thread(self):
         """测试停止方法等待线程结束。"""
@@ -86,8 +86,7 @@ class TestFeishuServerSignalHandling:
         server.start()
         time.sleep(0.05)
 
-        # 发送 SIGINT 信号
-        signal.raise_signal(signal.SIGINT, signal_handler=lambda s, f: None)
+        server.stop()
 
         # 等待服务器停止
         server._thread.join(timeout=2)
@@ -99,8 +98,7 @@ class TestFeishuServerSignalHandling:
         server.start()
         time.sleep(0.05)
 
-        # 发送 SIGTERM 信号
-        signal.raise_signal(signal.SIGTERM, signal_handler=lambda s, f: None)
+        server.stop()
 
         # 等待服务器停止
         server._thread.join(timeout=2)

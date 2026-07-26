@@ -10,7 +10,7 @@ import os
 import json
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, List, Callable, Any, Dict
+from typing import TYPE_CHECKING, Optional, List, Any, Dict
 
 # APScheduler imports are delayed to avoid pkg_resources dependency at module load time
 # This is critical for Python 3.14 compatibility (pkg_resources deprecated)
@@ -19,10 +19,16 @@ from .models import Task, TaskType, TaskStatus, TaskExecution
 from llm_chat.runtime import RunType
 
 if TYPE_CHECKING:
-    from apscheduler.schedulers.background import BackgroundScheduler
     from llm_chat.config import SchedulerConfig
     from llm_chat.storage import Storage
     from llm_chat.app import App
+
+# Public dependency-injection seams.  They intentionally start empty so importing
+# this module does not import APScheduler (and its legacy pkg_resources dependency)
+# on Python 3.14.  Tests and embedders may replace them before construction.
+BackgroundScheduler = None
+SQLAlchemyJobStore = None
+ThreadPoolExecutor = None
 
 
 logger = logging.getLogger(__name__)
@@ -112,24 +118,44 @@ class SchedulerService:
 
     def _setup_scheduler(self):
         """配置调度器组件"""
+        global BackgroundScheduler, SQLAlchemyJobStore, ThreadPoolExecutor
+
         # 延迟导入以避免在模块加载时触发 pkg_resources 依赖
-        # Critical: Import pkg_resources shim BEFORE importing apscheduler to ensure it's in sys.modules
+        # Import the shim before APScheduler so Python 3.14 has pkg_resources.
         # This is necessary for Python 3.14 compatibility (pkg_resources deprecated)
         import llm_chat.pkg_resources  # noqa: F401
 
-        from apscheduler.schedulers.background import BackgroundScheduler
-        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-        from apscheduler.executors.pool import ThreadPoolExecutor
+        if BackgroundScheduler is None:
+            from apscheduler.schedulers.background import (
+                BackgroundScheduler as APSBackgroundScheduler,
+            )
+
+            BackgroundScheduler = APSBackgroundScheduler
+        if SQLAlchemyJobStore is None:
+            from apscheduler.jobstores.sqlalchemy import (
+                SQLAlchemyJobStore as APSSQLAlchemyJobStore,
+            )
+
+            SQLAlchemyJobStore = APSSQLAlchemyJobStore
+        if ThreadPoolExecutor is None:
+            from apscheduler.executors.pool import (
+                ThreadPoolExecutor as APSThreadPoolExecutor,
+            )
+
+            ThreadPoolExecutor = APSThreadPoolExecutor
         from apscheduler.events import (
             EVENT_JOB_EXECUTED,
             EVENT_JOB_ERROR,
             EVENT_JOB_MISSED,
-            JobEvent,
         )
+
+        storage_path = getattr(self._storage, "_db_path", None)
+        if not isinstance(storage_path, (str, bytes)):
+            storage_path = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
 
         jobstores = {
             "default": SQLAlchemyJobStore(
-                url="sqlite:///" + os.path.expanduser("~/.vermilion-bird/vermilion_bird.db"),
+                url="sqlite:///" + os.path.abspath(storage_path),
                 tablename="apscheduler_jobs",
             )
         }
@@ -159,6 +185,7 @@ class SchedulerService:
             return
 
         if self._scheduler:
+            self._restore_tasks()
             self._cleanup_stale_jobs()
             self._scheduler.start()
             self._running = True
@@ -169,6 +196,28 @@ class SchedulerService:
             self._webhook_server.start()
             # 注册已存在的 webhook 任务
             self._register_webhook_tasks()
+
+    def _restore_tasks(self) -> None:
+        """Reconcile persisted domain tasks into the APScheduler job store."""
+        try:
+            tasks = self._storage.load_all_tasks()
+        except Exception as exc:
+            logger.warning(f"Failed to load persisted tasks: {exc}")
+            return
+
+        restored = 0
+        for task in tasks:
+            if task.task_type == TaskType.WEBHOOK:
+                continue
+            try:
+                # add_task uses replace_existing, making restart reconciliation
+                # idempotent even when APScheduler already persisted the job.
+                self.add_task(task)
+                restored += 1
+            except Exception as exc:
+                logger.warning(f"Failed to restore task {task.id}: {exc}")
+        if restored:
+            logger.info(f"Restored {restored} persisted task(s)")
 
     def _cleanup_stale_jobs(self):
         """清理 APScheduler 中的孤儿 jobs (task 已不存在于 storage)。"""
@@ -258,22 +307,23 @@ class SchedulerService:
         Returns:
             删除成功返回 True，任务不存在返回 False
         """
-        # 首先检查任务是否存在于存储中
+        # Storage is authoritative when it has a record.  For legacy stores and
+        # partially recovered jobs, APScheduler may still be the only source.
         task = self._storage.load_task(task_id)
-        if not task:
-            logger.debug(f"Task not found in storage: {task_id}")
-            return False
-
-        # Webhook 任务：从 webhook 服务器注销
-        if task.task_type == TaskType.WEBHOOK and self._webhook_server:
+        if task and task.task_type == TaskType.WEBHOOK and self._webhook_server:
             self._webhook_server.unregister_task(task_id)
 
-        # 尝试从调度器删除（任务可能已不存在，如一次性触发任务）
+        removed_job = False
         try:
             self._scheduler.remove_job(task_id)
+            removed_job = True
             logger.debug(f"Job removed from scheduler: {task_id}")
         except Exception as e:
             logger.debug(f"Job not found in scheduler (continuing): {task_id} - {e}")
+
+        if not task and not removed_job:
+            logger.debug(f"Task not found: {task_id}")
+            return False
 
         # 从存储删除
         try:
@@ -400,6 +450,7 @@ class SchedulerService:
         """
         from apscheduler.triggers.cron import CronTrigger
         from apscheduler.triggers.date import DateTrigger
+        from apscheduler.triggers.interval import IntervalTrigger
 
         if "cron" in trigger_config:
             cron_expr = trigger_config["cron"]
@@ -419,8 +470,15 @@ class SchedulerService:
             run_date = self._parse_datetime(date_str)
             return DateTrigger(run_date=run_date)
 
+        if "interval" in trigger_config:
+            seconds = int(trigger_config["interval"])
+            if seconds <= 0:
+                raise ValueError("Interval must be greater than zero")
+            return IntervalTrigger(seconds=seconds)
+
         raise ValueError(
-            f"Invalid trigger configuration: {trigger_config}. Supported types: cron, date"
+            f"Invalid trigger configuration: {trigger_config}. "
+            "Supported types: cron, date, interval"
         )
 
     def _parse_datetime(self, date_str: str) -> datetime:
@@ -537,8 +595,9 @@ class SchedulerService:
         temperature = params.get("temperature")
         conversation_id = f"scheduled:{task.id}"
 
-        chat_core = self._app.chat_core
-        if chat_core is None:
+        chat_core = getattr(self._app, "chat_core", None)
+        supports_chat_pipeline = callable(getattr(type(chat_core), "send_message", None))
+        if not supports_chat_pipeline:
             logger.warning("ChatCore unavailable, falling back to direct client.chat")
             result = self._app.client.chat(message, **({"model": model} if model else {}))
             return result
@@ -740,12 +799,18 @@ class SchedulerService:
                 secret = task.trigger_config.get("secret")
                 self._webhook_server.register_task(
                     task.id,
-                    callback=lambda tid, payload, t=task: self._execute_webhook_task(tid, payload),
+                    callback=lambda tid, payload: self._execute_webhook_task(
+                        tid,
+                        payload,
+                    ),
                     secret=secret,
                 )
-        logger.info(
-            f"Registered {sum(1 for t in tasks if t.task_type == TaskType.WEBHOOK and t.enabled)} webhook tasks"
+        webhook_count = sum(
+            1
+            for task in tasks
+            if task.task_type == TaskType.WEBHOOK and task.enabled
         )
+        logger.info(f"Registered {webhook_count} webhook tasks")
 
     def _execute_webhook_task(self, task_id: str, payload: dict):
         """执行 webhook 触发的任务。

@@ -1,1 +1,1 @@
-# llm_chat package
+"""Vermilion Bird application package."""

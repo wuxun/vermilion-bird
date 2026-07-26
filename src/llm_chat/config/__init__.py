@@ -321,7 +321,7 @@ class Config(BaseSettings):
             os.makedirs(config_dir, exist_ok=True)
 
         skills_dict = {}
-        for skill_name in self.skills.model_fields.keys():
+        for skill_name in type(self.skills).model_fields:
             skill_config = getattr(self.skills, skill_name, None)
             if skill_config:
                 skills_dict[skill_name] = skill_config.model_dump()

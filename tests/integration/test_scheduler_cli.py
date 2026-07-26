@@ -22,6 +22,15 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+REPO_ROOT = Path(__file__).parent.parent.parent
+MONOREPO_PYTHONPATH = os.pathsep.join(
+    [
+        str(REPO_ROOT / "src"),
+        str(REPO_ROOT / "packages" / "ember-core" / "src"),
+        str(REPO_ROOT / "packages" / "ember-agent" / "src"),
+    ]
+)
+
 
 def check_scheduler_available():
     try:
@@ -148,7 +157,7 @@ class TestCLISchedulerWithSubprocess:
         assert saved_task.name == "测试一次性任务"
 
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent / "src")
+        env["PYTHONPATH"] = MONOREPO_PYTHONPATH
 
         test_script = tmp_path / "run_scheduler.py"
         test_script.write_text(f'''
@@ -244,7 +253,7 @@ print("Scheduler shutdown")
         assert saved_task is not None
 
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent / "src")
+        env["PYTHONPATH"] = MONOREPO_PYTHONPATH
 
         first_start_script = tmp_path / "first_start.py"
         first_start_script.write_text(f'''
@@ -405,7 +414,7 @@ print("Second start: Scheduler shutdown")
             storage.save_task(task)
 
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent / "src")
+        env["PYTHONPATH"] = MONOREPO_PYTHONPATH
 
         test_script = tmp_path / "multi_tasks_test.py"
         test_script.write_text(f'''

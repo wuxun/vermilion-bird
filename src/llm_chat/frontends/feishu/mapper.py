@@ -1,6 +1,7 @@
 import logging
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict
 import time
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class SessionMapper:
     """
 
     SESSION_TIMEOUT_SECONDS = 30 * 60  # 30 minutes
+    MAX_SANITIZED_ID_LENGTH = 72
 
     _session_cache: Dict[
         str, Dict
@@ -31,7 +33,12 @@ class SessionMapper:
     @staticmethod
     def _sanitize_id(original_id: str) -> str:
         s = str(original_id)
-        return "".join(ch if ch.isalnum() else "_" for ch in s)
+        sanitized = "".join(ch if ch.isalnum() else "_" for ch in s)
+        if len(sanitized) <= SessionMapper.MAX_SANITIZED_ID_LENGTH:
+            return sanitized
+        digest = hashlib.sha256(s.encode("utf-8")).hexdigest()[:10]
+        keep = SessionMapper.MAX_SANITIZED_ID_LENGTH - len(digest) - 1
+        return f"{sanitized[:keep]}_{digest}"
 
     @classmethod
     def _load_max_session_number(cls, prefix: str, sanitized: str) -> int:
@@ -84,7 +91,7 @@ class SessionMapper:
         Returns:
             conversation_id with session number
         """
-        t = str(chat_type)
+        t = str(chat_type or "p2p").lower()
         if t not in ("p2p", "group"):
             raise ValueError("Invalid chat_type: must be 'p2p' or 'group'")
         sanitized = cls._sanitize_id(original_id)
@@ -153,19 +160,19 @@ class SessionMapper:
     def from_conversation_id(conversation_id: str) -> Tuple[str, str]:
         cid = str(conversation_id)
         if cid.startswith("feishu_p2p_"):
-            rest = cid[len("feishu_p2p_") :]
+            rest = cid[len("feishu_p2p_"):]
             if rest == "":
-                raise ValueError("Invalid conversation_id: missing original_id")
+                raise ValueError("Invalid conversation ID format")
             parts = rest.rsplit("_", 1)
             if len(parts) == 2 and parts[1].isdigit():
                 return ("p2p", parts[0])
             return ("p2p", rest)
         if cid.startswith("feishu_group_"):
-            rest = cid[len("feishu_group_") :]
+            rest = cid[len("feishu_group_"):]
             if rest == "":
-                raise ValueError("Invalid conversation_id: missing original_id")
+                raise ValueError("Invalid conversation ID format")
             parts = rest.rsplit("_", 1)
             if len(parts) == 2 and parts[1].isdigit():
                 return ("group", parts[0])
             return ("group", rest)
-        raise ValueError("Invalid conversation_id prefix")
+        raise ValueError("Invalid conversation ID format")

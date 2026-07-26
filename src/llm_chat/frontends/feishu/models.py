@@ -13,7 +13,7 @@ class FeishuUser:
 
 @dataclass
 class FeishuChat:
-    chat_id: str
+    chat_id: str = ""
     type: Optional[str] = None
     name: Optional[str] = None
     owner_id: Optional[str] = None
@@ -21,7 +21,7 @@ class FeishuChat:
 
 @dataclass
 class FeishuMessage:
-    message_id: str
+    message_id: str = ""
     chat: Optional[FeishuChat] = None
     sender: Optional[FeishuUser] = None
     text: Optional[str] = None

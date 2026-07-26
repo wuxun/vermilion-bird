@@ -46,7 +46,7 @@ class SkillsConfig(BaseSettings):
 
     def get_all_skill_configs(self) -> Dict[str, Dict[str, Any]]:
         configs = {}
-        for skill_name in self.model_fields.keys():
+        for skill_name in type(self).model_fields:
             configs[skill_name] = self.get_skill_config(skill_name)
         extra = getattr(self, "__pydantic_extra__", {}) or {}
         for extra_field, extra_value in extra.items():

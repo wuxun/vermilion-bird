@@ -57,10 +57,14 @@ class SchedulerConfig(BaseSettings):
     @classmethod
     def validate_timezone(cls, v: str) -> str:
         if v.lower() == "local":
-            from datetime import datetime
+            try:
+                from tzlocal import get_localzone_name
 
-            local_tz = datetime.now().astimezone().tzinfo
-            return getattr(local_tz, "key", None) or str(local_tz) or "UTC"
+                return get_localzone_name()
+            except Exception:
+                # Abbreviations such as CST are ambiguous and rejected by
+                # zoneinfo/APScheduler; UTC is the only safe portable fallback.
+                return "UTC"
         try:
             import pytz
             pytz.timezone(v)

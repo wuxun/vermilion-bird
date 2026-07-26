@@ -3,12 +3,12 @@ import pytest
 pytestmark = pytest.mark.xfail(reason="RED: feature not yet implemented")
 
 try:
-    from src.llm_chat.skills.task_delegator.context import AgentContext
+    from llm_chat.skills.task_delegator.context import AgentContext
 except Exception:
     AgentContext = None  # type: ignore
 
 try:
-    from src.llm_chat.skills.task_delegator.registry import SubAgentRegistry
+    from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 except Exception:
     SubAgentRegistry = None  # type: ignore
 

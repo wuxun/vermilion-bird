@@ -23,6 +23,31 @@ class RateLimiter:
         self.window_seconds = window_seconds
         # user_id -> deque[float]
         self._records: Dict[str, deque] = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, user_id: str) -> bool:
+        """Consume one request slot when the user's sliding window has room."""
+        now = time.time()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            records = self._records.setdefault(user_id, deque())
+            while records and records[0] <= cutoff:
+                records.popleft()
+            if len(records) >= self.max_requests:
+                return False
+            records.append(now)
+            return True
+
+    def cleanup(self) -> None:
+        """Drop expired timestamps and empty user buckets."""
+        cutoff = time.time() - self.window_seconds
+        with self._lock:
+            for user_id in list(self._records):
+                records = self._records[user_id]
+                while records and records[0] <= cutoff:
+                    records.popleft()
+                if not records:
+                    del self._records[user_id]
 
 
 class SignatureVerifier:

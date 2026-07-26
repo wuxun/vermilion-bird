@@ -1,26 +1,26 @@
 """单元测试 - FeishuAdapter 核心功能。"""
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from src.llm_chat.app import App
-from src.llm_chat.config import Config
-from src.llm_chat.frontends.base import Message, MessageType
-from src.llm_chat.frontends.feishu import (
+from llm_chat.app import App
+from llm_chat.config import Config
+from llm_chat.frontends.base import Message, MessageType
+from llm_chat.frontends.feishu import (
     FeishuAdapter,
     FeishuAdapterError,
     AccessDeniedError,
     DuplicateEventError,
 )
-from src.llm_chat.frontends.feishu.models import (
+from llm_chat.frontends.feishu.models import (
     FeishuChat,
     FeishuEvent,
     FeishuMessage,
     FeishuUser,
 )
-from src.llm_chat.frontends.feishu.security import AccessController, MessageDeduplicator
+from llm_chat.frontends.feishu.security import AccessController, MessageDeduplicator
 
 
 class TestFeishuAdapterInit:
@@ -323,5 +323,6 @@ class TestProcessWithLlm:
             mock_send.assert_called_once_with(
                 conversation_id="test_conv_id",
                 message="Hello",
+                on_card=ANY,
             )
         adapter.close()

@@ -4,7 +4,7 @@ import sqlite3
 import json
 import os
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,8 @@ class StorageCore:
     """
 
     _instance: Optional["StorageCore"] = None
-    _db_path: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
+    DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
+    _db_path: str = DEFAULT_DB_PATH
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -34,6 +35,8 @@ class StorageCore:
     def set_instance(cls, instance: Optional["StorageCore"]) -> None:
         """注入自定义实例（App 初始化 / 测试 mock）。"""
         cls._instance = instance
+        if instance is None:
+            cls._db_path = cls.DEFAULT_DB_PATH
 
     @classmethod
     def get_instance(cls) -> "StorageCore":

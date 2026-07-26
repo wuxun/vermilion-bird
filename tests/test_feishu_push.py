@@ -2,9 +2,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.llm_chat.app import App
-from src.llm_chat.config import Config
-from src.llm_chat.frontends.feishu import (
+from llm_chat.app import App
+from llm_chat.config import Config
+from llm_chat.frontends.feishu import (
     FeishuAdapter,
     FeishuAdapterError,
     PushService,

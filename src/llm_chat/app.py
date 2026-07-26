@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
@@ -39,7 +40,13 @@ class App:
     - 前端渲染 → 各前端自行处理
     """
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        *,
+        client: Optional[LLMClient] = None,
+        storage: Optional[Storage] = None,
+    ):
         import time
 
         _t0 = time.time()
@@ -50,6 +57,8 @@ class App:
         self._tools_enabled = False
         self._current_conversation_id: str = "default"
         self.scheduler: Optional["SchedulerService"] = None
+        self._client_override = client
+        self._storage_override = storage
 
         # 组件分层初始化（保持依赖顺序）
         self.tool_registry = self._init_tool_registry()
@@ -101,7 +110,12 @@ class App:
         return tr
 
     def _init_storage(self):
-        s = Storage()
+        db_path = os.environ.get("VB_DB_PATH", Storage.DEFAULT_DB_PATH)
+        s = (
+            self._storage_override
+            if self._storage_override is not None
+            else Storage(db_path)
+        )
         Storage.set_instance(s)
         return s
 
@@ -132,6 +146,8 @@ class App:
             pass
 
     def _init_client(self):
+        if self._client_override is not None:
+            return self._client_override
         return LLMClient(self.config, tool_registry=self.tool_registry)
 
     def _init_conversation_manager(self):
@@ -370,6 +386,8 @@ class App:
         logger.info("Skills reloaded from config.yaml")
 
     def get_scheduler(self) -> Optional["SchedulerService"]:
+        if self.scheduler is None and self.config.scheduler.enabled:
+            self._init_scheduler()
         return self.scheduler
 
     def get_health(self) -> Dict[str, Any]:

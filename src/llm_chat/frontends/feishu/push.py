@@ -120,7 +120,7 @@ class PushService:
             )
             logger.info(f"Message pushed to user {masked_open_id}")
             return result
-        except FeishuAdapterError as e:
+        except Exception as e:
             logger.error(
                 f"Failed to push message to user {masked_open_id}: {e}",
                 exc_info=True,
@@ -164,7 +164,7 @@ class PushService:
             )
             logger.info(f"Message pushed to group {masked_chat_id}")
             return result
-        except FeishuAdapterError as e:
+        except Exception as e:
             logger.error(
                 f"Failed to push message to group {masked_chat_id}: {e}",
                 exc_info=True,
@@ -192,7 +192,7 @@ class PushService:
             }
         """
         targets = (
-            session_ids if session_ids is not None else list(self._active_sessions)
+            session_ids if session_ids is not None else sorted(self._active_sessions)
         )
 
         if not targets:
@@ -217,7 +217,7 @@ class PushService:
                 )
                 results[session_id] = result
                 logger.info(f"Broadcast sent to {_mask_identifier(session_id)}")
-            except FeishuAdapterError as e:
+            except FeishuAdapterError:
                 # 如果 chat_id 失败，尝试作为 open_id 发送
                 try:
                     result = self._adapter.send_message(

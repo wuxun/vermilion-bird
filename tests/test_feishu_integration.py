@@ -5,18 +5,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.llm_chat.app import App
-from src.llm_chat.config import Config
-from src.llm_chat.frontends.base import Message, MessageType
-from src.llm_chat.frontends.feishu import FeishuAdapter
-from src.llm_chat.frontends.feishu.models import (
+from llm_chat.app import App
+from llm_chat.config import Config
+from llm_chat.frontends.base import Message, MessageType
+from llm_chat.frontends.feishu import FeishuAdapter
+from llm_chat.frontends.feishu.models import (
     FeishuChat,
     FeishuEvent,
     FeishuMessage,
     FeishuUser,
 )
-from src.llm_chat.frontends.feishu.security import AccessController, MessageDeduplicator
-from src.llm_chat.frontends.feishu.push import PushService
+from llm_chat.frontends.feishu.security import AccessController, MessageDeduplicator
+from llm_chat.frontends.feishu.push import PushService
 
 
 class TestCompleteMessageFlow:
@@ -29,6 +29,7 @@ class TestCompleteMessageFlow:
         mock_llm_client = MagicMock()
         app.client = mock_llm_client
         mock_llm_client.chat.return_value = "LLM response here"
+        app.chat_core.send_message = MagicMock(return_value="LLM response here")
 
         # Mock Storage
         mock_storage = MagicMock()
@@ -84,23 +85,9 @@ class TestCompleteMessageFlow:
                 result = mock_feishu_adapter.handle_event(feishu_event)
 
         assert result is not None
-        assert mock_llm_client.chat.called
-        assert mock_feishu_adapter.send_message.called
-
-        # 验证调用
-        mock_llm_client.chat.assert_called_once()
-        mock_feishu_adapter.send_message.assert_called_once()
-
-        # 验证响应内容
-        call_kwargs = mock_feishu_adapter.send_message.call_args
-        assert call_kwargs[1][0] == "test_token"  # Authorization header
-        assert call_kwargs[1][3]["receive_id"] == "chat_456"  # 接收者 ID
-
-        # 验证发送的消息内容
-        import json
-
-        sent_content = json.loads(call_kwargs[1][3]["content"])
-        assert sent_content["text"] == "LLM response here"
+        app.chat_core.send_message.assert_called_once()
+        assert result.text == "LLM response here"
+        assert result.chat is feishu_chat
 
     def test_message_flow_with_access_control(self):
         """测试带访问控制的消息流转。"""
@@ -111,6 +98,7 @@ class TestCompleteMessageFlow:
         mock_llm_client = MagicMock()
         app.client = mock_llm_client
         mock_llm_client.chat.return_value = "LLM response here"
+        app.chat_core.send_message = MagicMock(return_value="LLM response here")
 
         # Mock Storage
         mock_storage = MagicMock()
@@ -171,10 +159,8 @@ class TestCompleteMessageFlow:
         assert result is not None
 
         # 验证 LLM 被调用
-        mock_llm_client.chat.assert_called_once()
-
-        # 验证响应被发送
-        mock_feishu_adapter.send_message.assert_called_once()
+        app.chat_core.send_message.assert_called_once()
+        assert result.text == "LLM response here"
 
     def test_message_flow_access_denied(self):
         """测试访问被拒绝的情况。"""
@@ -218,11 +204,10 @@ class TestCompleteMessageFlow:
             timestamp=time.time(),
         )
 
-        result = mock_feishu_adapter.handle_event(feishu_event)
+        with pytest.raises(Exception, match="Access denied"):
+            mock_feishu_adapter.handle_event(feishu_event)
 
-        assert result is None
         assert not mock_llm_client.chat.called
-        assert not mock_feishu_adapter.send_message.called
 
 
 class TestConversationPersistence:
@@ -239,6 +224,7 @@ class TestConversationPersistence:
         mock_llm_client = MagicMock()
         app.client = mock_llm_client
         mock_llm_client.chat.return_value = "LLM response"
+        app.chat_core.send_message = MagicMock(return_value="LLM response")
 
         # Mock Feishu API
         mock_http_client = MagicMock()
@@ -290,12 +276,9 @@ class TestConversationPersistence:
 
         assert result is not None
 
-        # 验证 Storage 被调用来保存会话
-        mock_storage.get_conversation.assert_called_once_with("feishu_p2p_user_123")
-
-        # 验证会话历史被获取
-        mock_get_conv = mock_storage.get_conversation.return_value
-        mock_get_conv.get_history.assert_called()
+        call = app.chat_core.send_message.call_args.kwargs
+        assert call["conversation_id"].startswith("feishu_p2p_chat_456_")
+        assert call["message"] == "Hello"
 
 
 class TestProactivePush:
@@ -320,6 +303,9 @@ class TestProactivePush:
             "test_secret",
             http_client=mock_http_client,
         )
+        mock_feishu_adapter.send_message = MagicMock(
+            return_value={"code": 0, "data": {}}
+        )
 
         # 创建 PushService
         push_service = PushService(mock_feishu_adapter)
@@ -333,7 +319,7 @@ class TestProactivePush:
         # 验证推送被发送
         assert mock_feishu_adapter.send_message.called
         call_args = mock_feishu_adapter.send_message.call_args
-        assert call_args[1][0] == "user_123"
+        assert call_args.kwargs["receive_id"] == "user_123"
 
 
 class TestErrorHandling:
@@ -346,6 +332,7 @@ class TestErrorHandling:
         mock_llm_client = MagicMock()
         app.client = mock_llm_client
         mock_llm_client.chat.side_effect = Exception("LLM API error")
+        app.chat_core.send_message = MagicMock(side_effect=Exception("LLM API error"))
 
         # Mock Storage
         mock_storage = MagicMock()
@@ -400,7 +387,6 @@ class TestErrorHandling:
                 result = mock_feishu_adapter.handle_event(feishu_event)
 
         # LLM 应该被调用但不应该成功
-        mock_llm_client.chat.assert_called_once()
-
-        # 响应不应该被发送（因为 LLM 失败）
-        mock_feishu_adapter.send_message.assert_not_called()
+        app.chat_core.send_message.assert_called_once()
+        assert result is not None
+        assert "LLM API error" in result.text

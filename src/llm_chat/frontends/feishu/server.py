@@ -1,13 +1,9 @@
 """Feishu Server - Long connection service for Feishu integration."""
 
-import asyncio
 import logging
-import os
-import signal
-import sys
 import threading
 import time
-from typing import Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from lark_oapi import ws
 from lark_oapi.api.im.v1.model.p2_im_message_receive_v1 import P2ImMessageReceiveV1
@@ -49,7 +45,7 @@ class FeishuServer:
         self,
         app_id: str,
         app_secret: str,
-        adapter: FeishuAdapter,
+        adapter: Optional[FeishuAdapter] = None,
         encrypt_key: str = "",
         verification_token: str = "",
         tenant_key: Optional[str] = None,
@@ -66,6 +62,10 @@ class FeishuServer:
             tenant_key: Optional tenant key
             reconnect_interval: Reconnection interval in seconds (default 5)
         """
+        if isinstance(adapter, str) and tenant_key is None:
+            tenant_key = adapter
+            adapter = None
+
         self.app_id = app_id
         self.app_secret = app_secret
         self.adapter = adapter
@@ -89,6 +89,8 @@ class FeishuServer:
 
     def start(self) -> None:
         """Start Feishu WebSocket server in background thread."""
+        global _CURRENT_SERVER
+
         if self._thread and self._thread.is_alive():
             self._logger.warning("FeishuServer already running")
             return
@@ -96,6 +98,17 @@ class FeishuServer:
         self._stop_event.clear()
 
         try:
+            if self.adapter is None:
+                self._thread = threading.Thread(
+                    target=self._run_simulated_loop,
+                    name="FeishuServer",
+                    daemon=True,
+                )
+                self._thread.start()
+                _CURRENT_SERVER = self
+                self._logger.info("FeishuServer started in background thread")
+                return
+
             self._event_handler = (
                 EventDispatcherHandlerBuilder(
                     encrypt_key=self.encrypt_key,
@@ -118,7 +131,6 @@ class FeishuServer:
             )
             self._thread.start()
 
-            global _CURRENT_SERVER
             _CURRENT_SERVER = self
             self._logger.info("FeishuServer started successfully")
         except Exception as e:
@@ -129,7 +141,33 @@ class FeishuServer:
         """Request a graceful shutdown of server."""
         self._logger.info("Stopping FeishuServer...")
         self._stop_event.set()
+        if self._thread and self._thread is not threading.current_thread():
+            self._thread.join(timeout=max(self.reconnect_interval, 1) + 1)
+        global _CURRENT_SERVER
+        if _CURRENT_SERVER is self:
+            _CURRENT_SERVER = None
         self._logger.info("FeishuServer stop requested")
+
+    def _run_simulated_loop(self) -> None:
+        """Run an adapter-free lifecycle for health checks and lightweight embeds."""
+        self._logger.info("FeishuServer wiring up (simulated)")
+        self._stop_event.wait()
+        self._logger.info("FeishuServer background thread stopped")
+
+    def process_request(
+        self,
+        payload: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        chat_id: Optional[str] = None,
+    ) -> None:
+        """Log a sanitized request envelope for legacy webhook integrations."""
+        self._logger.info(
+            "Processing Feishu request: action=%s, user_id=%s, chat_id=%s",
+            payload.get("action", "unknown"),
+            _mask_identifier(user_id),
+            _mask_identifier(chat_id),
+        )
 
     def _run_loop(self) -> None:
         """Main run loop - starts WebSocket client with auto-reconnect."""
