@@ -23,7 +23,7 @@ from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 if TYPE_CHECKING:
     from llm_chat.config import Config
     from llm_chat.client import LLMClient
-    from llm_chat.runtime import RunManager
+    from llm_chat.runtime import CapabilityPolicy, RunManager
 
 logger = logging.getLogger(__name__)
 
@@ -291,12 +291,14 @@ class SpawnSubagentTool(BaseTool):
         config: Optional["Config"] = None,
         tool_registry=None,
         run_manager: Optional["RunManager"] = None,
+        capability_policy: Optional["CapabilityPolicy"] = None,
     ):
         self.registry = registry or SubAgentRegistry()
         self.parent_context = parent_context
         self.config = config
         self._tool_registry = tool_registry  # 注入共享 ToolRegistry
         self.run_manager = run_manager
+        self.capability_policy = capability_policy
         self.registry.add_cancel_callback(self._cancel_agent_run)
 
     def _cancel_agent_run(self, agent_id: str) -> None:
@@ -687,6 +689,9 @@ class SpawnSubagentTool(BaseTool):
             parent_cancel_event = parent_ctx.cancel_event
             parent_run_id = parent_ctx._extra.get("run_id")
             self.run_manager = parent_ctx._extra.get("run_manager") or self.run_manager
+            self.capability_policy = (
+                parent_ctx._extra.get("capability_policy") or self.capability_policy
+            )
         except (ImportError, AssertionError):
             pass
 
@@ -985,6 +990,18 @@ class SpawnSubagentTool(BaseTool):
                 t
                 for t in all_tools
                 if t.get("function", {}).get("name") not in SpawnSubagentTool.BLOCKED_TOOLS
+            ]
+
+            # A child cannot approve its own side effects. Approval-required
+            # capabilities remain available only to the parent execution.
+            from llm_chat.runtime import CapabilityPolicy, PolicyDecision
+
+            capability_policy = self.capability_policy or CapabilityPolicy()
+            all_tools = [
+                tool_def
+                for tool_def in all_tools
+                if capability_policy.evaluate(tool_def.get("function", {}).get("name", ""))[0]
+                == PolicyDecision.ALLOW
             ]
 
             # A Ghost may activate skills instead of enumerating every tool

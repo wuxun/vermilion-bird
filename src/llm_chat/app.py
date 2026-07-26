@@ -18,7 +18,7 @@ from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
 from llm_chat.health import get_checker, create_database_checker, create_service_manager_checker
-from llm_chat.runtime import RunManager
+from llm_chat.runtime import ActionProposalManager, CapabilityPolicy, RunManager
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -71,6 +71,8 @@ class App:
         _t4 = time.time()
         logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.run_manager = RunManager()
+        self.capability_policy = CapabilityPolicy()
+        self.action_proposals = ActionProposalManager()
         self.chat_core = self._init_chat_core()
         _t5 = time.time()
         logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
@@ -179,6 +181,8 @@ class App:
             conversation_manager=self.conversation_manager,
             config=self.config,
             run_manager=self.run_manager,
+            capability_policy=self.capability_policy,
+            action_proposals=self.action_proposals,
         )
         logger.info("ChatCore initialized")
         return chat_core

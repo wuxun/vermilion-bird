@@ -5,7 +5,7 @@ They have NO awareness of LLMs, protocols, or agent concepts.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, FrozenSet
 
 
 class BaseTool(ABC):
@@ -36,6 +36,11 @@ class BaseTool(ABC):
     @abstractmethod
     def execute(self, **kwargs) -> str:
         """Execute the tool with given keyword arguments. Returns string result."""
+
+    @property
+    def capabilities(self) -> FrozenSet[str]:
+        """Declared side-effect capabilities, empty for pure/legacy tools."""
+        return frozenset()
 
     def to_openai_tool(self) -> Dict[str, Any]:
         """Serialize to OpenAI function-calling format."""

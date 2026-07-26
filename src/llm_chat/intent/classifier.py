@@ -75,8 +75,7 @@ _BYE_PATTERNS = re.compile(
 
 # 搜索意图关键词
 _SEARCH_KEYWORDS = re.compile(
-    r"(搜索|查一下|帮我查|搜一下|查找|检索|网上查|"
-    r"百度一下|谷歌|bing|search|look up|find online)",
+    r"(搜索|查一下|帮我查|搜一下|查找|检索|网上查|" r"百度一下|谷歌|bing|search|look up|find online)",
     re.IGNORECASE,
 )
 
@@ -92,30 +91,25 @@ _CODE_KEYWORDS = re.compile(
 
 # 摘要关键词
 _SUMMARIZE_KEYWORDS = re.compile(
-    r"(总结|摘要|概括|归纳|概述|梳理|"
-    r"summarize|summary|tldr|recap)",
+    r"(总结|摘要|概括|归纳|概述|梳理|" r"summarize|summary|tldr|recap)",
     re.IGNORECASE,
 )
 
 # 文件操作关键词
 _FILE_KEYWORDS = re.compile(
-    r"(读取|打开|查看|编辑|修改|创建|新建|删除|写入|保存|"
-    r"文件|read file|open file|edit file|create file|write file)",
+    r"(读取|打开|查看|编辑|修改|创建|新建|删除|写入|保存|" r"文件|read file|open file|edit file|create file|write file)",
     re.IGNORECASE,
 )
 
 # 简单事实问答 (谁、什么、何时、哪里)
 _SIMPLE_QA_PATTERNS = re.compile(
-    r"^(谁|什么|何时|哪里|哪儿|多少|怎么|如何|为什么|"
-    r"what|who|when|where|how|why|which|"
-    r"几点|几时|什么时间|在哪里)",
+    r"^(谁|什么|何时|哪里|哪儿|多少|怎么|如何|为什么|" r"what|who|when|where|how|why|which|" r"几点|几时|什么时间|在哪里)",
     re.IGNORECASE,
 )
 
 # 定时任务关键词
 _SCHEDULE_KEYWORDS = re.compile(
-    r"(定时|计划|预约|周期|每天|每周|每月|定时器|"
-    r"schedule|cron|remind|提醒)",
+    r"(定时|计划|预约|周期|每天|每周|每月|定时器|" r"schedule|cron|remind|提醒)",
     re.IGNORECASE,
 )
 
@@ -125,15 +119,15 @@ _SCHEDULE_KEYWORDS = re.compile(
 # ═══════════════════════════════════════════════════════════════════
 
 _INTENT_MODEL_HINTS: dict[Intent, str] = {
-    Intent.SIMPLE_QA: "small",      # 使用配置中的小模型
+    Intent.SIMPLE_QA: "small",  # 使用配置中的小模型
     Intent.GREETING: "small",
-    Intent.SEARCH: "small",         # 搜索结果摘要用小模型
+    Intent.SEARCH: "small",  # 搜索结果摘要用小模型
     Intent.SUMMARIZE: "medium",
     Intent.FILE_OP: "medium",
     Intent.SCHEDULE: "medium",
     Intent.MEMORY: "medium",
-    Intent.CODE: "large",           # 代码生成需要强模型
-    Intent.CHAT: "large",           # 复杂对话用大模型
+    Intent.CODE: "large",  # 代码生成需要强模型
+    Intent.CHAT: "large",  # 复杂对话用大模型
 }
 
 # 需要强制使用推理模型 (reasoning) 的意图
@@ -181,6 +175,9 @@ _HELP_TEXT = """🐦‍🔥 **Vermilion Bird 快捷指令**
 | `/new [标题]` | 新建会话 |
 | `/style <风格>` | 切换回复风格 |
 | `/clear` | 清空当前会话 |
+| `/actions` | 查看当前会话的待审批动作 |
+| `/approve-action <ID>` | 批准并执行动作 |
+| `/reject-action <ID>` | 拒绝动作 |
 | `/help` | 显示此帮助 |
 
 **风格选项**: `default` `academic` `casual` `concise` `coach` `architect`
@@ -201,9 +198,7 @@ class IntentClassifier:
 
     def __init__(self, enable_layer1: bool = True):
         self._enable_layer1 = enable_layer1
-        logger.info(
-            "IntentClassifier initialized (layer1=%s)", enable_layer1
-        )
+        logger.info("IntentClassifier initialized (layer1=%s)", enable_layer1)
 
     # ------------------------------------------------------------------
     # 公共 API
@@ -273,7 +268,11 @@ class IntentClassifier:
                             override_message=f"__style__:{style_name}",
                         )
                     # /remember /记住 → 存储到长期记忆
-                    elif "remember" in pattern.pattern or "记住" in pattern.pattern or ("记忆" in pattern.pattern and m.lastindex):
+                    elif (
+                        "remember" in pattern.pattern
+                        or "记住" in pattern.pattern
+                        or ("记忆" in pattern.pattern and m.lastindex)
+                    ):
                         content = m.group(1).strip() if m.lastindex else ""
                         return RoutingDecision(
                             intent=Intent.SHORTCUT,
@@ -282,7 +281,12 @@ class IntentClassifier:
                             override_message=f"__remember__:{content}",
                         )
                     # /clear /reset /help → 直接回复
-                    elif "clear" in pattern.pattern or "reset" in pattern.pattern or "清空" in pattern.pattern or "重置" in pattern.pattern:
+                    elif (
+                        "clear" in pattern.pattern
+                        or "reset" in pattern.pattern
+                        or "清空" in pattern.pattern
+                        or "重置" in pattern.pattern
+                    ):
                         return RoutingDecision.bypass(
                             Intent.SHORTCUT,
                             "对话已清空。开始新的对话吧！",
@@ -314,15 +318,16 @@ class IntentClassifier:
                 if intent == Intent.SEARCH:
                     decision.suggested_tools = ["web_search"]
                 elif intent == Intent.FILE_OP:
-                    decision.suggested_tools = [
-                        "file_reader", "file_writer", "file_editor"
-                    ]
+                    decision.suggested_tools = ["file_reader", "file_writer", "file_editor"]
                 elif intent == Intent.CODE:
                     decision.suggested_tools = ["shell_exec", "file_writer"]
                 elif intent == Intent.SCHEDULE:
                     decision.suggested_tools = [
-                        "create_task", "list_tasks", "delete_task",
-                        "pause_task", "resume_task",
+                        "create_task",
+                        "list_tasks",
+                        "delete_task",
+                        "pause_task",
+                        "resume_task",
                     ]
                 elif intent == Intent.MEMORY:
                     decision.suggested_tools = ["memory_status", "memory_soul"]
@@ -341,27 +346,19 @@ class IntentClassifier:
         """
         # 1. 问候
         if _GREETING_PATTERNS.match(msg):
-            return RoutingDecision.bypass(
-                Intent.GREETING, random.choice(_GREETING_RESPONSES)
-            )
+            return RoutingDecision.bypass(Intent.GREETING, random.choice(_GREETING_RESPONSES))
 
         # 2. 感谢
         if _THANKS_PATTERNS.match(msg):
-            return RoutingDecision.bypass(
-                Intent.GREETING, random.choice(_THANKS_RESPONSES)
-            )
+            return RoutingDecision.bypass(Intent.GREETING, random.choice(_THANKS_RESPONSES))
 
         # 3. 再见
         if _BYE_PATTERNS.match(msg):
-            return RoutingDecision.bypass(
-                Intent.GREETING, random.choice(_BYE_RESPONSES)
-            )
+            return RoutingDecision.bypass(Intent.GREETING, random.choice(_BYE_RESPONSES))
 
         # 4. 确认 (仅当消息很短时)
         if len(msg) <= 3 and _CONFIRM_PATTERNS.match(msg):
-            return RoutingDecision.bypass(
-                Intent.GREETING, random.choice(_CONFIRM_RESPONSES)
-            )
+            return RoutingDecision.bypass(Intent.GREETING, random.choice(_CONFIRM_RESPONSES))
 
         # 5. 搜索意图
         if _SEARCH_KEYWORDS.search(msg):
@@ -405,8 +402,11 @@ class IntentClassifier:
                 intent=Intent.SCHEDULE,
                 confidence=0.7,
                 suggested_tools=[
-                    "create_task", "list_tasks", "delete_task",
-                    "pause_task", "resume_task",
+                    "create_task",
+                    "list_tasks",
+                    "delete_task",
+                    "pause_task",
+                    "resume_task",
                 ],
                 suggested_model=_INTENT_MODEL_HINTS[Intent.SCHEDULE],
             )

@@ -51,9 +51,7 @@ class CLIFrontend(BaseFrontend):
                     self._handle_command(user_input)
                     continue
 
-                message = Message(
-                    content=user_input, role="user", msg_type=MessageType.TEXT
-                )
+                message = Message(content=user_input, role="user", msg_type=MessageType.TEXT)
                 ctx = ConversationContext(conversation_id=self._conversation_id)
 
                 print("AI: ", end="", flush=True)
@@ -85,8 +83,16 @@ class CLIFrontend(BaseFrontend):
         elif cmd == "reset":
             self._reset_params()
         else:
-            print(f"未知命令: {cmd}")
-            print("输入 '/help' 查看可用命令")
+            # Application-level commands (/new, /style, /actions, ...)
+            # belong to ChatCore so every frontend shares one command path.
+            message = Message(
+                content=command,
+                role="user",
+                msg_type=MessageType.TEXT,
+            )
+            ctx = ConversationContext(conversation_id=self._conversation_id)
+            print("AI: ", end="", flush=True)
+            self._handle_message(message, ctx)
 
     def _show_help(self):
         print("\n可用命令:")
@@ -94,6 +100,9 @@ class CLIFrontend(BaseFrontend):
         print("  /set <参数> <值>   设置模型参数")
         print("  /params            显示当前参数")
         print("  /reset             重置参数为默认值")
+        print("  /actions           查看待审批动作")
+        print("  /approve-action ID 批准并执行动作")
+        print("  /reject-action ID  拒绝动作")
         print("\n可用参数:")
         print("  temperature    温度 (0-2)，控制输出随机性")
         print("  max_tokens     最大输出token数")
@@ -187,9 +196,7 @@ class CLIFrontend(BaseFrontend):
     def display_info(self, info: str):
         print(info)
 
-    def set_current_conversation(
-        self, conversation_id: str, messages: List[Dict[str, Any]]
-    ):
+    def set_current_conversation(self, conversation_id: str, messages: List[Dict[str, Any]]):
         self._conversation_id = conversation_id
         if self._conversation:
             self._conversation.clear_history()
@@ -208,9 +215,7 @@ class CLIFrontend(BaseFrontend):
             title = conv.get("title", "无标题")
             print(f"  [{conv_id}] {title}")
 
-    def request_rename_input(
-        self, conversation_id: str, current_title: str
-    ) -> Optional[str]:
+    def request_rename_input(self, conversation_id: str, current_title: str) -> Optional[str]:
         try:
             new_title = input(f"输入新标题 (当前: {current_title}): ").strip()
             return new_title if new_title else None

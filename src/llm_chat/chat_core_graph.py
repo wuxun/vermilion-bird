@@ -43,7 +43,14 @@ from llm_chat.pipeline.stages import (
     TokenRecordStage,
 )
 from llm_chat.pipeline import MutableStrHolder
-from llm_chat.runtime import RunManager, RunType
+from llm_chat.runtime import (
+    ActionProposalManager,
+    ActionStatus,
+    CapabilityPolicy,
+    PolicyDecision,
+    RunManager,
+    RunType,
+)
 from llm_chat.utils.observability import observe
 
 logger = logging.getLogger(__name__)
@@ -271,23 +278,113 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
 
     registry = get_tool_registry()
     tool_calls = _ctx()._extra.get("_pending_tool_calls", [])
+    policy = _ctx()._extra.get("capability_policy")
+    proposals = _ctx()._extra.get("action_proposals")
+    run_manager = _ctx()._extra.get("run_manager")
+    run_id = _ctx()._extra.get("run_id")
 
-    tool_call_dicts = []
+    allowed_call_dicts = []
+    results_by_id = {}
     for tc in tool_calls:
         tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
         args = tc.arguments if isinstance(tc.arguments, dict) else {}
-        tool_call_dicts.append(
+        tool = registry.get_tool(tc.name)
+        declared = getattr(tool, "capabilities", frozenset()) if tool else None
+        decision, capabilities = (
+            policy.evaluate(tc.name, declared) if policy else (PolicyDecision.ALLOW, set())
+        )
+
+        if decision == PolicyDecision.REQUIRE_APPROVAL and proposals:
+            proposal = proposals.propose(
+                run_id=run_id,
+                conversation_id=_ctx().conversation_id,
+                tool_name=tc.name,
+                arguments=args,
+                capabilities=capabilities,
+            )
+            if run_manager:
+                run_manager.emit(
+                    run_id,
+                    "action.proposed",
+                    {
+                        "proposal_id": proposal.id,
+                        "tool": tc.name,
+                        "capabilities": sorted(capability.value for capability in capabilities),
+                    },
+                )
+            results_by_id[tc_id] = {
+                "tool_call_id": tc_id,
+                "content": (
+                    f"Action requires user approval. Proposal: {proposal.id}. "
+                    f"Ask the user to run /approve-action {proposal.id} "
+                    f"or /reject-action {proposal.id}. Do not claim it executed."
+                ),
+                "is_error": True,
+            }
+            continue
+
+        if decision == PolicyDecision.DENY:
+            results_by_id[tc_id] = {
+                "tool_call_id": tc_id,
+                "content": (
+                    "Action denied by capability policy: "
+                    + ", ".join(sorted(cap.value for cap in capabilities))
+                ),
+                "is_error": True,
+            }
+            if run_manager:
+                run_manager.emit(
+                    run_id,
+                    "action.denied",
+                    {"tool": tc.name},
+                )
+            continue
+
+        allowed_call_dicts.append(
             {
                 "id": tc_id,
                 "function": {"name": tc.name, "arguments": json.dumps(args)},
             }
         )
 
-    executor = ToolExecutor(registry, max_workers=5)
-    try:
-        results = executor.execute_tools_parallel(tool_call_dicts)
-    finally:
-        executor.shutdown()
+    if allowed_call_dicts:
+        if run_manager:
+            for call in allowed_call_dicts:
+                run_manager.emit(
+                    run_id,
+                    "tool.started",
+                    {"tool": call["function"]["name"], "tool_call_id": call["id"]},
+                )
+        executor = ToolExecutor(registry, max_workers=5)
+        try:
+            executed = executor.execute_tools_parallel(allowed_call_dicts)
+        finally:
+            executor.shutdown()
+        for result in executed:
+            results_by_id[result["tool_call_id"]] = result
+            if run_manager:
+                run_manager.emit(
+                    run_id,
+                    "tool.completed",
+                    {
+                        "tool_call_id": result["tool_call_id"],
+                        "is_error": result.get("is_error", False),
+                    },
+                )
+
+    results = []
+    for tc in tool_calls:
+        tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
+        results.append(
+            results_by_id.get(
+                tc_id,
+                {
+                    "tool_call_id": tc_id,
+                    "content": "Error: missing tool execution result",
+                    "is_error": True,
+                },
+            )
+        )
 
     for tc, result in zip(tool_calls, results):
         tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
@@ -467,11 +564,15 @@ class ChatCoreGraph:
         conversation_manager: ConversationManager,
         config: Config,
         run_manager: Optional[RunManager] = None,
+        capability_policy: Optional[CapabilityPolicy] = None,
+        action_proposals: Optional[ActionProposalManager] = None,
     ):
         self.client = client
         self.conversation_manager = conversation_manager
         self.config = config
         self.run_manager = run_manager or RunManager()
+        self.capability_policy = capability_policy or CapabilityPolicy()
+        self.action_proposals = action_proposals or ActionProposalManager()
         self._cancel_event: Optional[threading.Event] = None
         self._prompt_skills_holder = MutableStrHolder("")
         self._style_holder = MutableStrHolder("default")
@@ -508,6 +609,15 @@ class ChatCoreGraph:
             parent_run_id=parent_run_id,
             input={"message": message},
         )
+        action_response = self._handle_action_command(
+            conversation_id,
+            message,
+            command_run_id=run.id,
+        )
+        if action_response is not None:
+            self.run_manager.complete(run.id, action_response)
+            return action_response
+
         ctx = PipelineContext(
             conversation_id=conversation_id,
             user_message=message,
@@ -523,6 +633,8 @@ class ChatCoreGraph:
             "client": self.client,
             "config": self.config,
             "run_manager": self.run_manager,
+            "capability_policy": self.capability_policy,
+            "action_proposals": self.action_proposals,
             "run_id": run.id,
         }
 
@@ -578,6 +690,17 @@ class ChatCoreGraph:
             parent_run_id=parent_run_id,
             input={"message": message, "stream": True},
         )
+        action_response = self._handle_action_command(
+            conversation_id,
+            message,
+            command_run_id=run.id,
+        )
+        if action_response is not None:
+            if on_chunk:
+                on_chunk(action_response)
+            self.run_manager.complete(run.id, action_response)
+            return action_response
+
         self._cancel_event = threading.Event()
         ctx = PipelineContext(
             conversation_id=conversation_id,
@@ -598,6 +721,8 @@ class ChatCoreGraph:
             "client": self.client,
             "config": self.config,
             "run_manager": self.run_manager,
+            "capability_policy": self.capability_policy,
+            "action_proposals": self.action_proposals,
             "run_id": run.id,
         }
 
@@ -636,6 +761,80 @@ class ChatCoreGraph:
     def set_prompt_skills_context(self, context: str) -> None:
         """Inject prompt skills context (called by App after SkillManager init)."""
         self._prompt_skills_holder.set(context)
+
+    def _handle_action_command(
+        self,
+        conversation_id: str,
+        message: str,
+        *,
+        command_run_id: str,
+    ) -> Optional[str]:
+        """Execute explicit human approval commands before the LLM pipeline."""
+        parts = message.strip().split(maxsplit=1)
+        command = parts[0].lower() if parts else ""
+        if command not in {
+            "/actions",
+            "/approve-action",
+            "/reject-action",
+        }:
+            return None
+
+        try:
+            if command == "/actions":
+                pending = self.action_proposals.list(
+                    status=ActionStatus.PENDING,
+                    conversation_id=conversation_id,
+                )
+                if pending:
+                    lines = [
+                        f"- {item.id}: {item.tool_name} "
+                        f"[{', '.join(sorted(cap.value for cap in item.capabilities))}]"
+                        for item in pending
+                    ]
+                    response = "待审批动作：\n" + "\n".join(lines)
+                else:
+                    response = "当前没有待审批动作。"
+            elif len(parts) != 2 or not parts[1].strip():
+                response = f"用法：{command} <action_id>"
+            elif command == "/reject-action":
+                proposal = self.action_proposals.reject(
+                    parts[1].strip(),
+                    conversation_id=conversation_id,
+                )
+                if self.run_manager.get(proposal.run_id):
+                    self.run_manager.emit(
+                        proposal.run_id,
+                        "action.rejected",
+                        {"proposal_id": proposal.id},
+                    )
+                response = f"已拒绝动作 {proposal.id}（{proposal.tool_name}）。"
+            else:
+                from llm_chat.tools import get_tool_registry
+
+                proposal = self.action_proposals.approve_and_execute(
+                    parts[1].strip(),
+                    tool_registry=get_tool_registry(),
+                    run_manager=self.run_manager,
+                    parent_run_id=command_run_id,
+                    conversation_id=conversation_id,
+                )
+                if self.run_manager.get(proposal.run_id):
+                    self.run_manager.emit(
+                        proposal.run_id,
+                        f"action.{proposal.status.value}",
+                        {"proposal_id": proposal.id},
+                    )
+                if proposal.status == ActionStatus.COMPLETED:
+                    response = f"动作 {proposal.id} 已批准并执行完成。\n" f"{proposal.result or ''}"
+                else:
+                    response = f"动作 {proposal.id} 执行失败：" f"{proposal.error or '未知错误'}"
+        except (KeyError, ValueError) as exc:
+            response = f"动作处理失败：{exc}"
+
+        conversation = self.conversation_manager.get_conversation(conversation_id)
+        conversation.add_user_message(message)
+        conversation.add_assistant_message(response)
+        return response
 
     # ── Convenience ───────────────────────────────────────────
 

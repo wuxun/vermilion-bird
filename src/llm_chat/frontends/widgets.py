@@ -33,6 +33,7 @@ if PYQT_AVAILABLE:
 
     class StreamSignals(QObject):
         """流式回调的信号通道（后台线程 → GUI 主线程）。"""
+
         text_received = pyqtSignal(str)
         stream_finished = pyqtSignal(str, str)
         error_occurred = pyqtSignal(str, str)
@@ -42,10 +43,12 @@ if PYQT_AVAILABLE:
 
     class ConversationListSignals(QObject):
         """会话列表操作信号通道。"""
+
         conversations_updated = pyqtSignal()
 
     class ProactiveMessageSignals(QObject):
         """主动消息信号通道（后台线程 → GUI 主线程）。"""
+
         opener_ready = pyqtSignal(str)
 
 else:
@@ -57,7 +60,6 @@ else:
 # -- widgets ------------------------------------------------------------
 
 if PYQT_AVAILABLE:
-
     # ────────────────────────────────────────────────────────────
 
     class InputTextEdit(QTextEdit):
@@ -67,6 +69,7 @@ if PYQT_AVAILABLE:
         - / 命令自动补全 (Tab 补全，下拉列表选择)
         - /style 子命令补全 (风格名 Tab 补全)
         """
+
         send_requested = pyqtSignal()
 
         _SLASH_COMMANDS = [
@@ -78,6 +81,9 @@ if PYQT_AVAILABLE:
             ("/file", "打开文件"),
             ("/code", "代码模式"),
             ("/remember", "记住事实到长期记忆"),
+            ("/actions", "查看当前会话的待审批动作"),
+            ("/approve-action", "批准并执行一个待审批动作"),
+            ("/reject-action", "拒绝一个待审批动作"),
             ("/set", "设置模型参数 (temperature/max_tokens/top_p/reasoning)"),
             ("/params", "显示当前模型参数"),
             ("/reset", "重置模型参数为默认值"),
@@ -91,9 +97,7 @@ if PYQT_AVAILABLE:
             self._max_height = 150
             self._popup: Optional[QListWidget] = None
             self._completing = False
-            self.document().documentLayout().documentSizeChanged.connect(
-                self._adjust_height
-            )
+            self.document().documentLayout().documentSizeChanged.connect(self._adjust_height)
             self._adjust_height()
 
         def _adjust_height(self):
@@ -124,7 +128,9 @@ if PYQT_AVAILABLE:
                     return w
             return None
 
-        def _matches(self, partial: str, candidates: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        def _matches(
+            self, partial: str, candidates: list[tuple[str, str]]
+        ) -> list[tuple[str, str]]:
             """返回以 partial 开头的候选项。"""
             lower = partial.lower()
             return [(cmd, desc) for cmd, desc in candidates if cmd.lower().startswith(lower)]
@@ -149,7 +155,8 @@ if PYQT_AVAILABLE:
                 self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
                 self._popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
                 # 暖棕朱雀主题配色：暖白底、朱红选中、沙色边框
-                self._popup.setStyleSheet("""
+                self._popup.setStyleSheet(
+                    """
                     QListWidget {
                         font-family: Arial, sans-serif;
                         background-color: #FFFBF5;
@@ -180,7 +187,8 @@ if PYQT_AVAILABLE:
                         border-radius: 3px;
                         min-height: 20px;
                     }
-                """)
+                """
+                )
                 self._popup.itemClicked.connect(self._on_popup_selected)
 
             self._popup.clear()
@@ -323,6 +331,7 @@ if PYQT_AVAILABLE:
 
     class CollapsibleToolCall(QFrame):
         """可折叠的工具调用展示卡片。"""
+
         toggled = pyqtSignal(bool)
 
         def __init__(self, tool_id: str, tool_name: str, tool_args: str, parent=None):
@@ -337,22 +346,26 @@ if PYQT_AVAILABLE:
 
         def _setup_ui(self):
             from llm_chat.frontends.theme import Colors
+
             self.setFrameShape(QFrame.Shape.StyledPanel)
-            self.setStyleSheet(f"""
+            self.setStyleSheet(
+                f"""
                 CollapsibleToolCall {{
                     background-color: {Colors.TOOL_BG};
                     border: 1px solid {Colors.TOOL_BORDER};
                     border-radius: 8px;
                     margin: 4px 0px;
                 }}
-            """)
+            """
+            )
 
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
 
             self._header = QPushButton()
-            self._header.setStyleSheet(f"""
+            self._header.setStyleSheet(
+                f"""
                 QPushButton {{
                     background-color: {Colors.TOOL_HEADER};
                     border: none;
@@ -365,15 +378,14 @@ if PYQT_AVAILABLE:
                 QPushButton:hover {{
                     background-color: {Colors.TOOL_HEADER_HOVER};
                 }}
-            """)
+            """
+            )
             self._header.clicked.connect(self._toggle)
             self._update_header_text()
             layout.addWidget(self._header)
 
             self._content = QWidget()
-            self._content.setStyleSheet(
-                f"background-color: #FFFFFF; border-radius: 0 0 8px 8px;"
-            )
+            self._content.setStyleSheet(f"background-color: #FFFFFF; border-radius: 0 0 8px 8px;")
             content_layout = QVBoxLayout(self._content)
             content_layout.setContentsMargins(12, 10, 12, 10)
             content_layout.setSpacing(8)
@@ -388,7 +400,8 @@ if PYQT_AVAILABLE:
             self._args_text.setPlainText(self._tool_args)
             self._args_text.setReadOnly(True)
             self._args_text.setMaximumHeight(120)
-            self._args_text.setStyleSheet(f"""
+            self._args_text.setStyleSheet(
+                f"""
                 QTextEdit {{
                     background-color: #F5F5F5;
                     border-radius: 4px;
@@ -398,7 +411,8 @@ if PYQT_AVAILABLE:
                     font-size: 12px;
                     color: {Colors.TOOL_TEXT};
                 }}
-            """)
+            """
+            )
             content_layout.addWidget(self._args_text)
 
             self._result_label = QLabel("结果:")
@@ -411,7 +425,8 @@ if PYQT_AVAILABLE:
             self._result_text = QTextEdit()
             self._result_text.setReadOnly(True)
             self._result_text.setMaximumHeight(150)
-            self._result_text.setStyleSheet(f"""
+            self._result_text.setStyleSheet(
+                f"""
                 QTextEdit {{
                     background-color: {Colors.TOOL_RESULT_BG};
                     border-radius: 4px;
@@ -421,7 +436,8 @@ if PYQT_AVAILABLE:
                     font-size: 11px;
                     color: {Colors.TOOL_RESULT_TEXT};
                 }}
-            """)
+            """
+            )
             self._result_text.hide()
             content_layout.addWidget(self._result_text)
 
@@ -436,9 +452,7 @@ if PYQT_AVAILABLE:
                 status = " ▼ 执行中..."
 
             expand_icon = "▼" if self._is_expanded else "▶"
-            self._header.setText(
-                f"{expand_icon} {icon} 工具调用: {self._tool_name}{status}"
-            )
+            self._header.setText(f"{expand_icon} {icon} 工具调用: {self._tool_name}{status}")
 
         def _toggle(self):
             self._is_expanded = not self._is_expanded
