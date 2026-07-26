@@ -287,7 +287,7 @@ class WorkItemService:
         )
 
     def reconcile(self, *, limit: int = 1000) -> List[WorkItem]:
-        """启动时用最新主 Run 修复任务状态投影。"""
+        """启动时用主 Run 与阻塞型子 Run 修复任务状态投影。"""
 
         changed: List[WorkItem] = []
         for item in self.repository.list_work_items(limit=limit):
@@ -309,7 +309,7 @@ class WorkItemService:
                 item.latest_run_id = run.id
             if run is None:
                 continue
-            self._apply_run_status(item, run)
+            self._apply_aggregate_status(item, run)
             current = (
                 item.status,
                 item.completed_at,
@@ -350,9 +350,10 @@ class WorkItemService:
         if event.type == "run.started" and not run.parent_run_id:
             item.root_run_id = item.root_run_id or run.id
             item.latest_run_id = run.id
-        elif item.latest_run_id != run.id:
+        primary = self.runs.get(item.latest_run_id) if item.latest_run_id else None
+        if primary is None:
             return
-        self._apply_run_status(item, run)
+        self._apply_aggregate_status(item, primary)
         current = (
             item.status,
             item.completed_at,
@@ -378,6 +379,38 @@ class WorkItemService:
         item.status = mapping[run.status]
         item.updated_at = utc_now()
         item.completed_at = run.finished_at if run.status.terminal else None
+
+    def _apply_aggregate_status(self, item: WorkItem, primary: Run) -> None:
+        """主 Run 决定终态，阻塞型子 Run 可暂时覆盖为运行中/待审批。"""
+
+        linked_runs = self.runs.list(limit=1000, work_item_id=item.id)
+        approval_waiting = any(
+            run.id != primary.id
+            and run.status == RunStatus.PAUSED
+            and bool(run.metadata.get("approval_kind"))
+            for run in linked_runs
+        )
+        active_children = any(
+            run.id != primary.id
+            and run.status in {RunStatus.PENDING, RunStatus.RUNNING}
+            for run in linked_runs
+        )
+        paused_children = any(
+            run.id != primary.id
+            and run.status == RunStatus.PAUSED
+            for run in linked_runs
+        )
+
+        self._apply_run_status(item, primary)
+        if approval_waiting:
+            item.status = WorkItemStatus.WAITING_APPROVAL
+            item.completed_at = None
+        elif primary.status.terminal and active_children:
+            item.status = WorkItemStatus.RUNNING
+            item.completed_at = None
+        elif primary.status.terminal and paused_children:
+            item.status = WorkItemStatus.PAUSED
+            item.completed_at = None
 
     def _require(self, work_item_id: str) -> WorkItem:
         item = self.repository.get_work_item(work_item_id)

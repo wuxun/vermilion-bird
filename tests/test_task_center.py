@@ -9,7 +9,14 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from llm_chat.frontends.tasks import TaskCenterDialog  # noqa: E402
-from llm_chat.runtime import Run, RunStatus, RunType  # noqa: E402
+from llm_chat.runtime import (  # noqa: E402
+    ActionProposal,
+    ActionStatus,
+    Capability,
+    Run,
+    RunStatus,
+    RunType,
+)
 from llm_chat.work import (  # noqa: E402
     Artifact,
     ArtifactKind,
@@ -61,17 +68,25 @@ def _detail(status=WorkItemStatus.COMPLETED):
     return WorkItemDetail(work_item=item, runs=[run], artifacts=[artifact])
 
 
-def _fake_app(detail):
+def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
     service = MagicMock()
     service.subscribe.return_value = lambda: None
+    if can_retry is None:
+        can_retry = detail.work_item.status == WorkItemStatus.FAILED
     return SimpleNamespace(
         work_items=service,
         list_work_items=lambda **_kwargs: [detail.work_item],
         get_work_item_detail=lambda _work_item_id: detail,
+        list_work_item_actions=lambda _work_item_id: list(actions or []),
         create_work_item=MagicMock(),
         execute_work_item=MagicMock(),
         cancel_work_item=MagicMock(),
         retry_work_item=MagicMock(),
+        resume_work_item=MagicMock(),
+        can_retry_work_item=lambda _work_item_id: can_retry,
+        can_resume_work_item=lambda _work_item_id: can_resume,
+        approve_action=MagicMock(),
+        reject_action=MagicMock(),
         run_manager=MagicMock(),
         action_proposals=MagicMock(),
     )
@@ -86,7 +101,7 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     assert dialog._table.item(0, 1).text() == "生成产品规划"
     assert dialog._runs_table.rowCount() == 1
     assert dialog._artifacts_table.rowCount() == 1
-    assert dialog._tabs.tabText(2) == "产物 (1)"
+    assert dialog._tabs.tabText(3) == "产物 (1)"
     assert "生成一份完整的产品规划文档" in dialog._overview.toPlainText()
     assert not dialog._cancel_button.isEnabled()
     assert not dialog._retry_button.isEnabled()
@@ -116,6 +131,43 @@ def test_running_task_enables_cancel(qt_app):
     qt_app.processEvents()
 
     assert dialog._cancel_button.isEnabled()
+    assert not dialog._retry_button.isEnabled()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_task_center_shows_inline_pending_approval(qt_app):
+    detail = _detail(WorkItemStatus.WAITING_APPROVAL)
+    proposal = ActionProposal(
+        id="action_gui",
+        run_id="run_gui",
+        tool_name="write_file",
+        arguments={"path": "report.md"},
+        capabilities={Capability.WORKSPACE_WRITE},
+        reason="生成报告",
+        impact="写入 report.md",
+        status=ActionStatus.PENDING,
+    )
+    dialog = TaskCenterDialog(_fake_app(detail, actions=[proposal]))
+    qt_app.processEvents()
+
+    assert dialog._approvals_table.rowCount() == 1
+    assert dialog._tabs.tabText(2) == "审批 (1 待处理)"
+    assert dialog._approve_button.isEnabled()
+    assert dialog._reject_button.isEnabled()
+    assert "report.md" in dialog._action_detail_text(proposal)
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_paused_task_enables_resume_when_handler_supports_it(qt_app):
+    detail = _detail(WorkItemStatus.PAUSED)
+    dialog = TaskCenterDialog(_fake_app(detail, can_resume=True))
+    qt_app.processEvents()
+
+    assert dialog._resume_button.isEnabled()
     assert not dialog._retry_button.isEnabled()
 
     dialog.close()

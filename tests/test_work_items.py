@@ -108,6 +108,29 @@ def test_only_primary_run_projects_work_item_status(storage):
     assert service.get(item.id).status == WorkItemStatus.FAILED
 
 
+def test_paused_approval_child_projects_waiting_approval(storage):
+    runs = RunManager(repository=storage)
+    service = WorkItemService(repository=storage, runs=runs)
+    item = service.create(objective="执行需要确认的文件写入")
+    root = service.start(item.id)
+    approval = runs.start(
+        RunType.TOOL,
+        parent_run_id=root.id,
+        metadata={"approval_kind": "tool"},
+        recovery_policy=RecoveryPolicy.RESUME,
+    )
+    runs.checkpoint(approval.id, cursor="approve", state={"proposal_id": "action_test"})
+    runs.pause(approval.id, reason="graph_interrupt")
+
+    assert service.get(item.id).status == WorkItemStatus.WAITING_APPROVAL
+
+    runs.complete(approval.id, "rejected")
+    assert service.get(item.id).status == WorkItemStatus.RUNNING
+
+    runs.complete(root.id, "done")
+    assert service.get(item.id).status == WorkItemStatus.COMPLETED
+
+
 def test_new_root_run_becomes_latest_work_item_execution(storage):
     runs = RunManager(repository=storage)
     service = WorkItemService(repository=storage, runs=runs)

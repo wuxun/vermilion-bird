@@ -23,6 +23,7 @@ from llm_chat.health import get_checker, create_database_checker, create_service
 from llm_chat.runtime import (
     ActionProposal,
     ActionProposalManager,
+    ActionStatus,
     CapabilityPolicy,
     EffectOutbox,
     EffectReconciliationService,
@@ -232,6 +233,24 @@ class App:
     def get_work_item_detail(self, work_item_id: str):
         return self.work_items.detail(work_item_id)
 
+    def list_work_item_actions(
+        self,
+        work_item_id: str,
+        *,
+        status: Optional[ActionStatus] = None,
+        limit: int = 500,
+    ):
+        """列出任务所有主/子 Run 关联的动作提案。"""
+
+        detail = self.work_items.detail(work_item_id)
+        run_ids = {run.id for run in detail.runs}
+        proposals = self.action_proposals.list(status=status, limit=limit)
+        return [
+            proposal
+            for proposal in proposals
+            if proposal.run_id in run_ids or proposal.execution_run_id in run_ids
+        ]
+
     def execute_work_item(self, work_item_id: str):
         """通过主 ChatGraph 执行用户任务，并将文本结果固化为 Artifact。"""
 
@@ -280,8 +299,45 @@ class App:
         latest_run_id = detail.work_item.latest_run_id
         if not latest_run_id:
             raise ValueError(f"Work item {work_item_id} has no active run")
-        self.run_manager.cancel(latest_run_id)
+        for proposal in self.list_work_item_actions(
+            work_item_id,
+            status=ActionStatus.PENDING,
+        ):
+            self.reject_action(
+                proposal.id,
+                conversation_id=proposal.conversation_id,
+            )
+        for run in detail.runs:
+            current = self.run_manager.get(run.id)
+            if current is not None and not current.status.terminal:
+                self.run_manager.cancel(current.id)
+        self.work_items.reconcile()
         return self.work_items.detail(work_item_id)
+
+    def can_resume_work_item(self, work_item_id: str) -> bool:
+        item = self.work_items.get(work_item_id)
+        return bool(
+            item
+            and item.latest_run_id
+            and self.can_resume_run(item.latest_run_id)
+        )
+
+    def resume_work_item(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        latest_run_id = detail.work_item.latest_run_id
+        if not latest_run_id:
+            raise ValueError(f"Work item {work_item_id} has no run to resume")
+        self.resume_run(latest_run_id, True)
+        self.work_items.reconcile()
+        return self._materialize_work_item_result(work_item_id)
+
+    def can_retry_work_item(self, work_item_id: str) -> bool:
+        item = self.work_items.get(work_item_id)
+        return bool(
+            item
+            and item.latest_run_id
+            and self.can_retry_run(item.latest_run_id)
+        )
 
     def retry_work_item(self, work_item_id: str):
         detail = self.work_items.detail(work_item_id)

@@ -125,3 +125,15 @@ def test_task_cancel_uses_application_service():
 
     assert result.exit_code == 0
     app.cancel_work_item.assert_called_once_with("work_test")
+
+
+def test_task_resume_uses_persistent_checkpoint():
+    app = MagicMock()
+    app.resume_work_item.return_value = _detail(status=WorkItemStatus.RUNNING)
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(cli, ["task", "resume", "work_test"])
+
+    assert result.exit_code == 0
+    app.resume_work_item.assert_called_once_with("work_test")
+    app.stop.assert_called_once()

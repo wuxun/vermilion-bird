@@ -232,3 +232,20 @@ def retry_task(work_item_id):
         raise click.ClickException(str(exc)) from exc
     finally:
         app.stop()
+
+
+@task.command("resume")
+@click.argument("work_item_id")
+def resume_task(work_item_id):
+    """从持久化检查点恢复已暂停任务。"""
+
+    app = _build_app()
+    try:
+        detail = app.resume_work_item(work_item_id)
+        click.echo(f"任务状态: {_status_label(detail.work_item.status)}")
+        if detail.artifacts:
+            click.echo(detail.artifacts[0].content or detail.artifacts[0].content_preview or "")
+    except (KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        app.stop()

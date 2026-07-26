@@ -82,9 +82,12 @@ poetry run vermilion-bird feishu
 # 创建并执行持久化任务
 poetry run vermilion-bird task start "调研三个 Agent 框架并形成报告"
 poetry run vermilion-bird task list
+poetry run vermilion-bird task resume <work-item-id>
 ```
 
 GUI 顶栏的“任务”按钮（或 `Ctrl+Shift+T`）打开面向用户目标和交付物的任务中心；
+待审批动作可在任务详情中查看风险与参数并直接批准或拒绝，已有 checkpoint 的任务
+可直接恢复。
 `🧭` 按钮（或 `Ctrl+Shift+R`）打开高级“执行与审批中心”。“运行记录”
 页可按类型和状态筛选并查看完整事件时间线；“审批”页集中展示待执行动作的风险、
 能力、影响和参数，只有明确批准后才会执行。待审批动作和历史 Run 均保存在 SQLite
