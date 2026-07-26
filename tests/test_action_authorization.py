@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from ember_core.tools import BaseTool
 
+from llm_chat.app import App
 from llm_chat.chat_core_graph import (
     ChatCoreGraph,
     ChatGraphState,
@@ -159,3 +160,42 @@ def test_action_cannot_be_approved_from_another_conversation():
         assert "another conversation" in str(exc)
     else:
         raise AssertionError("cross-conversation action approval was accepted")
+
+
+def test_app_exposes_shared_approval_api_for_gui():
+    registry = ToolRegistry.create_isolated()
+    tool = RecordingWriteTool()
+    registry.register(tool)
+    runs = RunManager()
+    origin = runs.start(RunType.CHAT, conversation_id="conv")
+    proposals = ActionProposalManager()
+
+    approved = proposals.propose(
+        run_id=origin.id,
+        conversation_id="conv",
+        tool_name="write_file",
+        arguments={"file_path": "approved.txt"},
+        capabilities={Capability.WORKSPACE_WRITE},
+    )
+    rejected = proposals.propose(
+        run_id=origin.id,
+        conversation_id="conv",
+        tool_name="write_file",
+        arguments={"file_path": "rejected.txt"},
+        capabilities={Capability.WORKSPACE_WRITE},
+    )
+
+    app = object.__new__(App)
+    app.tool_registry = registry
+    app.run_manager = runs
+    app.action_proposals = proposals
+
+    completed = app.approve_action(approved.id, conversation_id="conv")
+    denied = app.reject_action(rejected.id, conversation_id="conv")
+
+    assert completed.status == ActionStatus.COMPLETED
+    assert denied.status == ActionStatus.REJECTED
+    assert tool.calls == [{"file_path": "approved.txt"}]
+    event_types = [event.type for event in runs.get(origin.id).events]
+    assert "action.completed" in event_types
+    assert "action.rejected" in event_types

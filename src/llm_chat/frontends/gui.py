@@ -58,6 +58,7 @@ def _build_card_selection_message(card: "DecisionCard", selected) -> str:
     parts.append("\n\n请基于这个方向继续。")
     return "".join(parts)
 
+
 try:
     import markdown
 
@@ -130,9 +131,6 @@ except ImportError:
     QObject = None
 
 
-
-
-
 class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def __init__(self, conversation_id: str = "default", title: str = "Vermilion Bird"):
         BaseFrontend.__init__(self, "gui")
@@ -152,6 +150,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._scheduler_button: Optional[QPushButton] = None
         self._scheduler_dialog = None
         self._settings_button: Optional[QPushButton] = None
+        self._execution_center_button: Optional[QPushButton] = None
+        self._execution_center_dialog = None
+        self._execution_center_timer = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
@@ -236,6 +237,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         QShortcut(QKeySequence("Escape"), self._main_window, self._on_escape)
         # Ctrl+, → 打开设置菜单
         QShortcut(QKeySequence("Ctrl+,"), self._main_window, self._show_settings_menu)
+        # Ctrl+Shift+R → 打开执行与审批中心
+        QShortcut(
+            QKeySequence("Ctrl+Shift+R"),
+            self._main_window,
+            self._on_execution_center,
+        )
         logger.info("键盘快捷键已注册")
 
     def _focus_search(self):
@@ -254,8 +261,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _show_settings_menu(self):
         """显示设置下拉菜单。"""
         from PyQt6.QtWidgets import QMenu
+
         menu = QMenu(self._main_window)
-        menu.setStyleSheet(f"""
+        menu.setStyleSheet(
+            f"""
             QMenu {{
                 background-color: {Colors.CHAT_BG};
                 color: {Colors.TEXT_PRIMARY};
@@ -277,7 +286,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 background: {Colors.CHAT_ACCENT};
                 margin: 4px 8px;
             }}
-        """)
+        """
+        )
 
         menu.addAction("💬 新建对话", self._on_new_conv)
         menu.addAction("🗑 清空对话", self._on_clear)
@@ -287,6 +297,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         menu.addAction("🤖 模型设置", self._on_models_config)
         menu.addAction("⏰ Scheduler", self._on_scheduler_config)
         menu.addAction("📊 Dashboard", self._on_dashboard)
+        menu.addAction("🧭 执行与审批中心", self._on_execution_center)
         menu.addSeparator()
         menu.addAction("⌨️ 快捷键", self._show_shortcuts_help)
 
@@ -296,6 +307,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _show_shortcuts_help(self):
         """显示快捷键帮助弹窗。"""
         from PyQt6.QtWidgets import QMessageBox
+
         QMessageBox.information(
             self._main_window,
             "快捷键",
@@ -303,9 +315,54 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "Ctrl+K  — 搜索历史对话\n"
             "Ctrl+L  — 清空当前对话\n"
             "Ctrl+,  — 打开设置菜单\n"
+            "Ctrl+Shift+R — 执行与审批中心\n"
             "Escape  — 停止生成 / 聚焦输入框\n"
             "Enter   — 发送消息\n"
             "Shift+Enter — 换行",
+        )
+
+    def _on_execution_center(self):
+        """打开跨会话运行历史与动作审批中心。"""
+
+        if self._app_instance is None:
+            QMessageBox.warning(self._main_window, "暂不可用", "应用服务尚未初始化。")
+            return
+        if self._execution_center_dialog is not None and self._execution_center_dialog.isVisible():
+            self._execution_center_dialog.raise_()
+            self._execution_center_dialog.activateWindow()
+            return
+
+        from llm_chat.frontends.execution_center import ExecutionCenterDialog
+
+        dialog = ExecutionCenterDialog(self._app_instance, self._main_window)
+        dialog.destroyed.connect(self._on_execution_center_destroyed)
+        self._execution_center_dialog = dialog
+        dialog.show()
+
+    def _on_execution_center_destroyed(self):
+        self._execution_center_dialog = None
+
+    def _update_execution_center_indicator(self):
+        """在顶栏展示待审批数量，避免审批请求被聊天内容淹没。"""
+
+        if self._execution_center_button is None or self._app_instance is None:
+            return
+        try:
+            from llm_chat.runtime import ActionStatus
+
+            pending_count = len(
+                self._app_instance.action_proposals.list(
+                    status=ActionStatus.PENDING,
+                    limit=100,
+                )
+            )
+        except Exception:
+            logger.debug("Failed to refresh pending action indicator", exc_info=True)
+            return
+        self._execution_center_button.setText(f"🧭 {pending_count}" if pending_count else "🧭")
+        self._execution_center_button.setFixedWidth(48 if pending_count else 32)
+        self._execution_center_button.setToolTip(
+            (f"执行与审批中心：{pending_count} 项待审批" if pending_count else "执行与审批中心 (Ctrl+Shift+R)")
         )
 
     def set_conversation_callbacks(
@@ -335,14 +392,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._stream_signals.context_updated.connect(self._on_context_updated)
 
         self._conv_list_signals = ConversationListSignals()
-        self._conv_list_signals.conversations_updated.connect(
-            self._refresh_conversation_list
-        )
+        self._conv_list_signals.conversations_updated.connect(self._refresh_conversation_list)
 
         self._proactive_signals = ProactiveMessageSignals()
-        self._proactive_signals.opener_ready.connect(
-            self._on_proactive_opener
-        )
+        self._proactive_signals.opener_ready.connect(self._on_proactive_opener)
 
         self._card_signals = CardSignals()
         self._card_signals.card_created.connect(self._on_card_received)
@@ -364,6 +417,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._init_model_combo()
         self._init_subagent_panel()
         self._setup_shortcuts()
+        self._execution_center_timer = QTimer(self._main_window)
+        self._execution_center_timer.timeout.connect(self._update_execution_center_indicator)
+        self._execution_center_timer.start(2500)
+        self._update_execution_center_indicator()
 
         self._main_window.closeEvent = self._on_close_event
 
@@ -384,9 +441,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         import os
 
         icon_paths = [
-            os.path.join(
-                os.path.dirname(__file__), "..", "..", "..", "vermilion_bird_small.png"
-            ),
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "vermilion_bird_small.png"),
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 "..",
@@ -484,9 +539,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout.addLayout(search_layout)
 
         self._conversation_list = QListWidget()
-        self._conversation_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
+        self._conversation_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._conversation_list.itemClicked.connect(self._on_conversation_selected)
         layout.addWidget(self._conversation_list, stretch=1)
 
@@ -500,8 +553,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._collapse_button.setText("▶")
             self._collapse_button.setToolTip("展开侧边栏")
             for w in [
-                self._new_conv_button, self._rename_conv_button, self._delete_conv_button,
-                self._search_input, self._search_clear_button, self._conversation_list,
+                self._new_conv_button,
+                self._rename_conv_button,
+                self._delete_conv_button,
+                self._search_input,
+                self._search_clear_button,
+                self._conversation_list,
             ]:
                 if w:
                     w.hide()
@@ -519,8 +576,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._collapse_button.setText("◀")
             self._collapse_button.setToolTip("收起侧边栏")
             for w in [
-                self._new_conv_button, self._rename_conv_button, self._delete_conv_button,
-                self._search_input, self._conversation_list,
+                self._new_conv_button,
+                self._rename_conv_button,
+                self._delete_conv_button,
+                self._search_input,
+                self._conversation_list,
             ]:
                 if w:
                     w.show()
@@ -543,12 +603,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # ── 极简顶栏 ──
         header = QFrame()
         header.setFixedHeight(44)
-        header.setStyleSheet(f"""
+        header.setStyleSheet(
+            f"""
             QFrame {{
                 background-color: {Colors.CHAT_BG};
                 border-bottom: 1px solid {Colors.CHAT_BORDER};
             }}
-        """)
+        """
+        )
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 0, 12, 0)
         header_layout.setSpacing(8)
@@ -562,7 +624,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 模型选择器（紧凑）
         self._model_combo = QComboBox()
         self._model_combo.setFixedWidth(140)
-        self._model_combo.setStyleSheet(f"""
+        self._model_combo.setStyleSheet(
+            f"""
             QComboBox {{
                 background: transparent;
                 border: 1px solid {Colors.CHAT_ACCENT};
@@ -572,14 +635,33 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 font-size: 11px;
             }}
             QComboBox::drop-down {{ border: none; }}
-        """)
+        """
+        )
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         header_layout.addWidget(self._model_combo)
+
+        self._execution_center_button = QPushButton("🧭")
+        self._execution_center_button.setFixedSize(32, 32)
+        self._execution_center_button.setToolTip("执行与审批中心 (Ctrl+Shift+R)")
+        self._execution_center_button.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                font-size: 15px;
+            }
+            QPushButton:hover { background-color: rgba(0,0,0,0.05); }
+            """
+        )
+        self._execution_center_button.clicked.connect(self._on_execution_center)
+        header_layout.addWidget(self._execution_center_button)
 
         self._settings_button = QPushButton("⚙️")
         self._settings_button.setFixedSize(32, 32)
         self._settings_button.setToolTip("设置 (Ctrl+,)")
-        self._settings_button.setStyleSheet("""
+        self._settings_button.setStyleSheet(
+            """
             QPushButton {
                 background: transparent;
                 border: none;
@@ -587,7 +669,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 font-size: 16px;
             }
             QPushButton:hover { background-color: rgba(0,0,0,0.05); }
-        """)
+        """
+        )
         self._settings_button.clicked.connect(self._show_settings_menu)
         header_layout.addWidget(self._settings_button)
 
@@ -597,12 +680,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_scroll_area = QScrollArea()
         self._chat_scroll_area.setWidgetResizable(True)
         self._chat_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self._chat_scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._chat_scroll_area.setStyleSheet(f"""
+        self._chat_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._chat_scroll_area.setStyleSheet(
+            f"""
             QScrollArea {{ background-color: {Colors.CHAT_BG}; border: none; }}
-        """)
+        """
+        )
 
         # 居中容器：外层 wrapper 用于水平居中
         scroll_content = QWidget()
@@ -613,7 +696,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         # 对话列（撑满可用宽度）
         self._chat_container = QWidget()
-        self._chat_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._chat_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._chat_container.setStyleSheet(f"background-color: {Colors.CHAT_BG};")
         self._chat_layout = QVBoxLayout(self._chat_container)
         self._chat_layout.setContentsMargins(40, 20, 40, 20)
@@ -649,12 +734,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         # ── 底部固定区域：输入框 + 状态栏 ──
         bottom_frame = QFrame()
-        bottom_frame.setStyleSheet(f"""
+        bottom_frame.setStyleSheet(
+            f"""
             QFrame {{
                 background-color: {Colors.CHAT_BG};
                 border-top: 1px solid {Colors.CHAT_BORDER};
             }}
-        """)
+        """
+        )
         bottom_layout = QVBoxLayout(bottom_frame)
         bottom_layout.setContentsMargins(16, 8, 16, 8)
         bottom_layout.setSpacing(6)
@@ -666,7 +753,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._input_field = InputTextEdit()
         self._input_field.setFont(QFont("Arial", 11))
         self._input_field.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行)")
-        self._input_field.setStyleSheet(f"""
+        self._input_field.setStyleSheet(
+            f"""
             QTextEdit {{
                 border: 1px solid {Colors.CHAT_ACCENT};
                 border-radius: 12px;
@@ -677,7 +765,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             QTextEdit:focus {{
                 border: 1.5px solid {Colors.PRIMARY};
             }}
-        """)
+        """
+        )
         self._input_field.send_requested.connect(self._on_send)
         input_row.addWidget(self._input_field, stretch=1)
 
@@ -701,7 +790,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         status_row = QHBoxLayout()
         status_row.setContentsMargins(4, 0, 4, 0)
 
-        self._context_label = QLabel(self._format_context_text(0, self._get_current_context_limit()))
+        self._context_label = QLabel(
+            self._format_context_text(0, self._get_current_context_limit())
+        )
         self._context_label.setFont(QFont("Arial", 9))
         self._context_label.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         status_row.addWidget(self._context_label)
@@ -721,7 +812,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _apply_styles(self):
         """应用全局样式 — 引用 theme.py 共享常量。"""
-        self._main_window.setStyleSheet(f"""
+        self._main_window.setStyleSheet(
+            f"""
             QFrame#sidebar {{
                 background-color: {Colors.SIDEBAR_BG};
                 border-right: 1px solid {Colors.SIDEBAR_BORDER};
@@ -731,7 +823,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 background-color: {Colors.CHAT_BG};
             }}
             QLabel {{ color: {Colors.TEXT_PRIMARY}; }}
-        """)
+        """
+        )
 
         self._conversation_list.setStyleSheet(conversation_list_style())
 
@@ -766,14 +859,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
         self._search_clear_button.setVisible(True)
 
-        if not self._app_instance or not hasattr(self._app_instance, 'conversation_manager'):
+        if not self._app_instance or not hasattr(self._app_instance, "conversation_manager"):
             self.display_error("对话管理器不可用")
             return
 
         try:
-            results = self._app_instance.conversation_manager.search_messages(
-                query, limit=10
-            )
+            results = self._app_instance.conversation_manager.search_messages(query, limit=10)
             if not results:
                 self._conversation_list.clear()
                 self._conversation_list.addItem(f'未找到: "{query}"')
@@ -782,15 +873,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._conversation_list.clear()
             conv_counts = {}
             for r in results:
-                cid = r.get('conversation_id', '')
+                cid = r.get("conversation_id", "")
                 conv_counts[cid] = conv_counts.get(cid, 0) + 1
 
             for cid, count in conv_counts.items():
                 preview = next(
-                    (r.get('content', '')[:80] for r in results if r.get('conversation_id') == cid),
-                    ''
+                    (r.get("content", "")[:80] for r in results if r.get("conversation_id") == cid),
+                    "",
                 )
-                self._conversation_list.addItem(f'{cid[:12]}... ({count} 条匹配)\n  {preview}')
+                self._conversation_list.addItem(f"{cid[:12]}... ({count} 条匹配)\n  {preview}")
         except Exception as e:
             self.display_error(f"搜索失败: {e}")
 
@@ -847,16 +938,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._conv_list_signals:
             self._conv_list_signals.conversations_updated.emit()
 
-    def set_current_conversation(
-        self, conversation_id: str, messages: List[Dict[str, Any]]
-    ):
+    def set_current_conversation(self, conversation_id: str, messages: List[Dict[str, Any]]):
         self._conversation_id = conversation_id
         self._messages = []
 
         for msg in messages:
-            self._messages.append(
-                {"role": msg.get("role"), "content": msg.get("content")}
-            )
+            self._messages.append({"role": msg.get("role"), "content": msg.get("content")})
 
         self._update_context_status()
         self._refresh_chat_display()
@@ -872,7 +959,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         from llm_chat.utils.token_counter import count_tokens, get_context_limit
 
         # 对话历史 token 计数（跳过卡片消息，它们没有 content 字段）
-        history = [{"role": m["role"], "content": m.get("content", "")} for m in self._messages if m.get("role") != "card"]
+        history = [
+            {"role": m["role"], "content": m.get("content", "")}
+            for m in self._messages
+            if m.get("role") != "card"
+        ]
         history_text = "\n".join(h.get("content", "") for h in history)
         total_tokens = count_tokens(history_text, self._current_model)
 
@@ -889,9 +980,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         limit = get_context_limit(self._current_model)
         usage_percent = (total_tokens / limit) * 100 if limit > 0 else 0
 
-        self._context_label.setText(
-            self._format_context_text(total_tokens, limit, usage_percent)
-        )
+        self._context_label.setText(self._format_context_text(total_tokens, limit, usage_percent))
 
         if usage_percent < 50:
             color = "#28a745"
@@ -900,9 +989,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         else:
             color = "#dc3545"
 
-        self._context_label.setStyleSheet(
-            f"color: {color}; padding: 2px; font-weight: bold;"
-        )
+        self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
 
         # 同时更新成本显示
         self._update_cost_status()
@@ -913,13 +1000,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
         try:
             from llm_chat.utils.observability import get_cost_summary
+
             summary = get_cost_summary()
             total_tokens = summary.get("tokens", {}).get("total", 0)
             total_cost = summary.get("cost", {}).get("total_usd", 0)
             if total_tokens > 0:
-                self._cost_label.setText(
-                    f"💲 {total_tokens:,} tokens · $" + f"{total_cost:.4f}"
-                )
+                self._cost_label.setText(f"💲 {total_tokens:,} tokens · $" + f"{total_cost:.4f}")
                 self._cost_label.setStyleSheet("color: #666; padding: 2px; font-weight: bold;")
             else:
                 self._cost_label.setText("💲 成本: —")
@@ -939,7 +1025,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         from llm_chat.utils.token_counter import get_context_limit
 
         model = self._current_model or (
-            self._config.llm.model if (self._config and hasattr(self._config, 'llm')) else "unknown"
+            self._config.llm.model if (self._config and hasattr(self._config, "llm")) else "unknown"
         )
         return get_context_limit(model)
 
@@ -954,9 +1040,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         if self._reasoning_combo and self._reasoning_combo.currentIndex() > 0:
             reasoning_levels = ["off", "low", "medium", "high"]
-            params["reasoning_effort"] = reasoning_levels[
-                self._reasoning_combo.currentIndex()
-            ]
+            params["reasoning_effort"] = reasoning_levels[self._reasoning_combo.currentIndex()]
 
         return params
 
@@ -989,9 +1073,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._display_ai_prefix()
         self._ensure_streaming_browser()
         if self._streaming_browser:
-            self._streaming_browser.setHtml(
-                '<span style="color:#8B7355;">● ● ●</span>'
-            )
+            self._streaming_browser.setHtml('<span style="color:#8B7355;">● ● ●</span>')
 
         current_conv_id = self.conversation_id
         model_params = self._get_model_params()
@@ -1007,9 +1089,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                     conversation_id=current_conv_id,
                     message=message,
                     on_chunk=lambda text: self._stream_signals.text_received.emit(text),
-                    on_tool_start=lambda name, args: self._stream_signals.tool_call_started.emit(name, args),
-                    on_tool_end=lambda name, args, result: self._stream_signals.tool_call_finished.emit(name, args, result),
-                    on_context_update=lambda used, limit: self._stream_signals.context_updated.emit(used, limit),
+                    on_tool_start=lambda name, args: self._stream_signals.tool_call_started.emit(
+                        name, args
+                    ),
+                    on_tool_end=lambda name, args, result: self._stream_signals.tool_call_finished.emit(
+                        name, args, result
+                    ),
+                    on_context_update=lambda used, limit: self._stream_signals.context_updated.emit(
+                        used, limit
+                    ),
                     on_card=lambda card: self._card_signals.card_created.emit(card),
                     **model_params,
                 )
@@ -1025,6 +1113,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         from datetime import datetime
+
         ts = datetime.now().strftime("%H:%M")
         escaped = self._escape_html(content)
 
@@ -1042,13 +1131,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         bubble.setTextFormat(Qt.TextFormat.RichText)
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        bubble.setStyleSheet(f"""
+        bubble.setStyleSheet(
+            f"""
             background-color: {Colors.PRIMARY};
             color: white;
             border-radius: 12px;
             padding: 8px 14px;
             font-size: 13px;
-        """)
+        """
+        )
         bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         bubble.setMaximumWidth(800)
         outer.addWidget(bubble)
@@ -1070,6 +1161,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         from datetime import datetime
+
         ts = datetime.now().strftime("%H:%M")
 
         # AI 头部：头像 + 名称 + 时间
@@ -1205,9 +1297,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
                 if tool_id in self._current_tool_call_widgets:
                     widget = self._current_tool_call_widgets[tool_id]
-                    logger.info(
-                        f"调用 widget.set_result, result_len={len(result) if result else 0}"
-                    )
+                    logger.info(f"调用 widget.set_result, result_len={len(result) if result else 0}")
                     widget.set_result(result)
 
                 break
@@ -1226,12 +1316,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 return
 
             today = datetime.now().strftime("%Y-%m-%d")
-            conv = app.conversation_manager.create_conversation(
-                title=f"\U0001f4a1 每日话题 {today}"
-            )
+            conv = app.conversation_manager.create_conversation(title=f"\U0001f4a1 每日话题 {today}")
             conv.add_assistant_message(opener)
 
             from llm_chat.storage import Storage
+
             storage = Storage()
             msgs = storage.get_messages(conv.conversation_id)
             formatted = [{"role": m["role"], "content": m["content"]} for m in msgs]
@@ -1262,9 +1351,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 color = "#ffc107"
             else:
                 color = "#dc3545"
-            self._context_label.setStyleSheet(
-                f"color: {color}; padding: 2px; font-weight: bold;"
-            )
+            self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
             self._update_cost_status()
 
     def _escape_html(self, text: str) -> str:
@@ -1280,6 +1367,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """滚动到底部。使用 QTimer 延迟，避免 processEvents 重入。"""
         if self._chat_scroll_area:
             from PyQt6.QtCore import QTimer
+
             scrollbar = self._chat_scroll_area.verticalScrollBar()
             # 统一用延迟滚动，避免 processEvents 导致主线程卡死
             delay = 100 if force_layout else 50
@@ -1342,6 +1430,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
                 # AI 头部
                 from datetime import datetime
+
                 ts = ""
                 ai_header = QLabel(
                     f"<span style='font-size:15px;'>🐦‍🔥</span> "
@@ -1349,7 +1438,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                     f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
                 )
                 ai_header.setTextFormat(Qt.TextFormat.RichText)
-                ai_header.setStyleSheet("background: transparent; margin-left: 4px; margin-top: 8px;")
+                ai_header.setStyleSheet(
+                    "background: transparent; margin-left: 4px; margin-top: 8px;"
+                )
                 self._add_widget_to_chat(ai_header)
 
                 html_content = self._render_markdown(msg["content"])
@@ -1384,22 +1475,26 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         title = QLabel("Vermilion Bird")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(f"""
+        title.setStyleSheet(
+            f"""
             font-size: 22px; font-weight: bold;
             color: {Colors.TEXT_PRIMARY};
             background: transparent;
             margin-bottom: 6px;
-        """)
+        """
+        )
         self._add_widget_to_chat(title)
 
         subtitle = QLabel("有什么可以帮你的？")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet(f"""
+        subtitle.setStyleSheet(
+            f"""
             font-size: 13px;
             color: {Colors.TEXT_MUTED};
             background: transparent;
             margin-bottom: 24px;
-        """)
+        """
+        )
         self._add_widget_to_chat(subtitle)
 
         # 快捷操作卡片网格
@@ -1415,6 +1510,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
         from PyQt6.QtWidgets import QGridLayout as GridLayout
+
         grid = GridLayout(grid_widget)
         grid.setSpacing(10)
         grid.setContentsMargins(40, 0, 40, 0)
@@ -1423,7 +1519,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             card = QPushButton(f"{icon}  {label}")
             card.setFixedHeight(48)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
-            card.setStyleSheet(f"""
+            card.setStyleSheet(
+                f"""
                 QPushButton {{
                     background-color: {Colors.CHAT_BG};
                     border: 1px solid {Colors.CHAT_ACCENT};
@@ -1437,7 +1534,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                     background-color: {Colors.PARAMS_BG};
                     border-color: {Colors.PRIMARY};
                 }}
-            """)
+            """
+            )
             card.clicked.connect(lambda checked, p=prompt: self._fill_prompt(p))
             grid.addWidget(card, i // 3, i % 3)
 
@@ -1473,6 +1571,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._app.quit()
 
     def _on_close_event(self, event):
+        if self._execution_center_dialog is not None:
+            self._execution_center_dialog.close()
         self._handle_exit()
         event.accept()
 
@@ -1498,6 +1598,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # Cancel all running sub-agents before quitting
         if self._subagent_panel:
             self._subagent_panel.disconnect_registry()
+        if self._execution_center_dialog is not None:
+            self._execution_center_dialog.close()
+        if self._execution_center_timer is not None:
+            self._execution_center_timer.stop()
         if self._app:
             self._app.quit()
 
@@ -1506,35 +1610,95 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     # 常见 LaTeX 命令 → Unicode / HTML 映射
     _LATEX_SYMBOLS = {
         # 希腊字母
-        r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ",
-        r"\epsilon": "ε", r"\zeta": "ζ", r"\eta": "η", r"\theta": "θ",
-        r"\iota": "ι", r"\kappa": "κ", r"\lambda": "λ", r"\mu": "μ",
-        r"\nu": "ν", r"\xi": "ξ", r"\pi": "π", r"\rho": "ρ",
-        r"\sigma": "σ", r"\tau": "τ", r"\upsilon": "υ", r"\phi": "φ",
-        r"\chi": "χ", r"\psi": "ψ", r"\omega": "ω",
-        r"\Gamma": "Γ", r"\Delta": "Δ", r"\Theta": "Θ", r"\Lambda": "Λ",
-        r"\Xi": "Ξ", r"\Pi": "Π", r"\Sigma": "Σ", r"\Phi": "Φ",
-        r"\Psi": "Ψ", r"\Omega": "Ω",
+        r"\alpha": "α",
+        r"\beta": "β",
+        r"\gamma": "γ",
+        r"\delta": "δ",
+        r"\epsilon": "ε",
+        r"\zeta": "ζ",
+        r"\eta": "η",
+        r"\theta": "θ",
+        r"\iota": "ι",
+        r"\kappa": "κ",
+        r"\lambda": "λ",
+        r"\mu": "μ",
+        r"\nu": "ν",
+        r"\xi": "ξ",
+        r"\pi": "π",
+        r"\rho": "ρ",
+        r"\sigma": "σ",
+        r"\tau": "τ",
+        r"\upsilon": "υ",
+        r"\phi": "φ",
+        r"\chi": "χ",
+        r"\psi": "ψ",
+        r"\omega": "ω",
+        r"\Gamma": "Γ",
+        r"\Delta": "Δ",
+        r"\Theta": "Θ",
+        r"\Lambda": "Λ",
+        r"\Xi": "Ξ",
+        r"\Pi": "Π",
+        r"\Sigma": "Σ",
+        r"\Phi": "Φ",
+        r"\Psi": "Ψ",
+        r"\Omega": "Ω",
         # 运算符 & 关系
-        r"\times": "×", r"\cdot": "·", r"\div": "÷", r"\pm": "±",
-        r"\mp": "∓", r"\approx": "≈", r"\equiv": "≡", r"\neq": "≠",
-        r"\leq": "≤", r"\geq": "≥", r"\ll": "≪", r"\gg": "≫",
-        r"\propto": "∝", r"\sim": "∼", r"\simeq": "≃",
-        r"\to": "→", r"\rightarrow": "→", r"\leftarrow": "←",
-        r"\Rightarrow": "⇒", r"\Leftrightarrow": "⇔",
-        r"\uparrow": "↑", r"\downarrow": "↓",
+        r"\times": "×",
+        r"\cdot": "·",
+        r"\div": "÷",
+        r"\pm": "±",
+        r"\mp": "∓",
+        r"\approx": "≈",
+        r"\equiv": "≡",
+        r"\neq": "≠",
+        r"\leq": "≤",
+        r"\geq": "≥",
+        r"\ll": "≪",
+        r"\gg": "≫",
+        r"\propto": "∝",
+        r"\sim": "∼",
+        r"\simeq": "≃",
+        r"\to": "→",
+        r"\rightarrow": "→",
+        r"\leftarrow": "←",
+        r"\Rightarrow": "⇒",
+        r"\Leftrightarrow": "⇔",
+        r"\uparrow": "↑",
+        r"\downarrow": "↓",
         # 集合 & 逻辑
-        r"\forall": "∀", r"\exists": "∃", r"\in": "∈", r"\notin": "∉",
-        r"\subset": "⊂", r"\subseteq": "⊆", r"\cup": "∪", r"\cap": "∩",
-        r"\emptyset": "∅", r"\infty": "∞", r"\partial": "∂",
-        r"\nabla": "∇", r"\int": "∫", r"\sum": "∑", r"\prod": "∏",
+        r"\forall": "∀",
+        r"\exists": "∃",
+        r"\in": "∈",
+        r"\notin": "∉",
+        r"\subset": "⊂",
+        r"\subseteq": "⊆",
+        r"\cup": "∪",
+        r"\cap": "∩",
+        r"\emptyset": "∅",
+        r"\infty": "∞",
+        r"\partial": "∂",
+        r"\nabla": "∇",
+        r"\int": "∫",
+        r"\sum": "∑",
+        r"\prod": "∏",
         r"\sqrt": "√",
         # 杂项
-        r"\ldots": "…", r"\cdots": "⋯", r"\vdots": "⋮", r"\ddots": "⋱",
-        r"\angle": "∠", r"\degree": "°", r"\triangle": "△",
-        r"\circ": "∘", r"\bullet": "•", r"\star": "★",
+        r"\ldots": "…",
+        r"\cdots": "⋯",
+        r"\vdots": "⋮",
+        r"\ddots": "⋱",
+        r"\angle": "∠",
+        r"\degree": "°",
+        r"\triangle": "△",
+        r"\circ": "∘",
+        r"\bullet": "•",
+        r"\star": "★",
         # 间距
-        r"\quad": "  ", r"\qquad": "    ", r"\,": " ", r"\;": "  ",
+        r"\quad": "  ",
+        r"\qquad": "    ",
+        r"\,": " ",
+        r"\;": "  ",
     }
 
     @classmethod
@@ -1549,6 +1713,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         5. 残留反斜杠命令 → 移除反斜杠
         """
         import re
+
         result = latex.strip()
 
         # 1. \text{...} → 提取内部文本
@@ -1556,26 +1721,39 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             inner = m.group(1)
             # 递归处理嵌套 LaTeX
             return cls._render_latex_inner(inner)
-        result = re.sub(r"\\text\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
-                        _text_replacer, result)
+
+        result = re.sub(r"\\text\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}", _text_replacer, result)
         # 也处理 \mathrm{...}, \mathbf{...} 等
-        result = re.sub(r"\\(?:mathrm|mathbf|mathit|mathsf|mathtt)\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
-                        _text_replacer, result)
+        result = re.sub(
+            r"\\(?:mathrm|mathbf|mathit|mathsf|mathtt)\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
+            _text_replacer,
+            result,
+        )
 
         # 2. \frac{a}{b} → 带样式的分数
         def _frac_replacer(m: re.Match) -> str:
             num = cls._render_latex_inner(m.group(1))
             den = cls._render_latex_inner(m.group(2))
             return f'<span class="math-frac"><sup>{num}</sup><span>/</span><sub>{den}</sub></span>'
-        result = re.sub(r"\\frac\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}"
-                        r"\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
-                        _frac_replacer, result)
+
+        result = re.sub(
+            r"\\frac\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}"
+            r"\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}",
+            _frac_replacer,
+            result,
+        )
 
         # 3. ^{...} / _{...} → sup/sub
-        result = re.sub(r"\^\{((?:[^{}]|\{[^{}]*\})*)\}",
-                        lambda m: f"<sup>{cls._render_latex_inner(m.group(1))}</sup>", result)
-        result = re.sub(r"_\{((?:[^{}]|\{[^{}]*\})*)\}",
-                        lambda m: f"<sub>{cls._render_latex_inner(m.group(1))}</sub>", result)
+        result = re.sub(
+            r"\^\{((?:[^{}]|\{[^{}]*\})*)\}",
+            lambda m: f"<sup>{cls._render_latex_inner(m.group(1))}</sup>",
+            result,
+        )
+        result = re.sub(
+            r"_\{((?:[^{}]|\{[^{}]*\})*)\}",
+            lambda m: f"<sub>{cls._render_latex_inner(m.group(1))}</sub>",
+            result,
+        )
 
         # 4. 常见 LaTeX 命令 → Unicode
         for cmd, symbol in sorted(cls._LATEX_SYMBOLS.items(), key=lambda x: -len(x[0])):
@@ -1599,16 +1777,19 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _render_latex_inner(cls, latex: str) -> str:
         """渲染内联 LaTeX（不包裹外层 div）。"""
         import re
+
         result = latex.strip()
         # 应用符号替换
         for cmd, symbol in sorted(cls._LATEX_SYMBOLS.items(), key=lambda x: -len(x[0])):
             result = result.replace(cmd, symbol)
         result = re.sub(r"\\([a-zA-Z]+)", r"\1", result)
         # 处理 sup/sub
-        result = re.sub(r"\^\{((?:[^{}]|\{[^{}]*\})*)\}",
-                        lambda m: f"<sup>{m.group(1)}</sup>", result)
-        result = re.sub(r"_\{((?:[^{}]|\{[^{}]*\})*)\}",
-                        lambda m: f"<sub>{m.group(1)}</sub>", result)
+        result = re.sub(
+            r"\^\{((?:[^{}]|\{[^{}]*\})*)\}", lambda m: f"<sup>{m.group(1)}</sup>", result
+        )
+        result = re.sub(
+            r"_\{((?:[^{}]|\{[^{}]*\})*)\}", lambda m: f"<sub>{m.group(1)}</sub>", result
+        )
         return result
 
     @classmethod
@@ -1625,6 +1806,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             inner = m.group(1)
             html = cls._render_latex_block(inner)
             return f'<div class="math-block">{html}</div>'
+
         text = re.sub(r"\$\$(.+?)\$\$", _display_replacer, text, flags=re.DOTALL)
 
         # 再处理 $...$ 内联公式
@@ -1632,6 +1814,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             inner = m.group(1)
             html = cls._render_latex_block(inner)
             return f'<span class="math-inline">{html}</span>'
+
         text = re.sub(r"\$(.+?)\$", _inline_replacer, text)
 
         return text
@@ -1655,9 +1838,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 except Exception as e:
                     import logging
 
-                    logging.getLogger(__name__).warning(
-                        f"Markdown 渲染失败，使用纯文本: {e}"
-                    )
+                    logging.getLogger(__name__).warning(f"Markdown 渲染失败，使用纯文本: {e}")
         return text.replace("\n", "<br>")
 
     def display_message(self, message: Message):
@@ -1689,9 +1870,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
-        info_label = QLabel(
-            f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>"
-        )
+        info_label = QLabel(f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>")
         info_label.setWordWrap(True)
         info_label.setTextFormat(Qt.TextFormat.RichText)
         info_label.setStyleSheet(info_label_style())
@@ -1715,6 +1894,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _render_card_widget(self, card: DecisionCard):
         """创建并插入卡片 widget（内部方法，供 display_card 和 refresh 共用）。"""
+
         def on_decide(card_id: str, option_id: str):
             self._handle_card_decided(card, option_id)
 
@@ -1746,9 +1926,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet(
-            "background-color: #D4A574; max-height: 1px; margin: 10px 0;"
-        )
+        separator.setStyleSheet("background-color: #D4A574; max-height: 1px; margin: 10px 0;")
         self._add_widget_to_chat(separator)
 
     def _on_card_received(self, card: DecisionCard):
@@ -1759,6 +1937,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _on_proactive_text(self, text: str):
         """跨线程信号：收到新闻精选文本（后台线程→主线程）。"""
         from llm_chat.frontends.base import Message, MessageType
+
         msg = Message(content=text, role="assistant", msg_type=MessageType.TEXT)
         self.display_message(msg)
 
@@ -1766,8 +1945,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """跨线程信号：卡片已决策。"""
         try:
             from llm_chat.decision.log import DecisionLogStore
+
             store = DecisionLogStore()
-            store.record(card_id=card_id, card_type="decision", title=f"card:{card_id}", selected_option_id=option_id)
+            store.record(
+                card_id=card_id,
+                card_type="decision",
+                title=f"card:{card_id}",
+                selected_option_id=option_id,
+            )
         except Exception as e:
             logger.warning(f"决策日志记录失败: {e}")
 
@@ -1790,6 +1975,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 记录决策日志
         try:
             from llm_chat.decision.log import DecisionLogStore
+
             store = DecisionLogStore()
             store.record(
                 card_id=card.id,
@@ -1816,18 +2002,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         follow_up = _build_card_selection_message(card, selected)
         self._start_streaming(follow_up)
 
-    def _create_conversation_from_card(
-        self, card: DecisionCard, selected
-    ):
+    def _create_conversation_from_card(self, card: DecisionCard, selected):
         """从卡片选项创建新对话并立即触发 LLM 响应。"""
         app = self._app_instance
         if not app:
             return
 
         option_text = f"{card.title} — {selected.label}"
-        conv = app.conversation_manager.create_conversation(
-            title=option_text[:80]
-        )
+        conv = app.conversation_manager.create_conversation(title=option_text[:80])
 
         # 切换到新会话（消息由 _start_streaming 追加）
         self.set_current_conversation(conv.conversation_id, [])
@@ -1845,13 +2027,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._card_signals:
             self._card_signals.card_dismissed.emit(card_id)
 
-        info = QLabel(
-            f"<span style='color: #8B7355; font-style: italic;'>"
-            f"⏳ 卡片已暂缓</span>"
-        )
-        info.setStyleSheet(
-            "padding: 4px 8px; margin: 2px 0;"
-        )
+        info = QLabel(f"<span style='color: #8B7355; font-style: italic;'>" f"⏳ 卡片已暂缓</span>")
+        info.setStyleSheet("padding: 4px 8px; margin: 2px 0;")
         self._add_widget_to_chat(info)
         self._scroll_to_bottom(force_layout=True)
 
@@ -1859,9 +2036,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def conversation_id(self) -> str:
         return self._conversation_id if hasattr(self, "_conversation_id") else "default"
 
-    def request_rename_input(
-        self, conversation_id: str, current_title: str
-    ) -> Optional[str]:
+    def request_rename_input(self, conversation_id: str, current_title: str) -> Optional[str]:
         if not PYQT_AVAILABLE or self._main_window is None:
             return None
 

@@ -19,7 +19,12 @@ from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
 from llm_chat.health import get_checker, create_database_checker, create_service_manager_checker
-from llm_chat.runtime import ActionProposalManager, CapabilityPolicy, RunManager
+from llm_chat.runtime import (
+    ActionProposal,
+    ActionProposalManager,
+    CapabilityPolicy,
+    RunManager,
+)
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -114,6 +119,50 @@ class App:
         s = self._storage_override if self._storage_override is not None else Storage(db_path)
         Storage.set_instance(s)
         return s
+
+    def approve_action(
+        self,
+        proposal_id: str,
+        *,
+        conversation_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+    ) -> ActionProposal:
+        """批准并执行持久化动作，由 CLI 与 GUI 共用。"""
+
+        proposal = self.action_proposals.approve_and_execute(
+            proposal_id,
+            tool_registry=self.tool_registry,
+            run_manager=self.run_manager,
+            parent_run_id=parent_run_id,
+            conversation_id=conversation_id,
+        )
+        if self.run_manager.get(proposal.run_id):
+            self.run_manager.emit(
+                proposal.run_id,
+                f"action.{proposal.status.value}",
+                {"proposal_id": proposal.id},
+            )
+        return proposal
+
+    def reject_action(
+        self,
+        proposal_id: str,
+        *,
+        conversation_id: Optional[str] = None,
+    ) -> ActionProposal:
+        """拒绝持久化动作并记录来源 Run 事件。"""
+
+        proposal = self.action_proposals.reject(
+            proposal_id,
+            conversation_id=conversation_id,
+        )
+        if self.run_manager.get(proposal.run_id):
+            self.run_manager.emit(
+                proposal.run_id,
+                "action.rejected",
+                {"proposal_id": proposal.id},
+            )
+        return proposal
 
     def _init_role_presets(self):
         """Load custom agent roles and patterns from YAML config."""

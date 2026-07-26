@@ -1,0 +1,604 @@
+"""GUI 执行与审批中心。"""
+
+from __future__ import annotations
+
+import json
+import threading
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
+from llm_chat.frontends.theme import Colors
+from llm_chat.runtime import ActionStatus, RunStatus, RunType
+
+
+_RUN_STATUS_LABELS: Dict[RunStatus, str] = {
+    RunStatus.PENDING: "等待",
+    RunStatus.RUNNING: "执行中",
+    RunStatus.WAITING_APPROVAL: "待审批",
+    RunStatus.COMPLETED: "已完成",
+    RunStatus.FAILED: "失败",
+    RunStatus.CANCELLED: "已取消",
+}
+
+_ACTION_STATUS_LABELS: Dict[ActionStatus, str] = {
+    ActionStatus.PENDING: "待审批",
+    ActionStatus.APPROVED: "已批准",
+    ActionStatus.REJECTED: "已拒绝",
+    ActionStatus.EXECUTING: "执行中",
+    ActionStatus.COMPLETED: "已完成",
+    ActionStatus.FAILED: "失败",
+}
+
+
+class ExecutionCenterSignals(QObject):
+    """将任意后台线程的运行状态变化送回 GUI 线程。"""
+
+    run_changed = pyqtSignal()
+    action_changed = pyqtSignal()
+    operation_finished = pyqtSignal(bool, str)
+
+
+class ExecutionCenterDialog(QDialog):
+    """查看运行历史，并处理持久化动作审批。"""
+
+    def __init__(self, app: Any, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._app = app
+        self._signals = ExecutionCenterSignals()
+        self._run_by_id: Dict[str, Any] = {}
+        self._proposal_by_id: Dict[str, Any] = {}
+        self._unsubscribe_run = None
+        self._unsubscribe_action = None
+        self._busy_action_id: Optional[str] = None
+
+        self.setWindowTitle("执行与审批中心")
+        self.resize(1080, 720)
+        self.setMinimumSize(860, 560)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._build_ui()
+        self._connect_runtime()
+
+        self._signals.run_changed.connect(self.refresh_runs)
+        self._signals.action_changed.connect(self.refresh_actions)
+        self._signals.operation_finished.connect(self._on_operation_finished)
+
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self.refresh_all)
+        self._refresh_timer.start(3000)
+        self.refresh_all()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        title = QLabel("执行与审批中心")
+        title.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {Colors.TEXT_PRIMARY};")
+        subtitle = QLabel("跨会话查看聊天、工具和工作流运行；高风险动作仅在批准后执行。")
+        subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
+        root.addWidget(title)
+        root.addWidget(subtitle)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._build_runs_tab(), "运行记录")
+        self._tabs.addTab(self._build_approvals_tab(), "审批")
+        root.addWidget(self._tabs, 1)
+
+        self.setStyleSheet(
+            f"""
+            QDialog, QWidget {{
+                background-color: {Colors.CHAT_BG};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 8px;
+            }}
+            QTabBar::tab {{
+                padding: 9px 18px;
+                color: {Colors.TEXT_SECONDARY};
+            }}
+            QTabBar::tab:selected {{
+                color: {Colors.PRIMARY};
+                font-weight: 700;
+            }}
+            QTableWidget {{
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 6px;
+                gridline-color: {Colors.CHAT_BORDER};
+                background: white;
+                alternate-background-color: {Colors.CHAT_BG_ALT};
+            }}
+            QTableWidget::item {{ padding: 6px; }}
+            QTableWidget::item:selected {{
+                background: {Colors.CHAT_ACCENT};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QHeaderView::section {{
+                background: {Colors.PARAMS_BG};
+                color: {Colors.TEXT_SECONDARY};
+                border: none;
+                border-right: 1px solid {Colors.CHAT_BORDER};
+                padding: 7px;
+                font-weight: 600;
+            }}
+            QComboBox {{
+                border: 1px solid {Colors.CHAT_ACCENT};
+                border-radius: 6px;
+                padding: 5px 9px;
+                background: white;
+            }}
+            QTextBrowser {{
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 6px;
+                padding: 8px;
+                background: white;
+            }}
+            """
+        )
+
+    def _build_runs_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        toolbar = QHBoxLayout()
+        self._run_summary_label = QLabel()
+        toolbar.addWidget(self._run_summary_label)
+        toolbar.addStretch()
+        toolbar.addWidget(QLabel("状态"))
+        self._run_status_filter = QComboBox()
+        self._run_status_filter.addItem("全部", None)
+        for status, label in _RUN_STATUS_LABELS.items():
+            self._run_status_filter.addItem(label, status)
+        self._run_status_filter.currentIndexChanged.connect(self.refresh_runs)
+        toolbar.addWidget(self._run_status_filter)
+        toolbar.addWidget(QLabel("类型"))
+        self._run_type_filter = QComboBox()
+        self._run_type_filter.addItem("全部", None)
+        for run_type in RunType:
+            self._run_type_filter.addItem(run_type.value, run_type)
+        self._run_type_filter.currentIndexChanged.connect(self.refresh_runs)
+        toolbar.addWidget(self._run_type_filter)
+        refresh = QPushButton("刷新")
+        refresh.clicked.connect(self.refresh_runs)
+        toolbar.addWidget(refresh)
+        layout.addLayout(toolbar)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self._runs_table = QTableWidget(0, 6)
+        self._runs_table.setHorizontalHeaderLabels(["开始时间", "类型", "状态", "摘要", "耗时", "Run ID"])
+        self._configure_table(self._runs_table)
+        self._runs_table.itemSelectionChanged.connect(self._show_selected_run)
+        self._runs_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._runs_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.ResizeToContents
+        )
+        splitter.addWidget(self._runs_table)
+
+        self._run_detail = QTextBrowser()
+        self._run_detail.setPlaceholderText("选择一条运行记录查看输入、输出和事件时间线。")
+        splitter.addWidget(self._run_detail)
+        splitter.setSizes([390, 230])
+        layout.addWidget(splitter, 1)
+        return tab
+
+    def _build_approvals_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        toolbar = QHBoxLayout()
+        self._approval_summary_label = QLabel()
+        toolbar.addWidget(self._approval_summary_label)
+        toolbar.addStretch()
+        toolbar.addWidget(QLabel("状态"))
+        self._action_status_filter = QComboBox()
+        self._action_status_filter.addItem("待审批", ActionStatus.PENDING)
+        self._action_status_filter.addItem("全部", None)
+        for status, label in _ACTION_STATUS_LABELS.items():
+            if status != ActionStatus.PENDING:
+                self._action_status_filter.addItem(label, status)
+        self._action_status_filter.currentIndexChanged.connect(self.refresh_actions)
+        toolbar.addWidget(self._action_status_filter)
+        refresh = QPushButton("刷新")
+        refresh.clicked.connect(self.refresh_actions)
+        toolbar.addWidget(refresh)
+        layout.addLayout(toolbar)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self._actions_table = QTableWidget(0, 6)
+        self._actions_table.setHorizontalHeaderLabels(["创建时间", "工具", "风险", "能力", "状态", "Action ID"])
+        self._configure_table(self._actions_table)
+        self._actions_table.itemSelectionChanged.connect(self._show_selected_action)
+        self._actions_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
+        self._actions_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.ResizeToContents
+        )
+        splitter.addWidget(self._actions_table)
+
+        detail_container = QFrame()
+        detail_layout = QVBoxLayout(detail_container)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        self._action_detail = QTextBrowser()
+        self._action_detail.setPlaceholderText("选择一条审批查看原因、影响和完整参数。")
+        detail_layout.addWidget(self._action_detail, 1)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        self._reject_button = QPushButton("拒绝")
+        self._reject_button.clicked.connect(self._reject_selected)
+        self._reject_button.setEnabled(False)
+        buttons.addWidget(self._reject_button)
+        self._approve_button = QPushButton("批准并执行")
+        self._approve_button.clicked.connect(self._approve_selected)
+        self._approve_button.setEnabled(False)
+        self._approve_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {Colors.PRIMARY};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            """
+        )
+        buttons.addWidget(self._approve_button)
+        detail_layout.addLayout(buttons)
+        splitter.addWidget(detail_container)
+        splitter.setSizes([360, 260])
+        layout.addWidget(splitter, 1)
+        return tab
+
+    @staticmethod
+    def _configure_table(table: QTableWidget) -> None:
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(False)
+
+    def _connect_runtime(self) -> None:
+        self._unsubscribe_run = self._app.run_manager.subscribe(
+            lambda _run, _event: self._safe_emit(self._signals.run_changed)
+        )
+        self._unsubscribe_action = self._app.action_proposals.subscribe(
+            lambda _proposal: self._safe_emit(self._signals.action_changed)
+        )
+
+    @staticmethod
+    def _safe_emit(signal: Any, *args: Any) -> None:
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            pass
+
+    def refresh_all(self) -> None:
+        self.refresh_runs()
+        self.refresh_actions()
+
+    def refresh_runs(self) -> None:
+        selected_id = self._selected_id(self._runs_table)
+        status = self._run_status_filter.currentData()
+        run_type = self._run_type_filter.currentData()
+        runs = self._app.run_manager.list(
+            limit=500,
+            status=status,
+            run_type=run_type,
+        )
+        self._run_by_id = {run.id: run for run in runs}
+        self._runs_table.setRowCount(len(runs))
+        for row, run in enumerate(runs):
+            values = [
+                self._format_time(run.started_at or run.created_at),
+                run.type.value,
+                _RUN_STATUS_LABELS.get(run.status, run.status.value),
+                self._run_summary(run),
+                self._duration(run),
+                run.id,
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, run.id)
+                if run.status == RunStatus.FAILED:
+                    item.setForeground(QColor(Colors.DANGER))
+                elif run.status == RunStatus.RUNNING:
+                    item.setForeground(QColor(Colors.INFO))
+                self._runs_table.setItem(row, column, item)
+        self._restore_selection(self._runs_table, selected_id)
+        self._run_summary_label.setText(f"显示 {len(runs)} 条运行")
+        if not runs:
+            self._run_detail.clear()
+
+    def refresh_actions(self) -> None:
+        selected_id = self._selected_id(self._actions_table)
+        status = self._action_status_filter.currentData()
+        proposals = self._app.action_proposals.list(limit=500, status=status)
+        pending = self._app.action_proposals.list(
+            limit=500,
+            status=ActionStatus.PENDING,
+        )
+        self._proposal_by_id = {proposal.id: proposal for proposal in proposals}
+        self._actions_table.setRowCount(len(proposals))
+        for row, proposal in enumerate(proposals):
+            capabilities = ", ".join(sorted(item.value for item in proposal.capabilities))
+            values = [
+                self._format_time(proposal.created_at),
+                proposal.tool_name,
+                proposal.risk,
+                capabilities,
+                _ACTION_STATUS_LABELS.get(
+                    proposal.status,
+                    proposal.status.value,
+                ),
+                proposal.id,
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, proposal.id)
+                if proposal.risk == "high":
+                    item.setForeground(QColor(Colors.DANGER))
+                elif proposal.status == ActionStatus.COMPLETED:
+                    item.setForeground(QColor(Colors.SUCCESS))
+                self._actions_table.setItem(row, column, item)
+        self._restore_selection(self._actions_table, selected_id)
+        self._approval_summary_label.setText(f"待审批 {len(pending)} 项 · 当前显示 {len(proposals)} 项")
+        self._tabs.setTabText(1, f"审批 ({len(pending)})" if pending else "审批")
+        if not proposals:
+            self._action_detail.clear()
+            self._set_action_buttons(False)
+
+    def _show_selected_run(self) -> None:
+        run = self._run_by_id.get(self._selected_id(self._runs_table) or "")
+        if run is None:
+            self._run_detail.clear()
+            return
+        self._run_detail.setPlainText(self._format_run_detail(run))
+
+    def _show_selected_action(self) -> None:
+        proposal = self._selected_proposal()
+        if proposal is None:
+            self._action_detail.clear()
+            self._set_action_buttons(False)
+            return
+        self._action_detail.setPlainText(self._format_action_detail(proposal))
+        self._set_action_buttons(
+            proposal.status == ActionStatus.PENDING and proposal.id != self._busy_action_id
+        )
+
+    def _approve_selected(self) -> None:
+        proposal = self._selected_proposal()
+        if proposal is None or proposal.status != ActionStatus.PENDING:
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认执行",
+            f"批准后将执行工具 “{proposal.tool_name}”。\n\n"
+            f"影响：{proposal.impact}\n"
+            f"风险：{proposal.risk}\n\n"
+            "是否批准并立即执行？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._busy_action_id = proposal.id
+        self._set_action_buttons(False)
+        threading.Thread(
+            target=self._execute_approval,
+            args=(proposal.id, proposal.conversation_id),
+            daemon=True,
+            name=f"approve-{proposal.id[-8:]}",
+        ).start()
+
+    def _execute_approval(
+        self,
+        proposal_id: str,
+        conversation_id: Optional[str],
+    ) -> None:
+        try:
+            proposal = self._app.approve_action(
+                proposal_id,
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            self._safe_emit(
+                self._signals.operation_finished,
+                False,
+                f"动作执行失败：{exc}",
+            )
+            return
+        ok = proposal.status == ActionStatus.COMPLETED
+        message = f"动作 {proposal.id} 执行完成。" if ok else f"动作执行失败：{proposal.error or '未知错误'}"
+        self._safe_emit(self._signals.operation_finished, ok, message)
+
+    def _reject_selected(self) -> None:
+        proposal = self._selected_proposal()
+        if proposal is None or proposal.status != ActionStatus.PENDING:
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认拒绝",
+            f"确定拒绝动作 “{proposal.tool_name}” 吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._app.reject_action(
+                proposal.id,
+                conversation_id=proposal.conversation_id,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "拒绝失败", str(exc))
+            return
+        self.refresh_all()
+
+    def _on_operation_finished(self, success: bool, message: str) -> None:
+        self._busy_action_id = None
+        self.refresh_all()
+        if success:
+            QMessageBox.information(self, "执行完成", message)
+        else:
+            QMessageBox.warning(self, "执行失败", message)
+
+    def _selected_proposal(self) -> Optional[Any]:
+        return self._proposal_by_id.get(self._selected_id(self._actions_table) or "")
+
+    def _set_action_buttons(self, enabled: bool) -> None:
+        self._approve_button.setEnabled(enabled)
+        self._reject_button.setEnabled(enabled)
+
+    @staticmethod
+    def _selected_id(table: QTableWidget) -> Optional[str]:
+        selected = table.selectedItems()
+        if not selected:
+            return None
+        return selected[0].data(Qt.ItemDataRole.UserRole)
+
+    @staticmethod
+    def _restore_selection(table: QTableWidget, selected_id: Optional[str]) -> None:
+        if table.rowCount() == 0:
+            return
+        target_row = 0
+        if selected_id:
+            for row in range(table.rowCount()):
+                item = table.item(row, 0)
+                if item and item.data(Qt.ItemDataRole.UserRole) == selected_id:
+                    target_row = row
+                    break
+        table.selectRow(target_row)
+
+    @staticmethod
+    def _format_time(value: Optional[datetime]) -> str:
+        if value is None:
+            return "-"
+        return value.astimezone().strftime("%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _duration(run: Any) -> str:
+        if run.started_at is None:
+            return "-"
+        end = run.finished_at or datetime.now(run.started_at.tzinfo)
+        seconds = max(0.0, (end - run.started_at).total_seconds())
+        if seconds < 1:
+            return f"{seconds * 1000:.0f} ms"
+        if seconds < 60:
+            return f"{seconds:.1f} s"
+        return f"{seconds / 60:.1f} min"
+
+    @staticmethod
+    def _run_summary(run: Any) -> str:
+        source = run.input or {}
+        for key in ("message", "task", "tool", "name", "topic"):
+            value = source.get(key)
+            if value:
+                text = str(value).replace("\n", " ")
+                return text[:96] + ("…" if len(text) > 96 else "")
+        if run.error:
+            return run.error[:96]
+        return "-"
+
+    @classmethod
+    def _format_run_detail(cls, run: Any) -> str:
+        lines = [
+            f"Run ID: {run.id}",
+            f"类型 / 状态: {run.type.value} / {_RUN_STATUS_LABELS.get(run.status, run.status.value)}",
+            f"父 Run: {run.parent_run_id or '-'}",
+            f"会话: {run.conversation_id or '-'}",
+            f"创建: {cls._format_time(run.created_at)}",
+            f"耗时: {cls._duration(run)}",
+            "",
+            "输入",
+            json.dumps(run.input, ensure_ascii=False, indent=2, default=str),
+            "",
+            "输出",
+            json.dumps(run.result, ensure_ascii=False, indent=2, default=str),
+        ]
+        if run.error:
+            lines.extend(["", "错误", run.error])
+        if run.metadata:
+            lines.extend(
+                [
+                    "",
+                    "元数据",
+                    json.dumps(run.metadata, ensure_ascii=False, indent=2, default=str),
+                ]
+            )
+        lines.extend(["", "事件时间线"])
+        if not run.events:
+            lines.append("（无事件）")
+        for event in run.events:
+            data = (
+                " " + json.dumps(event.data, ensure_ascii=False, default=str) if event.data else ""
+            )
+            lines.append(
+                f"{event.sequence:03d}  {cls._format_time(event.timestamp)}  " f"{event.type}{data}"
+            )
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_action_detail(cls, proposal: Any) -> str:
+        capabilities = ", ".join(sorted(item.value for item in proposal.capabilities))
+        lines = [
+            f"Action ID: {proposal.id}",
+            f"来源 Run: {proposal.run_id}",
+            f"会话: {proposal.conversation_id or '-'}",
+            f"工具: {proposal.tool_name}",
+            f"状态: {_ACTION_STATUS_LABELS.get(proposal.status, proposal.status.value)}",
+            f"风险: {proposal.risk}",
+            f"能力: {capabilities or '-'}",
+            f"可逆: {'是' if proposal.reversible else '否'}",
+            "",
+            "申请原因",
+            proposal.reason,
+            "",
+            "预期影响",
+            proposal.impact,
+            "",
+            "执行参数",
+            json.dumps(proposal.arguments, ensure_ascii=False, indent=2, default=str),
+        ]
+        if proposal.result is not None:
+            lines.extend(["", "执行结果", str(proposal.result)])
+        if proposal.error:
+            lines.extend(["", "错误", proposal.error])
+        return "\n".join(lines)
+
+    def closeEvent(self, event: Any) -> None:
+        self._refresh_timer.stop()
+        if self._unsubscribe_run is not None:
+            self._unsubscribe_run()
+            self._unsubscribe_run = None
+        if self._unsubscribe_action is not None:
+            self._unsubscribe_action()
+            self._unsubscribe_action = None
+        super().closeEvent(event)
