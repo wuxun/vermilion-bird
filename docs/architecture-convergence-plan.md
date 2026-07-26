@@ -10,6 +10,8 @@
 | 可靠性 | 修复上下文压缩、Graph 工具循环、SQLite 外键/FTS、Webhook 输入、模型 fallback 和配置 round-trip |
 | Run Runtime | Chat、Tool、Workflow、Scheduler、Webhook、Proactive 统一创建父子 Run 并记录有序事件 |
 | 可恢复执行 | Run attempt、恢复策略、幂等键、租约和检查点指针持久化；LangGraph + SQLite 承担应用图检查点 |
+| 崩溃一致性 | EffectOutbox 保存副作用执行意图与结果；中断执行转 uncertain，不自动重复副作用 |
+| 自动恢复 | 启动协调器恢复安全 checkpoint/重试任务，长执行通过 heartbeat 自动续租 |
 | 授权 | CapabilityPolicy + ActionProposal 状态机；副作用工具默认停在 durable interrupt，批准后才恢复执行 |
 | Context Hub | memory、knowledge、历史、指令和技能上下文统一为 ContextItem，集中去重、排序和预算裁剪 |
 | Agent/Workflow | Ghost/Role 收敛到 AgentProfile，Pattern 收敛到 WorkflowSpec，并保留兼容视图 |
@@ -125,8 +127,12 @@ Infrastructure Adapters
   SQLite checkpoint 重试。
 - RunHandlerRegistry/Dispatcher 已统一 Chat、通用 Graph、审批和 Scheduler 的
   resume/retry/replay 路由，GUI 直接读取 handler 能力。
+- 子 Agent 使用显式 invocation context 获取父 Run、取消令牌和能力策略，并注册
+  `subagent` handler；不再依赖线程局部状态或修改请求间共享对象。
 - SchedulerService 已收敛到 TaskExecutor，不再维护第二套 Run/重试/通知生命周期。
 - 会话消息写入具有稳定执行幂等键，节点重入不会重复落库。
+- 副作用执行通过 EffectOutbox 落盘，崩溃边界上的未知结果转为人工对账状态。
+- Chat checkpoint 具有显式 schema version，执行中心展示 handler、恢复动作、租约与心跳。
 - ember-core 的轻量 StateGraph 继续服务零依赖基础包，不作为桌面应用的第二套生产运行时。
 
 **验收条件**
