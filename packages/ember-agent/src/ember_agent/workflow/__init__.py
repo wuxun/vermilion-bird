@@ -5,6 +5,7 @@ from .nodes import (
     AgentWorkflow,
 )
 from .executor import WorkflowExecutor, AgentExecutorFn
+from .spec import WorkflowNodeSpec, WorkflowSpec
 
 __all__ = [
     "WorkflowNodeType",
@@ -13,4 +14,6 @@ __all__ = [
     "AgentWorkflow",
     "WorkflowExecutor",
     "AgentExecutorFn",
+    "WorkflowNodeSpec",
+    "WorkflowSpec",
 ]

@@ -103,16 +103,16 @@ class CapabilityPolicy:
         denied: Optional[Iterable[Capability]] = None,
     ):
         self.allowed = set(
-            allowed
-            or {
+            {
                 Capability.READ,
                 Capability.COMPUTE,
                 Capability.NETWORK,
             }
+            if allowed is None
+            else allowed
         )
         self.require_approval = set(
-            require_approval
-            or {
+            {
                 Capability.WORKSPACE_WRITE,
                 Capability.PROCESS,
                 Capability.EXTERNAL_MESSAGE,
@@ -120,8 +120,10 @@ class CapabilityPolicy:
                 Capability.MEMORY_WRITE,
                 Capability.SCHEDULE_WRITE,
             }
+            if require_approval is None
+            else require_approval
         )
-        self.denied = set(denied or set())
+        self.denied = set() if denied is None else set(denied)
 
     def capabilities_for(
         self,

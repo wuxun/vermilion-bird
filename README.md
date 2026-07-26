@@ -28,10 +28,20 @@
 # 方式一：Poetry（推荐开发）
 git clone https://github.com/your-username/vermilion-bird.git
 cd vermilion-bird
-poetry install
+poetry install -E all
 
 # 方式二：下载打包的 .app（macOS 用户）
 # 从 Releases 页面下载 Vermilion Bird.app，双击启动
+```
+
+核心 CLI 可只安装基础依赖；按需启用适配器：
+
+```bash
+pip install vermilion-bird
+pip install 'vermilion-bird[gui]'               # PyQt6
+pip install 'vermilion-bird[feishu]'            # Lark SDK
+pip install 'vermilion-bird[semantic-knowledge]' # numpy + embeddings
+pip install 'vermilion-bird[all]'                # 完整桌面能力
 ```
 
 ### 配置

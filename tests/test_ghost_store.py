@@ -7,6 +7,7 @@ import yaml
 
 from llm_chat.ghost import GhostConfig
 from llm_chat.ghost.store import GhostStore
+from ember_agent.agent import AgentProfile
 
 
 def test_manual_edit_invalidates_cached_profile(tmp_path):
@@ -27,6 +28,18 @@ def test_manual_edit_invalidates_cached_profile(tmp_path):
     )
 
     assert store.load("reviewer").system_prompt == "version two"
+
+
+def test_ghost_is_a_persisted_agent_profile():
+    ghost = GhostConfig(
+        name="Reviewer",
+        system_prompt="Review carefully.",
+        context_policy={"include_sensitive": False},
+        capability_policy={"allow": ["read"]},
+    )
+
+    assert isinstance(ghost, AgentProfile)
+    assert ghost.context_policy["include_sensitive"] is False
 
 
 def test_ghost_key_is_a_bounded_identifier(tmp_path):

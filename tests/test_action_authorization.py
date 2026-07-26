@@ -56,6 +56,9 @@ def test_default_policy_requires_approval_for_side_effects():
     assert policy.evaluate("web_search")[0] == PolicyDecision.ALLOW
     assert policy.evaluate("calculator")[0] == PolicyDecision.ALLOW
 
+    deny_all = CapabilityPolicy(allowed=set(), require_approval=set())
+    assert deny_all.evaluate("calculator")[0] == PolicyDecision.DENY
+
 
 def test_graph_proposes_instead_of_executing_high_impact_tool():
     registry = ToolRegistry.create_isolated()

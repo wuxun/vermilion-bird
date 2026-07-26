@@ -1,29 +1,40 @@
-from .base import BaseFrontend, Message, ConversationContext, MessageType
-from .cli import CLIFrontend
-from .gui import GUIFrontend
+"""Frontend factory with optional adapters loaded on demand."""
 
-FRONTEND_MAP = {
-    "cli": CLIFrontend,
-    "gui": GUIFrontend,
-}
+from .base import BaseFrontend, ConversationContext, Message, MessageType
 
 
 def get_frontend(frontend_type: str, **kwargs):
-    """获取前端实例
-    
-    Args:
-        frontend_type: 前端类型 (cli, gui)
-        **kwargs: 传递给前端构造函数的参数
-        
-    Returns:
-        前端实例
-    """
+    """Create a frontend without importing optional GUI dependencies eagerly."""
     frontend_lower = frontend_type.lower()
-    if frontend_lower not in FRONTEND_MAP:
-        raise ValueError(f"不支持的前端类型: {frontend_type}，支持的前端: {list(FRONTEND_MAP.keys())}")
-    
-    frontend_class = FRONTEND_MAP[frontend_lower]
+    if frontend_lower == "cli":
+        from .cli import CLIFrontend
+
+        frontend_class = CLIFrontend
+    elif frontend_lower == "gui":
+        try:
+            from .gui import GUIFrontend
+        except ImportError as exc:
+            raise RuntimeError(
+                "GUI dependencies are not installed. "
+                "Install with: pip install 'vermilion-bird[gui]'"
+            ) from exc
+        frontend_class = GUIFrontend
+    else:
+        raise ValueError(f"不支持的前端类型: {frontend_type}，支持的前端: ['cli', 'gui']")
     return frontend_class(**kwargs)
+
+
+def __getattr__(name: str):
+    """Preserve legacy `from llm_chat.frontends import ...Frontend` imports."""
+    if name == "CLIFrontend":
+        from .cli import CLIFrontend
+
+        return CLIFrontend
+    if name == "GUIFrontend":
+        from .gui import GUIFrontend
+
+        return GUIFrontend
+    raise AttributeError(name)
 
 
 __all__ = [

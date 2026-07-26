@@ -325,21 +325,11 @@ class SpawnSubagentTool(BaseTool):
         except ImportError:
             return "预定义的 Ghost 模板引用（ghost 系统未启用）"
 
-    def _resolve_ghost(
-        self,
-        ghost_name: str,
-        task: str,
-        role_name: str,
-        allowed_tools: Optional[list],
-        model_config: dict,
-        complexity: Optional[str],
-    ) -> tuple:
-        """Resolve a ghost reference into concrete parameters.
+    def _resolve_agent_profile(self, ghost_name: str = "", role_name: str = ""):
+        """Resolve Ghost or Role compatibility inputs to AgentProfile."""
+        from ember_agent.agent import AgentProfile
 
-        Returns:
-            (system_prompt, allowed_tools, model_config, complexity, skills)
-        """
-        try:
+        if ghost_name:
             from llm_chat.ghost.store import get_ghost_store
 
             store = get_ghost_store()
@@ -347,35 +337,16 @@ class SpawnSubagentTool(BaseTool):
             if not ghost:
                 available = ", ".join(store.list_all()) or "(none)"
                 raise ValueError(f"Ghost '{ghost_name}' not found. Available ghosts: {available}")
+            return AgentProfile.model_validate(ghost.model_dump())
 
-            system_prompt = ghost.system_prompt + f"\n\nCurrent task: {task}"
-            resolved_tools = list(allowed_tools or [])
+        if role_name:
+            from ember_agent.agent.role import get_preset
 
-            # Ghost tools override defaults, unless caller explicitly sets allowed_tools
-            if ghost.tools and allowed_tools is None:
-                resolved_tools = list(ghost.tools)
-                logger.info(f"Ghost '{ghost_name}' → tools={resolved_tools}")
-
-            # Ghost model overrides, unless caller explicitly sets model_config
-            if ghost.model and not model_config:
-                model_config = {"model": ghost.model}
-                logger.info(f"Ghost '{ghost_name}' → model={ghost.model}")
-
-            # Ghost complexity overrides
-            if ghost.complexity and not complexity:
-                complexity = ghost.complexity
-                logger.info(f"Ghost '{ghost_name}' → complexity={ghost.complexity}")
-
-            return (
-                system_prompt,
-                resolved_tools,
-                model_config,
-                complexity,
-                list(ghost.skills),
-            )
-
-        except ImportError:
-            raise ValueError("Ghost system is not available")
+            role = get_preset(role_name)
+            if not role:
+                raise ValueError(f"Agent role '{role_name}' not found")
+            return role.to_profile(key=role_name)
+        return None
 
     def _resolve_system_prompt(self, task: str, role_name: str = "") -> str:
         """Resolve system prompt from AgentRole preset, or return task as-is."""
@@ -577,22 +548,13 @@ class SpawnSubagentTool(BaseTool):
         if depends_on:
             task = self._resolve_dependencies(depends_on, task)
 
-        # Ghost mode: resolve predefined agent template
-        if ghost_name:
+        profile = None
+        profile_capability_policy = {}
+        if ghost_name or role_name:
             try:
-                (
-                    system_prompt,
-                    allowed_tools,
-                    model_config,
-                    complexity,
-                    skills_filter,
-                ) = self._resolve_ghost(
-                    ghost_name,
-                    task,
-                    role_name,
-                    allowed_tools if tools_were_explicit else None,
-                    model_config,
-                    complexity,
+                profile = self._resolve_agent_profile(
+                    ghost_name=ghost_name,
+                    role_name=role_name,
                 )
             except ValueError as exc:
                 return json.dumps(
@@ -600,24 +562,24 @@ class SpawnSubagentTool(BaseTool):
                     ensure_ascii=False,
                     indent=2,
                 )
-        else:
-            system_prompt = self._resolve_system_prompt(task, role_name)
+
+            if profile.tools and not tools_were_explicit:
+                allowed_tools = list(profile.tools)
+                logger.info(
+                    "AgentProfile '%s' → tools=%s",
+                    profile.name,
+                    allowed_tools,
+                )
+            if profile.model and not model_config:
+                model_config = {"model": profile.model}
+            if profile.complexity and not complexity:
+                complexity = profile.complexity
+            skills_filter = list(profile.skills)
+            profile_capability_policy = dict(profile.capability_policy)
 
         # Pattern mode: execute a predefined collaboration pattern
         if pattern_name:
             return self._execute_pattern(pattern_name, task, timeout)
-
-        # 角色预设：自动注入 system_prompt 和默认工具
-        if role_name and not tools_were_explicit:
-            try:
-                from ember_agent.agent.role import get_preset
-
-                role = get_preset(role_name)
-                if role and role.default_tools:
-                    allowed_tools = list(role.default_tools)
-                    logger.info(f"Role '{role_name}' → default_tools={allowed_tools}")
-            except ImportError:
-                pass
 
         # Plain tasks get a conservative read-only research baseline. An
         # explicitly supplied empty list means "no tools".
@@ -698,18 +660,19 @@ class SpawnSubagentTool(BaseTool):
         # Resolve system_prompt and prepend to task
         # Priority: ghost > role > raw task
         enhanced_task = task
-        if ghost_name:
-            enhanced_task = system_prompt
-            logger.info(
-                f"Ghost '{ghost_name}' system_prompt injected " f"({len(system_prompt)} chars)"
-            )
-        elif role_name:
-            resolved_prompt = self._resolve_system_prompt(task, role_name)
-            if resolved_prompt != task:
-                enhanced_task = resolved_prompt
-                logger.info(
-                    f"Role '{role_name}' system_prompt injected ({len(resolved_prompt)} chars)"
+        if profile:
+            enhanced_task = profile.system_prompt + f"\n\nCurrent task: {task}"
+            if profile.output_schema:
+                enhanced_task += "\n\nReturn JSON matching this schema:\n" + json.dumps(
+                    profile.output_schema,
+                    ensure_ascii=False,
+                    indent=2,
                 )
+            logger.info(
+                "AgentProfile '%s' system_prompt injected (%d chars)",
+                profile.name,
+                len(profile.system_prompt),
+            )
 
         context = make_agent_context(
             agent_id=agent_id,
@@ -731,7 +694,8 @@ class SpawnSubagentTool(BaseTool):
                 input={"task": task},
                 metadata={
                     "agent_id": agent_id,
-                    "ghost": ghost_name or None,
+                    "profile": profile.name if profile else None,
+                    "ghost": ghost_name or None,  # compatibility audit fields
                     "role": role_name or None,
                 },
             )
@@ -761,6 +725,7 @@ class SpawnSubagentTool(BaseTool):
             parent_cancel_event,
             blackboard,
             skills_filter,
+            profile_capability_policy,
         )
 
         wait = kwargs.get("wait", False)
@@ -852,6 +817,7 @@ class SpawnSubagentTool(BaseTool):
         parent_cancel_event=None,
         blackboard=None,
         skills_filter=None,
+        profile_capability_policy=None,
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
         # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
@@ -868,6 +834,7 @@ class SpawnSubagentTool(BaseTool):
                 parent_cancel_event,
                 blackboard,
                 skills_filter,
+                profile_capability_policy,
             )
             if self.run_manager and context.run_id:
                 if context._cancelled.is_set() or context.status == "cancelled":
@@ -896,6 +863,7 @@ class SpawnSubagentTool(BaseTool):
         parent_cancel_event=None,
         blackboard=None,
         skills_filter=None,
+        profile_capability_policy=None,
     ) -> str:
         client = None
         own_client = False  # Track if we created this client (needs close)
@@ -1003,6 +971,33 @@ class SpawnSubagentTool(BaseTool):
                 if capability_policy.evaluate(tool_def.get("function", {}).get("name", ""))[0]
                 == PolicyDecision.ALLOW
             ]
+            if profile_capability_policy:
+                from llm_chat.runtime import Capability
+
+                allowed_values = profile_capability_policy.get("allow")
+                profile_policy = CapabilityPolicy(
+                    allowed=(
+                        {Capability(value) for value in allowed_values}
+                        if allowed_values is not None
+                        else None
+                    ),
+                    require_approval={
+                        Capability(value)
+                        for value in profile_capability_policy.get(
+                            "require_approval",
+                            [],
+                        )
+                    },
+                    denied={
+                        Capability(value) for value in profile_capability_policy.get("deny", [])
+                    },
+                )
+                all_tools = [
+                    tool_def
+                    for tool_def in all_tools
+                    if profile_policy.evaluate(tool_def.get("function", {}).get("name", ""))[0]
+                    == PolicyDecision.ALLOW
+                ]
 
             # A Ghost may activate skills instead of enumerating every tool
             # produced by those skills. Resolve the selected skills to their

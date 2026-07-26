@@ -12,9 +12,14 @@ Top-level:
 """
 
 from ember_agent.patterns import (
-    CollaborationPattern, PatternStage,
-    register_pattern, get_pattern, list_patterns,
+    CollaborationPattern,
+    PatternStage,
+    register_pattern,
+    get_pattern,
+    list_patterns,
     load_patterns_from_yaml,
 )
+from ember_agent.agent import AgentProfile
+from ember_agent.workflow import WorkflowNodeSpec, WorkflowSpec
 
 # No __all__ here — submodule imports are the primary API

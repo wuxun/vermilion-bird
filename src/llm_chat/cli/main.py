@@ -7,7 +7,6 @@ from datetime import datetime
 from llm_chat.config import Config
 from llm_chat.app import App
 from llm_chat.frontends import get_frontend
-from llm_chat.frontends.feishu.server import FeishuServer
 from llm_chat.scheduler.models import Task, TaskType
 from llm_chat.cli import memory, skills, schedule
 from llm_chat.cli.ghost_cli import ghost_group
@@ -27,10 +26,16 @@ def setup_logging(level=logging.INFO, log_file: str = None):
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
         from logging.handlers import TimedRotatingFileHandler
-        handlers.append(TimedRotatingFileHandler(
-            log_path, when="midnight", interval=1,
-            backupCount=30, encoding="utf-8",
-        ))
+
+        handlers.append(
+            TimedRotatingFileHandler(
+                log_path,
+                when="midnight",
+                interval=1,
+                backupCount=30,
+                encoding="utf-8",
+            )
+        )
 
     logging.basicConfig(
         level=level,
@@ -41,13 +46,14 @@ def setup_logging(level=logging.INFO, log_file: str = None):
     # 安装子 agent 日志前缀 filter（加在 handler 上，所有 logger 都生效）
     try:
         from llm_chat.skills.task_delegator.tools import install_agent_id_log_filter
+
         install_agent_id_log_filter()
     except ImportError:
         pass
 
 
-
 # ===== 主 CLI 命令组 =====
+
 
 @click.group()
 def cli():
@@ -133,9 +139,7 @@ def chat(
         click.echo(f"工具调用: {'启用' if config.enable_tools else '禁用'}")
         click.echo("=" * 50)
 
-    frontend_instance = get_frontend(
-        frontend, conversation_id=conversation_id or "default"
-    )
+    frontend_instance = get_frontend(frontend, conversation_id=conversation_id or "default")
 
     app.run(frontend_instance)
 
@@ -166,16 +170,21 @@ def feishu(config_path, log_file, log_level):
 
     feishu_cfg = getattr(config, "feishu", None)
     if not feishu_cfg or not feishu_cfg.enabled:
-        click.echo(
-            "Feishu 集成未开启，请在配置中开启 Feishu 并提供所需凭证（app_id/app_secret）"
-        )
+        click.echo("Feishu 集成未开启，请在配置中开启 Feishu 并提供所需凭证（app_id/app_secret）")
         return
     if not feishu_cfg.app_id or not feishu_cfg.app_secret:
         click.echo("Feishu 集成需要 app_id 与 app_secret，请在配置中设置")
         return
 
     # Create and start the Feishu server
-    from llm_chat.frontends.feishu.adapter import FeishuAdapter
+    try:
+        from llm_chat.frontends.feishu.adapter import FeishuAdapter
+        from llm_chat.frontends.feishu.server import FeishuServer
+    except ImportError as exc:
+        raise click.ClickException(
+            "Feishu dependencies are not installed. "
+            "Install with: pip install 'vermilion-bird[feishu]'"
+        ) from exc
 
     app = App(config=config)
     # 启用工具（包括 MCP）
@@ -253,6 +262,7 @@ cli.add_command(ghost_group)
 
 # ===== keyring 命令 =====
 
+
 @cli.group()
 def keyring():
     """管理系统密钥环中的 API Key"""
@@ -320,6 +330,7 @@ def keyring_list():
 
 # ===== 全局搜索命令
 
+
 @cli.command()
 @click.argument("query")
 @click.option("--limit", type=int, default=10, help="返回结果数量")
@@ -350,6 +361,7 @@ def search(query, limit, conversation_id):
 
 
 # ===== 入口 =====
+
 
 def main():
     """主入口 - 默认启动对话。

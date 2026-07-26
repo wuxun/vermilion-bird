@@ -124,6 +124,13 @@ class TestAgentRoleIntegration:
         assert "test task" in result
         assert "strategic planner" in result.lower()
 
+    def test_spawn_tool_resolves_role_to_agent_profile(self, spawn_tool):
+        profile = spawn_tool._resolve_agent_profile(role_name="executor")
+
+        assert profile.name == "Executor"
+        assert "web_search" in profile.tools
+        assert profile.metadata["role"] == "executor"
+
     def test_spawn_tool_invalid_role(self, spawn_tool):
         """Unknown role returns task as-is."""
         result = spawn_tool._resolve_system_prompt("test task", "nonexistent")

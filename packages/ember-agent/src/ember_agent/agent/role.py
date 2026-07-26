@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Set, Type
 import yaml
 
 from pydantic import BaseModel, Field, ConfigDict
+from .profile import AgentProfile
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ def list_presets() -> List[str]:
 
 # ── AgentRole model ───────────────────────────────────────────────
 
+
 class AgentRole(BaseModel):
     """Defines an agent's persona and capabilities.
 
@@ -68,9 +70,7 @@ class AgentRole(BaseModel):
     """
 
     name: str = Field(description="Human-readable role name, e.g. 'Code Reviewer'")
-    system_prompt: str = Field(
-        description="Role-specific system instructions"
-    )
+    system_prompt: str = Field(description="Role-specific system instructions")
     default_tools: List[str] = Field(
         default_factory=list,
         description="Tool names available to agents of this role",
@@ -86,6 +86,20 @@ class AgentRole(BaseModel):
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def to_profile(self, *, key: Optional[str] = None) -> AgentProfile:
+        """Convert the legacy role fragment into a complete AgentProfile."""
+        metadata = dict(self.metadata)
+        if key:
+            metadata.setdefault("role", key)
+        output_schema = self.output_schema.model_json_schema() if self.output_schema else None
+        return AgentProfile(
+            name=self.name,
+            system_prompt=self.system_prompt,
+            tools=list(self.default_tools),
+            output_schema=output_schema,
+            metadata=metadata,
+        )
 
 
 # ── Built-in presets ────────────────────────────────────────────────
@@ -163,6 +177,7 @@ register_preset(
 
 # ── YAML config loader ──────────────────────────────────────────
 
+
 def load_presets_from_yaml(path: str = "config.yaml") -> int:
     """Load custom agent roles from YAML config.
 
@@ -195,9 +210,7 @@ def load_presets_from_yaml(path: str = "config.yaml") -> int:
             if not isinstance(spec, dict):
                 continue
             if key in _PRESETS:
-                logger.warning(
-                    f"Role preset '{key}' already exists, overwriting"
-                )
+                logger.warning(f"Role preset '{key}' already exists, overwriting")
             role = AgentRole(
                 name=spec.get("name", key),
                 system_prompt=spec.get("system_prompt", ""),

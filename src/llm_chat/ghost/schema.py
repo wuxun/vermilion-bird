@@ -6,11 +6,12 @@ definition that can be referenced by name in SpawnSubagentTool.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict
+
+from ember_agent.agent import AgentProfile
 
 
-class GhostConfig(BaseModel):
+class GhostConfig(AgentProfile):
     """A reusable agent profile stored as a YAML file.
 
     Ghosts decouple agent definition from code. A ghost can be:
@@ -36,35 +37,6 @@ class GhostConfig(BaseModel):
             version: "1.0"
     """
 
-    name: str = Field(description="Human-readable display name, e.g. 'Deep Researcher'")
-    description: str = Field(
-        default="",
-        description="Brief description of what this ghost does",
-    )
-    system_prompt: str = Field(
-        description="Core system prompt defining the agent's personality and behavior",
-    )
-    tools: List[str] = Field(
-        default_factory=list,
-        description="Default tool names available to this ghost",
-    )
-    model: Optional[str] = Field(
-        default=None,
-        description="Preferred model name, e.g. 'gpt-4o-mini' or 'claude-3-5-sonnet'",
-    )
-    skills: List[str] = Field(
-        default_factory=list,
-        description="Optional skill names to activate for this ghost",
-    )
-    complexity: Optional[str] = Field(
-        default=None,
-        description="Task complexity hint: simple, moderate, or complex",
-    )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary metadata (tags, version, author, etc.)",
-    )
-
     @classmethod
     def from_yaml_dict(cls, data: Dict[str, Any]) -> "GhostConfig":
         """Create a GhostConfig from a YAML-loaded dict, with defaults."""
@@ -78,8 +50,13 @@ class GhostConfig(BaseModel):
             d.pop("description", None)
         if not d.get("skills"):
             d.pop("skills", None)
-        if not d.get("metadata"):
-            d.pop("metadata", None)
+        for optional_mapping in (
+            "metadata",
+            "context_policy",
+            "capability_policy",
+        ):
+            if not d.get(optional_mapping):
+                d.pop(optional_mapping, None)
         if d.get("tools") == []:
             d.pop("tools", None)
         return d

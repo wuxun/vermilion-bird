@@ -326,7 +326,8 @@ ember-core           pip install ember-core
 ember-agent          pip install ember-agent
     │
     ▼
-vermilion-bird       pip install vermilion-bird  (含 PyQt6, APScheduler, tiktoken...)
+vermilion-bird       pip install vermilion-bird
+    └─ 可选适配器    [gui] / [feishu] / [browser] / [semantic-knowledge] / [all]
 ```
 
 ---

@@ -1,27 +1,32 @@
-from .adapter import (
-    FeishuAdapter,
-    FeishuAdapterError,
-    AccessDeniedError,
-    DuplicateEventError,
-    RateLimitExceededError,
-    SecurityViolationError,
-)
-from .models import FeishuChat, FeishuEvent, FeishuMessage, FeishuUser
-from .mapper import SessionMapper
-from .push import PushService, PushServiceError
+"""Optional Feishu adapter package with lazy public exports."""
 
-__all__ = [
-    "FeishuAdapter",
-    "FeishuAdapterError",
-    "AccessDeniedError",
-    "DuplicateEventError",
-    "RateLimitExceededError",
-    "SecurityViolationError",
-    "FeishuMessage",
-    "FeishuEvent",
-    "FeishuUser",
-    "FeishuChat",
-    "SessionMapper",
-    "PushService",
-    "PushServiceError",
-]
+_EXPORTS = {
+    "FeishuAdapter": ("adapter", "FeishuAdapter"),
+    "FeishuAdapterError": ("adapter", "FeishuAdapterError"),
+    "AccessDeniedError": ("adapter", "AccessDeniedError"),
+    "DuplicateEventError": ("adapter", "DuplicateEventError"),
+    "RateLimitExceededError": ("adapter", "RateLimitExceededError"),
+    "SecurityViolationError": ("adapter", "SecurityViolationError"),
+    "FeishuMessage": ("models", "FeishuMessage"),
+    "FeishuEvent": ("models", "FeishuEvent"),
+    "FeishuUser": ("models", "FeishuUser"),
+    "FeishuChat": ("models", "FeishuChat"),
+    "SessionMapper": ("mapper", "SessionMapper"),
+    "PushService": ("push", "PushService"),
+    "PushServiceError": ("push", "PushServiceError"),
+}
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(name) from exc
+    module = __import__(
+        f"llm_chat.frontends.feishu.{module_name}",
+        fromlist=[attribute],
+    )
+    return getattr(module, attribute)
+
+
+__all__ = list(_EXPORTS)
