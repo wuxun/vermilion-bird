@@ -33,6 +33,7 @@ from llm_chat.runtime import (
     RunRecoveryCoordinator,
     RunManager,
 )
+from llm_chat.work import ArtifactKind, WorkItemKind, WorkItemService, WorkItemStatus
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -93,6 +94,10 @@ class App:
         _t4 = time.time()
         logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.run_manager = RunManager(repository=self.storage)
+        self.work_items = WorkItemService(
+            repository=self.storage,
+            runs=self.run_manager,
+        )
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
         self.effect_outbox = EffectOutbox(self.storage)
@@ -185,6 +190,68 @@ class App:
                 {"proposal_id": proposal.id},
             )
         return proposal
+
+    def create_work_item(
+        self,
+        objective: str,
+        *,
+        title: Optional[str] = None,
+        kind: WorkItemKind = WorkItemKind.TASK,
+        conversation_id: Optional[str] = None,
+        workspace: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """创建用户可见任务；执行由具体应用用例随后启动。"""
+
+        return self.work_items.create(
+            objective=objective,
+            title=title,
+            kind=kind,
+            conversation_id=conversation_id,
+            workspace=workspace,
+            idempotency_key=idempotency_key,
+            metadata=metadata,
+        )
+
+    def list_work_items(
+        self,
+        *,
+        status: Optional[WorkItemStatus] = None,
+        kind: Optional[WorkItemKind] = None,
+        limit: int = 100,
+    ):
+        return self.work_items.list(
+            limit=limit,
+            status=status,
+            kind=kind,
+        )
+
+    def get_work_item_detail(self, work_item_id: str):
+        return self.work_items.detail(work_item_id)
+
+    def add_work_item_artifact(
+        self,
+        work_item_id: str,
+        *,
+        name: str,
+        kind: ArtifactKind = ArtifactKind.OTHER,
+        run_id: Optional[str] = None,
+        uri: Optional[str] = None,
+        content_preview: Optional[str] = None,
+        checksum: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        return self.work_items.add_artifact(
+            work_item_id,
+            name=name,
+            kind=kind,
+            run_id=run_id,
+            uri=uri,
+            content_preview=content_preview,
+            checksum=checksum,
+            metadata=metadata,
+        )
 
     def reject_action(
         self,
@@ -1111,6 +1178,7 @@ class App:
             logger.warning(f"异步启动 Docker 沙箱失败: {e}")
 
     def stop(self):
+        self.work_items.close()
         # 使用服务管理器停止所有服务
         self.service_manager.stop_all()
         self.disable_tools()

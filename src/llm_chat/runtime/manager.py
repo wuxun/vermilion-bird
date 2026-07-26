@@ -49,6 +49,7 @@ class RunRepository(Protocol):
         status: Optional[RunStatus] = None,
         run_type: Optional[RunType] = None,
         conversation_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
     ) -> List[Run]:
         ...
 
@@ -96,6 +97,7 @@ class RunManager:
         *,
         conversation_id: Optional[str] = None,
         parent_run_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
         input: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         idempotency_key: Optional[str] = None,
@@ -107,6 +109,11 @@ class RunManager:
         if not isinstance(recovery_policy, RecoveryPolicy):
             recovery_policy = RecoveryPolicy(recovery_policy)
 
+        if parent_run_id and work_item_id is None:
+            parent = self.get(parent_run_id)
+            if parent is not None:
+                work_item_id = parent.work_item_id
+
         if idempotency_key:
             existing = self._find_by_idempotency_key(idempotency_key)
             if existing is not None:
@@ -115,6 +122,7 @@ class RunManager:
         run = Run(
             type=run_type,
             parent_run_id=parent_run_id,
+            work_item_id=work_item_id,
             conversation_id=conversation_id,
             input=input or {},
             metadata=metadata or {},
@@ -330,6 +338,7 @@ class RunManager:
             source.type,
             conversation_id=source.conversation_id,
             parent_run_id=source.id,
+            work_item_id=source.work_item_id,
             input=source.input,
             metadata=metadata,
             recovery_policy=source.recovery_policy,
@@ -452,18 +461,22 @@ class RunManager:
         status: Optional[RunStatus] = None,
         run_type: Optional[RunType] = None,
         conversation_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
     ) -> List[Run]:
         if limit <= 0:
             return []
         if self._repository is not None:
             try:
-                return self._repository.list_runs(
-                    limit=limit,
-                    offset=offset,
-                    status=status,
-                    run_type=run_type,
-                    conversation_id=conversation_id,
-                )
+                filters = {
+                    "limit": limit,
+                    "offset": offset,
+                    "status": status,
+                    "run_type": run_type,
+                    "conversation_id": conversation_id,
+                }
+                if work_item_id is not None:
+                    filters["work_item_id"] = work_item_id
+                return self._repository.list_runs(**filters)
             except Exception:
                 logger.warning("Failed to list persisted runs", exc_info=True)
         with self._lock:
@@ -474,6 +487,8 @@ class RunManager:
                 runs = [run for run in runs if run.type == run_type]
             if conversation_id is not None:
                 runs = [run for run in runs if run.conversation_id == conversation_id]
+            if work_item_id is not None:
+                runs = [run for run in runs if run.work_item_id == work_item_id]
             return [
                 run.model_copy(deep=True) for run in runs[max(0, offset) : max(0, offset) + limit]
             ]

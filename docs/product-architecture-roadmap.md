@@ -52,11 +52,11 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 
 #### Phase 1：WorkItem 与 Artifact 基础
 
-- [ ] 新增 WorkItem、Artifact 模型及 Repository 端口
-- [ ] 新增 SQLite 表、索引和旧库增量迁移
-- [ ] Run 增加 `work_item_id`，子 Run 自动继承任务归属
-- [ ] 新增 WorkItemService，集中维护任务生命周期
-- [ ] 增加迁移、幂等、重启恢复与产物关联测试
+- [x] 新增 WorkItem、Artifact 模型及 Repository 端口
+- [x] 新增 SQLite 表、索引和旧库增量迁移
+- [x] Run 增加 `work_item_id`，子 Run 自动继承任务归属
+- [x] 新增 WorkItemService，集中维护任务生命周期
+- [x] 增加迁移、幂等、重启恢复与产物关联测试
 
 验收条件：
 

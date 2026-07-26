@@ -71,6 +71,7 @@ class Run(BaseModel):
 
     id: str = Field(default_factory=lambda: f"run_{uuid4().hex}")
     parent_run_id: Optional[str] = None
+    work_item_id: Optional[str] = None
     type: RunType
     status: RunStatus = RunStatus.PENDING
     conversation_id: Optional[str] = None

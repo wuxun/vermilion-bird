@@ -203,16 +203,17 @@ class StorageRuntimeMixin:
             conn.execute(
                 """
                 INSERT INTO runs (
-                    id, parent_run_id, type, status, conversation_id,
+                    id, parent_run_id, work_item_id, type, status, conversation_id,
                     input_json, result_json, error, metadata_json,
                     attempt, max_attempts, idempotency_key, recovery_policy,
                     checkpoint_json, heartbeat_at, lease_owner, lease_expires_at,
                     created_at, started_at, finished_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     parent_run_id = excluded.parent_run_id,
+                    work_item_id = excluded.work_item_id,
                     type = excluded.type,
                     status = excluded.status,
                     conversation_id = excluded.conversation_id,
@@ -241,13 +242,13 @@ class StorageRuntimeMixin:
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO runs (
-                    id, parent_run_id, type, status, conversation_id,
+                    id, parent_run_id, work_item_id, type, status, conversation_id,
                     input_json, result_json, error, metadata_json,
                     attempt, max_attempts, idempotency_key, recovery_policy,
                     checkpoint_json, heartbeat_at, lease_owner, lease_expires_at,
                     created_at, started_at, finished_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._run_values(run),
@@ -259,6 +260,7 @@ class StorageRuntimeMixin:
         return (
             run.id,
             run.parent_run_id,
+            run.work_item_id,
             run.type.value,
             run.status.value,
             run.conversation_id,
@@ -382,6 +384,7 @@ class StorageRuntimeMixin:
         status: Optional[RunStatus] = None,
         run_type: Optional[RunType] = None,
         conversation_id: Optional[str] = None,
+        work_item_id: Optional[str] = None,
     ) -> List[Run]:
         clauses = []
         params: List[Any] = []
@@ -394,6 +397,9 @@ class StorageRuntimeMixin:
         if conversation_id is not None:
             clauses.append("conversation_id = ?")
             params.append(conversation_id)
+        if work_item_id is not None:
+            clauses.append("work_item_id = ?")
+            params.append(work_item_id)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend((max(1, limit), max(0, offset)))
@@ -473,6 +479,7 @@ class StorageRuntimeMixin:
         return Run(
             id=row["id"],
             parent_run_id=row["parent_run_id"],
+            work_item_id=row["work_item_id"],
             type=RunType(row["type"]),
             status=RunStatus(row["status"]),
             conversation_id=row["conversation_id"],

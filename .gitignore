@@ -62,7 +62,7 @@ Thumbs.db
 *.log
 logs/
 .sandbox_heartbeat
-work/
+/work/
 
 # Environment
 .env

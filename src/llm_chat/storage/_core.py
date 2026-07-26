@@ -98,6 +98,7 @@ class StorageCore:
             self._create_decision_log_table_in(conn)
             self._create_digest_tables_in(conn)
             self._create_runtime_tables_in(conn)
+            self._create_work_tables_in(conn)
 
     def _create_conversations_table_in(self, conn):
         conn.executescript(
@@ -385,6 +386,7 @@ class StorageCore:
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
                 parent_run_id TEXT,
+                work_item_id TEXT,
                 type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 conversation_id TEXT,
@@ -481,6 +483,7 @@ class StorageCore:
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
         additions = {
+            "work_item_id": "TEXT",
             "attempt": "INTEGER NOT NULL DEFAULT 1",
             "max_attempts": "INTEGER NOT NULL DEFAULT 1",
             "idempotency_key": "TEXT",
@@ -525,7 +528,68 @@ class StorageCore:
         )
         conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_runs_work_item
+            ON runs(work_item_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_action_proposals_execution_run
             ON action_proposals(execution_run_id)
+            """
+        )
+
+    def _create_work_tables_in(self, conn):
+        """创建产品级用户任务与交付物表。"""
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS work_items (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                conversation_id TEXT,
+                workflow_id TEXT,
+                workspace TEXT,
+                root_run_id TEXT,
+                latest_run_id TEXT,
+                idempotency_key TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_idempotency
+                ON work_items(idempotency_key)
+                WHERE idempotency_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_work_items_status_updated
+                ON work_items(status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_work_items_kind_updated
+                ON work_items(kind, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_work_items_conversation
+                ON work_items(conversation_id, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id TEXT PRIMARY KEY,
+                work_item_id TEXT NOT NULL,
+                run_id TEXT,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                uri TEXT,
+                content_preview TEXT,
+                checksum TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id)
+                    REFERENCES runs(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifacts_work_item_created
+                ON artifacts(work_item_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_run
+                ON artifacts(run_id);
             """
         )

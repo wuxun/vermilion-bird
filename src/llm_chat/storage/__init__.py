@@ -6,6 +6,7 @@
 - _task.py         StorageTaskMixin         任务/执行 CRUD
 - _feishu.py       StorageFeishuMixin       飞书对话追踪
 - _runtime.py      StorageRuntimeMixin      运行记录/动作审批
+- _work.py         StorageWorkMixin         用户任务/交付物
 """
 
 from llm_chat.storage._core import StorageCore
@@ -14,6 +15,7 @@ from llm_chat.storage._task import StorageTaskMixin
 from llm_chat.storage._digest import StorageDigestMixin
 from llm_chat.storage._feishu import StorageFeishuMixin
 from llm_chat.storage._runtime import StorageRuntimeMixin
+from llm_chat.storage._work import StorageWorkMixin
 
 
 class Storage(
@@ -22,6 +24,7 @@ class Storage(
     StorageDigestMixin,
     StorageFeishuMixin,
     StorageRuntimeMixin,
+    StorageWorkMixin,
     StorageCore,
 ):
     """SQLite 持久化存储 (单例)
@@ -34,4 +37,5 @@ class Storage(
     - messages_fts                       全文搜索索引
     - runs / run_events                  可审计运行与事件
     - action_proposals                   高风险动作审批
+    - work_items / artifacts             用户任务和交付物
     """
