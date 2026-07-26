@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from llm_chat.runtime.actions import ActionProposal, ActionStatus, Capability
+from llm_chat.runtime.effects import EffectRecord, EffectStatus
 from llm_chat.runtime.models import (
     RecoveryPolicy,
     Run,
@@ -41,6 +42,106 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
 
 class StorageRuntimeMixin:
     """为 Storage 提供 Run 与 ActionProposal 仓储能力。"""
+
+    def create_effect(self, effect: EffectRecord) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO effect_outbox (
+                    id, effect_key, run_id, kind, payload_json, status,
+                    retry_safe, attempts, result_json, error,
+                    created_at, updated_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._effect_values(effect),
+            )
+            return cursor.rowcount == 1
+
+    def save_effect(self, effect: EffectRecord) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO effect_outbox (
+                    id, effect_key, run_id, kind, payload_json, status,
+                    retry_safe, attempts, result_json, error,
+                    created_at, updated_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(effect_key) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    kind = excluded.kind,
+                    payload_json = excluded.payload_json,
+                    status = excluded.status,
+                    retry_safe = excluded.retry_safe,
+                    attempts = excluded.attempts,
+                    result_json = excluded.result_json,
+                    error = excluded.error,
+                    updated_at = excluded.updated_at,
+                    finished_at = excluded.finished_at
+                """,
+                self._effect_values(effect),
+            )
+
+    def get_effect(self, effect_key: str) -> Optional[EffectRecord]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM effect_outbox WHERE effect_key = ?",
+                (effect_key,),
+            ).fetchone()
+        return self._row_to_effect(row) if row else None
+
+    def list_effects(
+        self,
+        *,
+        status: Optional[EffectStatus] = None,
+        limit: int = 1000,
+    ) -> List[EffectRecord]:
+        query = "SELECT * FROM effect_outbox"
+        params: List[Any] = []
+        if status is not None:
+            query += " WHERE status = ?"
+            params.append(status.value)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_effect(row) for row in rows]
+
+    @staticmethod
+    def _effect_values(effect: EffectRecord) -> tuple:
+        return (
+            effect.id,
+            effect.effect_key,
+            effect.run_id,
+            effect.kind,
+            _dump_json(effect.payload),
+            effect.status.value,
+            int(effect.retry_safe),
+            effect.attempts,
+            _dump_json(effect.result) if effect.result is not None else None,
+            effect.error,
+            effect.created_at.isoformat(),
+            effect.updated_at.isoformat(),
+            effect.finished_at.isoformat() if effect.finished_at else None,
+        )
+
+    @staticmethod
+    def _row_to_effect(row: Any) -> EffectRecord:
+        now = datetime.now(timezone.utc)
+        return EffectRecord(
+            id=row["id"],
+            effect_key=row["effect_key"],
+            run_id=row["run_id"],
+            kind=row["kind"],
+            payload=_load_json(row["payload_json"], {}),
+            status=EffectStatus(row["status"]),
+            retry_safe=bool(row["retry_safe"]),
+            attempts=int(row["attempts"]),
+            result=_load_json(row["result_json"], None),
+            error=row["error"],
+            created_at=_parse_datetime(row["created_at"]) or now,
+            updated_at=_parse_datetime(row["updated_at"]) or now,
+            finished_at=_parse_datetime(row["finished_at"]),
+        )
 
     def save_run(self, run: Run) -> None:
         """新增或更新一次运行，不覆盖已经持久化的事件。"""

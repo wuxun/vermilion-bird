@@ -24,6 +24,7 @@ from llm_chat.runtime import (
     ActionProposal,
     ActionProposalManager,
     CapabilityPolicy,
+    EffectOutbox,
     RunDispatcher,
     RunHandlerRegistry,
     RunManager,
@@ -90,6 +91,8 @@ class App:
         self.run_manager = RunManager(repository=self.storage)
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
+        self.effect_outbox = EffectOutbox(self.storage)
+        self.uncertain_effects = self.effect_outbox.reconcile_interrupted()
         self._graph_lock = threading.RLock()
         self.graph_runtime = None
         self.graph_execution = None
@@ -282,6 +285,7 @@ class App:
                 proposals=self.action_proposals,
                 execution_service=self.graph_execution,
                 tool_registry=self.tool_registry,
+                effect_outbox=getattr(self, "effect_outbox", None),
             )
             if not graph_runtime.has_graph(coordinator.GRAPH_NAME):
                 graph_runtime.register_builder(

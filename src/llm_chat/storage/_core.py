@@ -448,6 +448,26 @@ class StorageCore:
                 ON action_proposals(run_id);
             CREATE INDEX IF NOT EXISTS idx_action_proposals_conversation
                 ON action_proposals(conversation_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS effect_outbox (
+                id TEXT PRIMARY KEY,
+                effect_key TEXT NOT NULL UNIQUE,
+                run_id TEXT,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL,
+                retry_safe INTEGER NOT NULL DEFAULT 0,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                result_json TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                finished_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_effect_outbox_status_updated
+                ON effect_outbox(status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_effect_outbox_run
+                ON effect_outbox(run_id);
         """
         )
         self._migrate_runtime_columns(conn)

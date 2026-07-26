@@ -24,6 +24,12 @@ from .handlers import (
     RunHandler,
     RunHandlerRegistry,
 )
+from .effects import (
+    EffectOutbox,
+    EffectRecord,
+    EffectStatus,
+    UncertainEffectError,
+)
 from .actions import (
     ActionProposal,
     ActionProposalManager,
@@ -40,6 +46,9 @@ __all__ = [
     "Capability",
     "CapabilityPolicy",
     "DurableActionCoordinator",
+    "EffectOutbox",
+    "EffectRecord",
+    "EffectStatus",
     "GraphExecutionResult",
     "GraphExecutionService",
     "GraphInterrupt",
@@ -57,5 +66,6 @@ __all__ = [
     "RunStatus",
     "RunType",
     "RunManager",
+    "UncertainEffectError",
     "build_tool_approval_graph",
 ]

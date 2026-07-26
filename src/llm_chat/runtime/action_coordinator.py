@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .actions import ActionProposal, ActionProposalManager, ActionStatus
+from .effects import EffectOutbox
 from .execution_service import GraphExecutionService
 from .models import RunType
 
@@ -20,10 +21,12 @@ class DurableActionCoordinator:
         proposals: ActionProposalManager,
         execution_service: GraphExecutionService,
         tool_registry,
+        effect_outbox: Optional[EffectOutbox] = None,
     ):
         self.proposals = proposals
         self.execution_service = execution_service
         self.tool_registry = tool_registry
+        self.effect_outbox = effect_outbox
 
     def prepare(self, proposal: ActionProposal) -> ActionProposal:
         """为新提案创建一个停在审批 interrupt 的 Tool Run。"""
@@ -100,13 +103,38 @@ class DurableActionCoordinator:
     def execute_approved(self, proposal_id: str):
         """LangGraph 节点回调：只有 APPROVED 状态才能到达这里。"""
 
-        proposal = self.proposals.execute_approved(
-            proposal_id,
-            tool_registry=self.tool_registry,
+        def execute():
+            proposal = self.proposals.execute_approved(
+                proposal_id,
+                tool_registry=self.tool_registry,
+            )
+            if proposal.status == ActionStatus.FAILED:
+                raise RuntimeError(proposal.error or f"Action {proposal_id} failed")
+            return proposal.result
+
+        if self.effect_outbox is None:
+            return execute()
+
+        proposal = self.proposals.get(proposal_id)
+        if proposal is None:
+            raise KeyError(f"Unknown action proposal: {proposal_id}")
+        effect_key = f"tool-action:{proposal.id}"
+        self.effect_outbox.prepare(
+            effect_key=effect_key,
+            run_id=proposal.execution_run_id,
+            kind="tool",
+            payload={
+                "proposal_id": proposal.id,
+                "tool_name": proposal.tool_name,
+                "arguments": proposal.arguments,
+            },
+            retry_safe=False,
         )
-        if proposal.status == ActionStatus.FAILED:
-            raise RuntimeError(proposal.error or f"Action {proposal_id} failed")
-        return proposal.result
+        effect = self.effect_outbox.execute(
+            effect_key=effect_key,
+            executor=execute,
+        )
+        return effect.result
 
     def resume(self, run_id: str, value=None):
         run = self.execution_service.run_manager.get(run_id)
