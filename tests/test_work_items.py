@@ -215,6 +215,42 @@ def test_existing_runtime_database_is_migrated_for_work_items(tmp_path):
     Storage.set_instance(None)
 
 
+def test_existing_artifact_table_gets_content_and_idempotency_columns(tmp_path):
+    db_path = tmp_path / "legacy-artifacts.db"
+    Storage.set_instance(None)
+    initial = Storage(str(db_path))
+    with initial._get_connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_artifacts_idempotency")
+        conn.execute("ALTER TABLE artifacts RENAME TO artifacts_old")
+        conn.execute(
+            """
+            CREATE TABLE artifacts (
+                id TEXT PRIMARY KEY,
+                work_item_id TEXT NOT NULL,
+                run_id TEXT,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                uri TEXT,
+                content_preview TEXT,
+                checksum TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("DROP TABLE artifacts_old")
+
+    Storage.set_instance(None)
+    migrated = Storage(str(db_path))
+    with migrated._get_connection() as conn:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
+        }
+
+    assert {"content", "idempotency_key"} <= columns
+    Storage.set_instance(None)
+
+
 def test_run_work_item_id_round_trip(storage):
     run = Run(
         id="run-with-work-item",

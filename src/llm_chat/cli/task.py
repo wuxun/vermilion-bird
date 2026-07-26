@@ -86,7 +86,8 @@ def start_task(
         if detail.artifacts:
             click.echo("\n结果:")
             primary = detail.artifacts[0]
-            click.echo(primary.content or primary.content_preview or primary.uri or "已生成产物")
+            result = primary.content or primary.content_preview or primary.uri or "已生成产物"
+            click.echo(result)
         elif detail.work_item.status == WorkItemStatus.WAITING_APPROVAL:
             click.echo("任务正在等待审批，请在执行与审批中心处理。")
         else:

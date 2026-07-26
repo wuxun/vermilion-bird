@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
 from llm_chat.scheduler.models import Task, TaskExecution, TaskStatus, TaskType
+from llm_chat.work import ArtifactKind, WorkItemKind, WorkItemService
 
 if TYPE_CHECKING:
     from llm_chat.app import App
@@ -33,11 +34,41 @@ class TaskExecutor:
         self._on_complete = on_complete
         candidate = getattr(app, "run_manager", None)
         self.run_manager = candidate if isinstance(candidate, RunManager) else None
+        candidate_work_items = getattr(app, "work_items", None)
+        self.work_items = (
+            candidate_work_items
+            if isinstance(candidate_work_items, WorkItemService)
+            else None
+        )
 
     def execute(self, task: Task) -> TaskExecution:
         execution_id = str(uuid.uuid4())
         started_at = datetime.now()
         run = None
+        work_item = None
+        if self.work_items:
+            work_item = self.work_items.create(
+                title=task.name,
+                objective=self._work_objective(task),
+                kind=WorkItemKind.AUTOMATION,
+                conversation_id=(
+                    f"scheduled:{task.id}"
+                    if task.task_type
+                    in {
+                        TaskType.LLM_CHAT,
+                        TaskType.PROACTIVE_CHAT,
+                        TaskType.WEBHOOK,
+                    }
+                    else None
+                ),
+                idempotency_key=f"scheduled:{task.id}:{execution_id}",
+                metadata={
+                    "source": "scheduler",
+                    "scheduled_task_id": task.id,
+                    "scheduled_task_type": task.task_type.value,
+                    "execution_id": execution_id,
+                },
+            )
         if self.run_manager:
             run_type = {
                 TaskType.WEBHOOK: RunType.WEBHOOK,
@@ -45,6 +76,7 @@ class TaskExecutor:
             }.get(task.task_type, RunType.SCHEDULED)
             run = self.run_manager.start(
                 run_type,
+                work_item_id=work_item.id if work_item else None,
                 input={"task_id": task.id, "params": task.params},
                 metadata={
                     "task_name": task.name,
@@ -131,6 +163,7 @@ class TaskExecutor:
                 logger.info(f"Task {task.id} completed successfully after {retry_count} retries")
                 if run_id:
                     self.run_manager.complete(run_id, result)
+                    self._materialize_result(run_id, result)
                 self._notify(task, result or "", True)
                 return execution
 
@@ -193,6 +226,12 @@ class TaskExecutor:
         if task is None:
             raise ValueError(f"Scheduled task for run {run_id} no longer exists")
         replay = self.run_manager.replay(run_id)
+        if self.work_items and replay.work_item_id:
+            self.work_items.attach_run(
+                replay.work_item_id,
+                replay.id,
+                make_primary=True,
+            )
         self._execute_existing(
             task,
             execution_id=str(uuid.uuid4()),
@@ -221,6 +260,34 @@ class TaskExecutor:
     def _notify(self, task: Task, value: str, success: bool) -> None:
         if self._on_complete is not None:
             self._on_complete(task, value, success)
+
+    @staticmethod
+    def _work_objective(task: Task) -> str:
+        params = task.params or {}
+        return str(
+            params.get("message")
+            or params.get("action")
+            or params.get("tool_name")
+            or params.get("skill_name")
+            or task.name
+        )
+
+    def _materialize_result(self, run_id: str, result: Optional[str]) -> None:
+        if not self.work_items or not result:
+            return
+        run = self.run_manager.get(run_id) if self.run_manager else None
+        if run is None or not run.work_item_id:
+            return
+        self.work_items.add_artifact(
+            run.work_item_id,
+            run_id=run.id,
+            kind=ArtifactKind.TEXT,
+            name="自动任务结果",
+            content=str(result),
+            content_preview=str(result)[:500],
+            idempotency_key=f"{run.id}:scheduled-result",
+            metadata={"role": "scheduled_result"},
+        )
 
     def _execute_llm_chat(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """通过 ChatCore 完整管道执行 LLM 对话 — 包含记忆注入、工具调用、决策卡片。

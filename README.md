@@ -15,6 +15,7 @@
 - **飞书（Lark）集成** — WebSocket 实时消息，自动重连 + 事件去重
 - **图形界面 (PyQt6)** — 对话、模型切换、MCP 配置、技能管理、定时任务面板
 - **执行与审批中心** — Run/事件持久化、高风险动作审批、重启恢复与副作用人工对账
+- **任务与交付物** — 以用户目标聚合多次执行、审批和最终报告/文件，支持 CLI 与 GUI
 - **会话管理** — SQLite（WAL + FTS5）持久化，支持中文分词搜索
 - **子 Agent 委托** — spawn_subagent 动态创建子对话，Workflow 引擎编排多工具
 - **API Key 安全存储** — 系统密钥环（macOS Keychain / Linux Secret Service）
@@ -77,9 +78,14 @@ poetry run vermilion-bird chat --gui
 
 # 飞书服务
 poetry run vermilion-bird feishu
+
+# 创建并执行持久化任务
+poetry run vermilion-bird task start "调研三个 Agent 框架并形成报告"
+poetry run vermilion-bird task list
 ```
 
-GUI 顶栏的 `🧭` 按钮（或 `Ctrl+Shift+R`）可打开“执行与审批中心”。“运行记录”
+GUI 顶栏的“任务”按钮（或 `Ctrl+Shift+T`）打开面向用户目标和交付物的任务中心；
+`🧭` 按钮（或 `Ctrl+Shift+R`）打开高级“执行与审批中心”。“运行记录”
 页可按类型和状态筛选并查看完整事件时间线；“审批”页集中展示待执行动作的风险、
 能力、影响和参数，只有明确批准后才会执行。待审批动作和历史 Run 均保存在 SQLite
 中。“副作用对账”页集中处理崩溃窗口内无法确认结果的外部操作，要求填写审计说明，

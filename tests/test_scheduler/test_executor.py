@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, call
 
 import pytest
@@ -9,6 +10,8 @@ import pytest
 from llm_chat.scheduler.models import Task, TaskType, TaskStatus, TaskExecution
 from llm_chat.scheduler.task_executor import TaskExecutor
 from llm_chat.runtime import RunManager, RunStatus, RunType
+from llm_chat.storage import Storage
+from llm_chat.work import WorkItemKind, WorkItemService, WorkItemStatus
 
 
 @pytest.fixture
@@ -154,6 +157,41 @@ class TestTaskExecutorInit:
         assert completed_run.status == RunStatus.COMPLETED
         assert completed_run.result == "recovered"
         assert completed_run.attempt == 2
+
+    def test_scheduled_execution_creates_product_work_item_and_artifact(
+        self,
+        tmp_path,
+        llm_chat_task,
+    ):
+        Storage.set_instance(None)
+        storage = Storage(str(tmp_path / "scheduled-work-item.db"))
+        runs = RunManager(repository=storage)
+        work_items = WorkItemService(repository=storage, runs=runs)
+        client = MagicMock()
+        client.chat.return_value = "scheduled result"
+        app = SimpleNamespace(
+            run_manager=runs,
+            work_items=work_items,
+            client=client,
+            chat_core=None,
+            storage=storage,
+        )
+        executor = TaskExecutor(app=app, task_storage=storage)
+        task = llm_chat_task.model_copy(update={"max_retries": 0})
+        storage.save_task(task)
+
+        execution = executor.execute(task)
+        item = work_items.list(limit=1)[0]
+        detail = work_items.detail(item.id)
+
+        assert execution.status == TaskStatus.COMPLETED
+        assert item.kind == WorkItemKind.AUTOMATION
+        assert item.status == WorkItemStatus.COMPLETED
+        assert detail.runs[0].work_item_id == item.id
+        assert detail.artifacts[0].content == "scheduled result"
+
+        work_items.close()
+        Storage.set_instance(None)
 
 
 class TestExecuteLLMChat:

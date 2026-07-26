@@ -153,6 +153,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._execution_center_button: Optional[QPushButton] = None
         self._execution_center_dialog = None
         self._execution_center_timer = None
+        self._task_center_button: Optional[QPushButton] = None
+        self._task_center_dialog = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
@@ -243,6 +245,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._main_window,
             self._on_execution_center,
         )
+        # Ctrl+Shift+T → 打开产品级任务中心
+        QShortcut(
+            QKeySequence("Ctrl+Shift+T"),
+            self._main_window,
+            self._on_task_center,
+        )
         logger.info("键盘快捷键已注册")
 
     def _focus_search(self):
@@ -297,6 +305,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         menu.addAction("🤖 模型设置", self._on_models_config)
         menu.addAction("⏰ Scheduler", self._on_scheduler_config)
         menu.addAction("📊 Dashboard", self._on_dashboard)
+        menu.addAction("✅ 任务中心", self._on_task_center)
         menu.addAction("🧭 执行与审批中心", self._on_execution_center)
         menu.addSeparator()
         menu.addAction("⌨️ 快捷键", self._show_shortcuts_help)
@@ -315,6 +324,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "Ctrl+K  — 搜索历史对话\n"
             "Ctrl+L  — 清空当前对话\n"
             "Ctrl+,  — 打开设置菜单\n"
+            "Ctrl+Shift+T — 任务中心\n"
             "Ctrl+Shift+R — 执行与审批中心\n"
             "Escape  — 停止生成 / 聚焦输入框\n"
             "Enter   — 发送消息\n"
@@ -341,6 +351,27 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _on_execution_center_destroyed(self):
         self._execution_center_dialog = None
+
+    def _on_task_center(self):
+        """打开以用户目标和交付物为中心的任务视图。"""
+
+        if self._app_instance is None:
+            QMessageBox.warning(self._main_window, "暂不可用", "应用服务尚未初始化。")
+            return
+        if self._task_center_dialog is not None and self._task_center_dialog.isVisible():
+            self._task_center_dialog.raise_()
+            self._task_center_dialog.activateWindow()
+            return
+
+        from llm_chat.frontends.tasks import TaskCenterDialog
+
+        dialog = TaskCenterDialog(self._app_instance, self._main_window)
+        dialog.destroyed.connect(self._on_task_center_destroyed)
+        self._task_center_dialog = dialog
+        dialog.show()
+
+    def _on_task_center_destroyed(self):
+        self._task_center_dialog = None
 
     def _update_execution_center_indicator(self):
         """在顶栏展示待审批数量，避免审批请求被聊天内容淹没。"""
@@ -639,6 +670,23 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         header_layout.addWidget(self._model_combo)
+
+        self._task_center_button = QPushButton("任务")
+        self._task_center_button.setFixedSize(52, 32)
+        self._task_center_button.setToolTip("任务中心 (Ctrl+Shift+T)")
+        self._task_center_button.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: 1px solid rgba(0,0,0,0.08);
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: rgba(0,0,0,0.05); }
+            """
+        )
+        self._task_center_button.clicked.connect(self._on_task_center)
+        header_layout.addWidget(self._task_center_button)
 
         self._execution_center_button = QPushButton("🧭")
         self._execution_center_button.setFixedSize(32, 32)
@@ -1571,6 +1619,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._app.quit()
 
     def _on_close_event(self, event):
+        if self._task_center_dialog is not None:
+            self._task_center_dialog.close()
         if self._execution_center_dialog is not None:
             self._execution_center_dialog.close()
         self._handle_exit()
@@ -1598,6 +1648,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # Cancel all running sub-agents before quitting
         if self._subagent_panel:
             self._subagent_panel.disconnect_registry()
+        if self._task_center_dialog is not None:
+            self._task_center_dialog.close()
         if self._execution_center_dialog is not None:
             self._execution_center_dialog.close()
         if self._execution_center_timer is not None:

@@ -71,7 +71,15 @@ WorkItem，从而避免 Tool、Subagent 和 Graph 节点产生孤立执行记录
 
 ## 后续迁移
 
+已完成：
+
 1. CLI 新增 `task start/list/show/cancel/retry/artifacts`；
 2. Scheduler、Webhook、Proactive 显式创建 WorkItem；
 3. GUI 新增任务中心，WorkItem 作为主视图，Run 时间线作为高级信息；
-4. Artifact 扩展打开、校验、导出和“保存为 Workflow”能力。
+4. 文本结果以幂等 Artifact 固化，文件和链接 Artifact 可从 GUI 打开。
+
+下一步：
+
+1. 在任务详情内展示结构化计划与待审批动作；
+2. 增加暂停、恢复、导出和“保存为 Workflow”能力；
+3. 为首次启动提供模型连接与安全示例任务。

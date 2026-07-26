@@ -67,18 +67,20 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 
 #### Phase 2：迁移生产入口
 
-- [ ] GUI、CLI 支持显式创建任务
-- [ ] Scheduler、Webhook、Proactive 通过 StartWorkItem 用例创建任务
-- [ ] Subagent 和 Tool 子 Run 自动继承 WorkItem
-- [ ] 对话模式与任务模式保持清晰区分
+- [x] GUI、CLI 支持显式创建任务
+- [x] Scheduler、Webhook、Proactive 通过 WorkItemService 创建任务
+- [x] Subagent 和 Tool 子 Run 自动继承 WorkItem
+- [x] 对话模式与任务模式保持清晰区分
 
 #### Phase 3：GUI 任务中心
 
-- [ ] 任务列表与状态筛选
-- [ ] 任务详情：概览、计划、审批、产物、时间线
-- [ ] 暂停、取消、恢复、重试
-- [ ] 将执行与审批中心保留为高级审计入口
-- [ ] 增加 Qt 关键路径自动化测试
+- [x] 任务列表与状态筛选
+- [x] 任务详情：概览、执行和产物
+- [ ] 任务详情：结构化计划和内嵌审批
+- [x] 取消和重试
+- [ ] 暂停和恢复
+- [x] 将执行与审批中心保留为高级审计入口
+- [x] 增加 Qt 关键路径自动化测试
 
 #### Phase 4：首次使用
 
