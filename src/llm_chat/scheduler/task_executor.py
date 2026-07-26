@@ -113,10 +113,9 @@ class TaskExecutor:
         if not message:
             raise ValueError("LLM_CHAT task requires 'message' in params")
 
-        model = params.get("model", None)
-        temperature = params.get("temperature", None)
-
-        extra_kwargs = {}
+        extra_kwargs = dict(params.get("model_params", {}))
+        model = params.get("model")
+        temperature = params.get("temperature")
         if model:
             extra_kwargs["model"] = model
         if temperature is not None:
@@ -127,12 +126,21 @@ class TaskExecutor:
         def on_card(card):
             captured_cards.append(card)
 
-        result = self.app.chat_core.send_message(
-            conversation_id="__scheduled__",
-            message=message,
-            on_card=on_card,
-            **extra_kwargs,
-        )
+        chat_core = getattr(self.app, "chat_core", None)
+        if chat_core is not None:
+            result = chat_core.send_message(
+                conversation_id=f"scheduled:{task.id}",
+                message=message,
+                on_card=on_card,
+                **extra_kwargs,
+            )
+        else:
+            result = self.app.client.chat(
+                message=message,
+                history=params.get("history", []),
+                **extra_kwargs,
+            )
+        result = str(result)
 
         # 推送决策卡片 (如果有)
         for card in captured_cards:
@@ -159,12 +167,15 @@ class TaskExecutor:
             skill_manager = self.app.client.get_skill_manager()
 
             # Prefer a dedicated execute_skill API if available on the manager
-            if hasattr(skill_manager, "execute_skill"):
+            execute_skill = getattr(type(skill_manager), "execute_skill", None)
+            if callable(execute_skill):
                 result = skill_manager.execute_skill(skill_name, arguments)
                 return result
 
             skill = skill_manager.get_skill(skill_name)
-            if skill is None:
+            from llm_chat.skills.base import BaseSkill
+
+            if not isinstance(skill, BaseSkill):
                 raise ValueError(f"Skill not found: {skill_name}")
             tools = skill.get_tools()
             if not tools:

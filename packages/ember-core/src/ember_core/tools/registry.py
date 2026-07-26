@@ -33,6 +33,13 @@ class ToolRegistry:
         """Get the current instance (injected or default singleton)."""
         return cls()
 
+    @classmethod
+    def create_isolated(cls) -> "ToolRegistry":
+        """Create a registry that does not share the process-wide tool map."""
+        instance = super().__new__(cls)
+        instance._tools = {}
+        return instance
+
     def register(self, tool: BaseTool) -> None:
         """Register a tool by its name."""
         self._tools[tool.name] = tool

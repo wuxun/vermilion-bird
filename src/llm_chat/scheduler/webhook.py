@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hmac
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Callable, Optional
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # 默认 webhook 端口
 DEFAULT_WEBHOOK_PORT = 9100
+MAX_WEBHOOK_BODY_BYTES = 1_048_576
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -49,13 +51,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
         expected_secret = task_info.get("secret")
         if expected_secret:
             provided_secret = self.headers.get("X-Webhook-Secret", "")
-            if provided_secret != expected_secret:
+            if not hmac.compare_digest(provided_secret, expected_secret):
                 logger.warning(f"Webhook secret mismatch for {task_id}")
                 self._respond(403, {"error": "invalid secret"})
                 return
 
         # 读取 body
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > MAX_WEBHOOK_BODY_BYTES:
+            self._respond(413, {"error": "payload too large"})
+            return
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
 
         try:

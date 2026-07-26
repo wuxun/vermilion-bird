@@ -16,6 +16,7 @@ def mock_app():
     app = MagicMock()
     app.client = MagicMock()
     app.client.chat = MagicMock(return_value="LLM response")
+    app.chat_core = None
     app.storage = MagicMock()
     return app
 

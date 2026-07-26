@@ -9,25 +9,29 @@ Verifies that the StateGraph routes correctly for:
 import asyncio
 import pytest
 from pydantic import BaseModel
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from ember_core.graph import StateGraph
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.chat_core_graph import (
     ChatGraphState, build_chat_graph,
     _post_shortcut_router, _post_llm_router,
+    _llm_call_node, _routing_update, _set_ctx, _clear_ctx,
 )
+from llm_chat.pipeline.stage import PipelineContext
 
 
 # ── Router function tests ───────────────────────────────────────
 
 class TestRouting:
     def test_short_circuit_skips_to_persist(self):
-        """Short circuit (e.g. /style, /help) should skip to persist_assistant."""
+        """Shortcuts persist inside ShortcutStage and must not be written twice."""
         state = ChatGraphState(
             routing=ChatRoutingState(should_short_circuit=True),
         )
         result = _post_shortcut_router(state)
-        assert result == "persist_assistant"
+        assert result == "__finish__"
 
     def test_normal_proceeds_to_pipeline(self):
         """Normal message (including greetings) proceeds through full pipeline."""
@@ -47,9 +51,10 @@ class TestRouting:
 
     def test_llm_with_tool_calls_loops(self):
         state = ChatGraphState(
-            routing=ChatRoutingState(has_tool_calls=True, tool_call_count=0),
+            routing=ChatRoutingState(has_tool_calls=True, tool_call_count=1),
         )
         result = _post_llm_router(state)
+        assert result == "execute_tools"
 
     def test_llm_text_response_proceeds(self):
         """After LLM produces text (no tool_calls), proceed to persist."""
@@ -70,6 +75,47 @@ class TestRouting:
         )
         result = _post_llm_router(state)
         assert result == "persist_assistant"
+
+    def test_routing_patch_preserves_tool_budget(self):
+        state = ChatGraphState(
+            routing=ChatRoutingState(
+                tool_call_count=3,
+                max_tool_iterations=7,
+                has_tool_calls=True,
+            )
+        )
+
+        updated = _routing_update(state, has_tool_calls=False)
+
+        assert updated.tool_call_count == 3
+        assert updated.max_tool_iterations == 7
+        assert updated.has_tool_calls is False
+
+    def test_disabled_tools_use_plain_chat(self):
+        client = MagicMock()
+        client.has_builtin_tools.return_value = True
+        client.get_builtin_tools.return_value = [
+            {"type": "function", "function": {"name": "unsafe"}}
+        ]
+        client.chat.return_value = "plain response"
+        ctx = PipelineContext(
+            conversation_id="conv-disabled",
+            user_message="hello",
+            processed_message="hello",
+        )
+        ctx._extra = {
+            "client": client,
+            "config": SimpleNamespace(enable_tools=False),
+        }
+        _set_ctx(ctx)
+        try:
+            update = asyncio.run(_llm_call_node(ChatGraphState()))
+        finally:
+            _clear_ctx()
+
+        client.chat.assert_called_once()
+        client.chat_single_with_tools.assert_not_called()
+        assert update["routing"].has_response is True
 
 
 # ── Graph structure test ────────────────────────────────────────

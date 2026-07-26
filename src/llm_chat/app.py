@@ -18,6 +18,7 @@ from llm_chat.storage import Storage
 from llm_chat.skills import SkillManager
 from llm_chat.service_manager import ServiceManager
 from llm_chat.health import get_checker, create_database_checker, create_service_manager_checker
+from llm_chat.runtime import RunManager
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -54,12 +55,15 @@ class App:
         _t1 = time.time(); logger.info(f"⏱ _init_tool_registry: {_t1-_t0:.3f}s")
         self._init_role_presets()
         _t1b = time.time(); logger.info(f"⏱ _init_role_presets: {_t1b-_t1:.3f}s")
+        self._init_ghosts()
+        _t1c = time.time(); logger.info(f"⏱ _init_ghosts: {_t1c-_t1b:.3f}s")
         self.storage = self._init_storage()
         _t2 = time.time(); logger.info(f"⏱ _init_storage: {_t2-_t1:.3f}s")
         self.client = self._init_client()
         _t3 = time.time(); logger.info(f"⏱ _init_client: {_t3-_t2:.3f}s")
         self.conversation_manager = self._init_conversation_manager()
         _t4 = time.time(); logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
+        self.run_manager = RunManager()
         self.chat_core = self._init_chat_core()
         _t5 = time.time(); logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
         self._init_prompt_skills()
@@ -99,6 +103,17 @@ class App:
                 f"{pat_count} pattern(s) from config.yaml"
             )
 
+    def _init_ghosts(self):
+        """Preload Ghost templates from ~/.vermilion-bird/ghosts/."""
+        try:
+            from llm_chat.ghost.store import get_ghost_store
+            store = get_ghost_store()
+            count = len(store.all_cached())
+            if count:
+                logger.info(f"Loaded {count} ghost(s) from {store.directory}")
+        except ImportError:
+            pass
+
     def _init_client(self):
         return LLMClient(self.config, tool_registry=self.tool_registry)
 
@@ -113,6 +128,7 @@ class App:
             self.storage,
             memory_config=memory_config,
             knowledge_config=knowledge_config,
+            context_config=self.config.context.model_dump(),
             default_model_params=default_model_params,
             memory_manager=memory_manager,
             knowledge_manager=knowledge_manager,
@@ -146,6 +162,7 @@ class App:
             client=self.client,
             conversation_manager=self.conversation_manager,
             config=self.config,
+            run_manager=self.run_manager,
         )
         logger.info("ChatCore initialized")
         return chat_core
@@ -208,6 +225,8 @@ class App:
             "long_term": {
                 "auto_evolve": self.config.memory.long_term.auto_evolve,
                 "evolve_interval_days": self.config.memory.long_term.evolve_interval_days,
+                "consolidate_min_facts": self.config.memory.long_term.consolidate_min_facts,
+                "consolidate_interval_secs": self.config.memory.long_term.consolidate_interval_secs,
             },
             "exclude_patterns": self.config.memory.exclude_patterns,
             "extraction_interval": self.config.memory.extraction_interval,
@@ -229,6 +248,8 @@ class App:
             "extraction_interval": kc.extraction_interval,
             "consolidate_min_entries": kc.consolidate_min_entries,
             "refine_min_total": kc.refine_min_total,
+            "semantic_enabled": kc.semantic_enabled,
+            "semantic_threshold": kc.semantic_threshold,
         }
 
     def _init_knowledge_manager(self):

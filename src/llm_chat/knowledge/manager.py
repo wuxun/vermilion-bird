@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from llm_chat.memory.summarizer import Summarizer
 
 logger = logging.getLogger(__name__)
+DEFAULT_SIMILARITY_THRESHOLD = 0.35
 
 
 class KnowledgeManager:
@@ -55,6 +56,48 @@ class KnowledgeManager:
         # 防止频繁 LLM 调用
         self._last_extraction_time = datetime.now()
         self._min_extraction_interval_secs = 300  # 5 分钟
+
+        # 语义检测器（懒加载）
+        self._semantic_detector = None
+        self._keyword_detector = DomainDetector(self.storage)
+        self._semantic_enabled = self.config.get("semantic_enabled", False)
+        self._semantic_threshold = self.config.get(
+            "semantic_threshold", DEFAULT_SIMILARITY_THRESHOLD
+        )
+
+    # ------------------------------------------------------------------
+    # 检测器选择
+    # ------------------------------------------------------------------
+
+    def _get_detector(self):
+        """Get or create the semantic detector (lazy init)."""
+        if self._semantic_detector is None:
+            from llm_chat.knowledge.semantic_detector import create_detector
+
+            self._semantic_detector = create_detector(
+                self.storage,
+                similarity_threshold=self._semantic_threshold,
+            )
+        return self._semantic_detector
+
+    def _match_domains(self, text: str, min_score: float = 0.3):
+        """Match text against domains using semantic + keyword hybrid.
+
+        Returns list of (domain_name, score) tuples.
+        """
+        if self._semantic_enabled:
+            detector = self._get_detector()
+            return detector.match(text)
+
+        raw_matches = self._keyword_detector.match(text)
+        if not raw_matches:
+            return []
+        max_hits = max(score for _, score in raw_matches)
+        return [
+            (name, score / max_hits)
+            for name, score in raw_matches
+            if score / max_hits >= min_score
+        ]
 
     # ------------------------------------------------------------------
     # 公共 API — 管道调用
@@ -90,7 +133,7 @@ class KnowledgeManager:
 
         渐进式披露：
         - type=always 的领域：注入全文（受 token 预算限制）
-        - type=requested/manual 的领域：注入一行摘要
+        - type=requested/manual 的领域：语义匹配后注入一行摘要
 
         Args:
             user_message: 当前用户消息
@@ -105,16 +148,15 @@ class KnowledgeManager:
         if not all_domains:
             return ""
 
-        detector = DomainDetector(self.storage)
-        keyword_matched = detector.match(user_message)
-        matched_names = set(name for name, _hits in keyword_matched)
+        # 语义匹配（fallback: 关键词匹配）
+        semantic_matches = self._match_domains(user_message)
+        matched_names = set(name for name, _score in semantic_matches)
 
         token_budget = self._max_knowledge_tokens
         always_parts = []
         summary_lines = []
 
-        # type=always 领域：无条件注入（跳过关键词过滤，始终注入全文）
-        # 预算公平分配：每个 always 领域至少得到 budget // count
+        # type=always 领域：无条件注入
         all_always = [n for n, m in all_domains.items() if m.type == "always"]
         per_domain_budget = max(100, token_budget // max(1, len(all_always))) if all_always else 0
         for name in all_always:
@@ -128,13 +170,14 @@ class KnowledgeManager:
                 )
                 token_budget -= self._estimate_tokens(truncated)
 
-        # type=requested/manual 领域：仅关键词匹配时注入一行摘要
-        for name, _hits in keyword_matched:
+        # type=requested/manual 领域：语义匹配时注入摘要（含相似度）
+        for name, score in semantic_matches:
             meta = all_domains.get(name)
             if meta is None or meta.type == "always":
-                continue  # always 已处理
+                continue
+            relevance = "★★★" if score > 0.7 else ("★★☆" if score > 0.5 else "★☆☆")
             summary_lines.append(
-                f"- **{meta.display_name}** (`{name}`): {meta.description}"
+                f"- **{meta.display_name}** (`{name}`) {relevance}: {meta.description}"
                 f" | 知识点: {meta.fact_count} 条"
             )
 
@@ -150,7 +193,7 @@ class KnowledgeManager:
 
         result = "\n\n".join(parts)
         logger.debug(
-            f"注入领域知识: {len(keyword_matched)} 个领域, "
+            f"语义匹配注入领域知识: {len(semantic_matches)} 个领域, "
             f"{self._estimate_tokens(result)} tokens"
         )
         return result
@@ -163,7 +206,7 @@ class KnowledgeManager:
         """从近期消息中提取领域知识。
 
         流程：
-        1. DomainDetector 匹配涉及的领域
+        1. SemanticDomainDetector 语义匹配涉及的领域
         2. 对每个领域：LLM 提取知识点 → 追加
         3. 尝试检测新领域
         4. 检查整合 / 提炼触发条件
@@ -178,12 +221,13 @@ class KnowledgeManager:
         if not text.strip():
             return
 
-        detector = DomainDetector(self.storage)
-        matched = detector.match_domains(text, min_hits=2)
+        # 语义匹配领域（fallback: 关键词匹配）
+        matched = self._match_domains(text)
+        matched_names = [name for name, score in matched if score >= 0.3]
         all_domains = self.storage.get_all_domains()
 
         # 1. 对已匹配领域提取知识（使用 display_name）
-        for domain_name in matched:
+        for domain_name in matched_names:
             try:
                 meta = all_domains.get(domain_name)
                 display_name = meta.display_name if meta else domain_name
@@ -198,7 +242,7 @@ class KnowledgeManager:
                 logger.warning(f"提取 {domain_name} 知识失败: {e}")
 
         # 2. 尝试检测新领域（未匹配到任何已有领域时）
-        if not matched:
+        if not matched_names:
             try:
                 suggestion = self.extractor.suggest_new_domain(messages)
                 if suggestion:
@@ -217,7 +261,7 @@ class KnowledgeManager:
                 logger.warning(f"检测新领域失败: {e}")
 
         # 3. 检查维护触发
-        self._maintain_domains(matched)
+        self._maintain_domains(matched_names)
 
     # ------------------------------------------------------------------
     # 内部 — 维护 (整合 + 提炼)

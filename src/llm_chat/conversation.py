@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import uuid
 from typing import List, Dict, Any, Optional
 from llm_chat.client import LLMClient
 from llm_chat.storage import Storage
@@ -22,7 +23,7 @@ class Conversation:
         context_config: Optional[Dict] = None,
     ):
         self.client = client
-        self.conversation_id = conversation_id or f"conv_{int(time.time())}"
+        self.conversation_id = conversation_id or f"conv_{uuid.uuid4().hex}"
         self.storage = storage or Storage()
         self.memory_config = memory_config or {}
         self._model_params = model_params or {}
@@ -88,6 +89,10 @@ class Conversation:
 
     def _init_context_manager(self):
         """初始化上下文管理器"""
+        if not self.context_config.get("enabled", True):
+            logger.info("上下文管理系统已禁用")
+            self._context_manager = None
+            return
         try:
             from llm_chat.context import ContextManager
 
@@ -211,11 +216,13 @@ class ConversationManager:
         default_model_params: Optional[Dict[str, Any]] = None,
         memory_manager=None,
         knowledge_manager=None,
+        context_config: Optional[Dict] = None,
     ):
         self.client = client
         self.storage = storage or Storage()
         self.memory_config = memory_config or {}
         self.knowledge_config = knowledge_config or {}
+        self.context_config = context_config or {}
         self.default_model_params = default_model_params or {}
         self._conversations: Dict[str, Conversation] = {}
         self._memory_manager = memory_manager
@@ -278,11 +285,12 @@ class ConversationManager:
                 self.memory_config,
                 memory_manager=self._memory_manager,
                 model_params=self.default_model_params,
+                context_config=self.context_config,
             )
         return self._conversations[conversation_id]
 
     def create_conversation(self, title: Optional[str] = None) -> Conversation:
-        conversation_id = f"conv_{int(time.time())}"
+        conversation_id = f"conv_{uuid.uuid4().hex}"
         self.storage.create_conversation(conversation_id, title)
         conv = Conversation(
             self.client,
@@ -291,6 +299,7 @@ class ConversationManager:
             self.memory_config,
             memory_manager=self._memory_manager,
             model_params=self.default_model_params,
+            context_config=self.context_config,
         )
         self._conversations[conversation_id] = conv
         return conv

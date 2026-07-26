@@ -56,6 +56,11 @@ class SchedulerConfig(BaseSettings):
     @field_validator("default_timezone")
     @classmethod
     def validate_timezone(cls, v: str) -> str:
+        if v.lower() == "local":
+            from datetime import datetime
+
+            local_tz = datetime.now().astimezone().tzinfo
+            return getattr(local_tz, "key", None) or str(local_tz) or "UTC"
         try:
             import pytz
             pytz.timezone(v)

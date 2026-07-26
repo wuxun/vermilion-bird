@@ -52,6 +52,10 @@ class StorageCore:
     def _get_connection(self):
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
+        # foreign_keys is connection-scoped in SQLite. Setting it only during
+        # schema initialization leaves every CRUD connection without cascade
+        # enforcement.
+        conn.execute("PRAGMA foreign_keys=ON")
         try:
             yield conn
             conn.commit()
@@ -124,13 +128,36 @@ class StorageCore:
 
     def _create_fts_index_in(self, conn):
         try:
-            conn.execute("""
+            conn.executescript("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                     content,
                     content='messages',
                     content_rowid='id'
-                )
+                );
+
+                CREATE TRIGGER IF NOT EXISTS messages_fts_ai
+                AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS messages_fts_ad
+                AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content)
+                    VALUES ('delete', old.id, old.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS messages_fts_au
+                AFTER UPDATE OF content ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content)
+                    VALUES ('delete', old.id, old.content);
+                    INSERT INTO messages_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
             """)
+            # Repair databases created before the synchronization triggers
+            # existed. FTS5 rebuild is idempotent.
+            conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
         except sqlite3.OperationalError:
             pass
 

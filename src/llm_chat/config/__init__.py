@@ -159,6 +159,12 @@ class Config(BaseSettings):
                 if feishu_data is not None
                 else FeishuConfig()
             )
+            notification_data = config_data.get("notification", {})
+            notification_config = (
+                NotificationConfig(**notification_data)
+                if notification_data is not None
+                else NotificationConfig()
+            )
 
             # MCP
             mcp_data = config_data.get("mcp", {})
@@ -178,7 +184,10 @@ class Config(BaseSettings):
             skills_data = config_data.get("skills", {})
             skills_config = cls._parse_skills(skills_data)
 
-            external_skill_dirs = config_data.get("external_skill_dirs", [])
+            external_skill_dirs = config_data.get(
+                "external_skill_dirs",
+                [str(Path.home() / ".vermilion-bird" / "skills" / "code")],
+            )
             prompt_skill_dirs = config_data.get("prompt_skill_dirs", [])
 
             # Memory
@@ -220,7 +229,9 @@ class Config(BaseSettings):
                 tools=tools_config,
                 skills=skills_config,
                 feishu=feishu_config,
+                notification=notification_config,
                 external_skill_dirs=external_skill_dirs,
+                prompt_skill_dirs=prompt_skill_dirs,
                 memory=memory_config,
                 context=context_config,
                 scheduler=scheduler_config,
@@ -279,6 +290,9 @@ class Config(BaseSettings):
             extraction_time_interval=data.get("extraction_time_interval", 3600),
             short_term_max_entries=data.get("short_term_max_entries", 50),
             max_memory_tokens=data.get("max_memory_tokens", 2000),
+            heavy_op_min_interval_secs=data.get(
+                "heavy_op_min_interval_secs", 3600
+            ),
         )
 
     @classmethod

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, List, Callable, Any, Dict
@@ -95,11 +96,14 @@ class SchedulerService:
         self._webhook_server: Optional[WebhookServer] = None
         webhook_enabled = getattr(config, 'webhook_enabled', False)
         webhook_port = getattr(config, 'webhook_port', 9100)
+        webhook_host = getattr(config, 'webhook_host', '127.0.0.1')
         if webhook_enabled:
             from .webhook import WebhookServer
-            self._webhook_server = WebhookServer(port=webhook_port)
+            self._webhook_server = WebhookServer(
+                port=webhook_port, host=webhook_host
+            )
             logger.info(
-                f"Webhook server configured on port {webhook_port}"
+                f"Webhook server configured on {webhook_host}:{webhook_port}"
             )
 
     def _get_notification_service(self):
@@ -445,7 +449,7 @@ class SchedulerService:
             f"无法解析时间格式: {date_str}，支持的格式: YYYY-MM-DD HH:MM:SS 或 ISO 格式"
         )
 
-    def _execute_task(self, task_id: str):
+    def _execute_task(self, task_id: str, task_override: Optional[Task] = None):
         """执行任务（由调度器调用）。
 
         Args:
@@ -454,7 +458,7 @@ class SchedulerService:
         execution_id = str(uuid.uuid4())
         started_at = datetime.now()
 
-        task = self._storage.load_task(task_id)
+        task = task_override or self._storage.load_task(task_id)
         if not task:
             logger.error(f"Task not found: {task_id}")
             return
@@ -503,8 +507,22 @@ class SchedulerService:
             return self._run_skill_task(task)
         elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
             return self._run_maintenance_task(task)
+        elif task.task_type == TaskType.WEBHOOK:
+            return self._run_webhook_task(task)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
+
+    def _run_webhook_task(self, task: Task) -> str:
+        """Execute a webhook-triggered chat while preserving its payload."""
+        params = dict(task.params)
+        payload = params.get("webhook_payload", {})
+        message = params.get("message", "处理以下 webhook 事件")
+        payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        params["message"] = f"{message}\n\nWebhook payload:\n{payload_text}"
+        delegated = task.model_copy(
+            update={"task_type": TaskType.LLM_CHAT, "params": params}
+        )
+        return self._run_llm_chat_task(delegated)
 
     def _run_llm_chat_task(self, task: Task) -> str:
         """执行 LLM 聊天任务，通过 ChatCore 完整管道。"""
@@ -738,8 +756,8 @@ class SchedulerService:
         # 注入 webhook payload 到 task params
         task.params["webhook_payload"] = payload
 
-        # 直接执行 (webhook 不需要 APScheduler job)
-        self._execute_task(task_id)
+        # 直接执行传入的快照，避免 _execute_task 再次加载后丢失 payload。
+        self._execute_task(task_id, task_override=task)
 
     def get_webhook_info(self) -> Optional[dict]:
         """获取 webhook 服务器状态信息。"""

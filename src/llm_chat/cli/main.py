@@ -10,6 +10,7 @@ from llm_chat.frontends import get_frontend
 from llm_chat.frontends.feishu.server import FeishuServer
 from llm_chat.scheduler.models import Task, TaskType
 from llm_chat.cli import memory, skills, schedule
+from llm_chat.cli.ghost_cli import ghost_group
 import signal
 import threading
 
@@ -247,6 +248,7 @@ def feishu(config_path, log_file, log_level):
 cli.add_command(memory)
 cli.add_command(skills)
 cli.add_command(schedule)
+cli.add_command(ghost_group)
 
 
 # ===== keyring 命令 =====

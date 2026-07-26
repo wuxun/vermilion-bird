@@ -25,6 +25,16 @@ class KnowledgeConfig(BaseSettings):
     refine_min_total: int = Field(
         default=50, description="总知识点 ≥ N 时触发提炼"
     )
+    semantic_enabled: bool = Field(
+        default=False,
+        description="启用本地语义向量匹配；默认关闭以避免隐式下载模型",
+    )
+    semantic_threshold: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        description="语义与关键词混合匹配的最低相关度",
+    )
 
     class Config:
         env_prefix = "KNOWLEDGE_"

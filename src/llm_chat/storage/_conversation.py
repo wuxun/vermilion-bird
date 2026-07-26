@@ -249,11 +249,19 @@ class StorageConversationMixin:
                 return [self._row_to_dict(row) for row in rows]
             except Exception:
                 # FTS 不可用时回退到 LIKE
-                rows = conn.execute(
-                    "SELECT * FROM messages WHERE content LIKE ? "
-                    "ORDER BY created_at DESC LIMIT ?",
-                    (f"%{query}%", limit),
-                ).fetchall()
+                if conversation_id:
+                    rows = conn.execute(
+                        "SELECT * FROM messages "
+                        "WHERE content LIKE ? AND conversation_id = ? "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (f"%{query}%", conversation_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM messages WHERE content LIKE ? "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (f"%{query}%", limit),
+                    ).fetchall()
                 return [self._row_to_dict(row) for row in rows]
 
     # ------------------------------------------------------------------

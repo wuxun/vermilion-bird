@@ -178,6 +178,21 @@ class ContextCompressor:
             f"[AUTO_COMPACT] 触发自动压缩: 微压缩后token={micro_result.compressed_token_count} > 阈值={int(threshold)}"
         )
 
+        # 基于微压缩结果继续处理，避免重新引入已经截断的旧工具结果。
+        # 保留最近 K 轮完整对话，更早的消息交给摘要器。
+        compacted_messages = micro_result.messages
+        recent_messages = self._get_recent_dialog_rounds(
+            compacted_messages, self.keep_recent_dialog_rounds
+        )
+        recent_ids = {id(message) for message in recent_messages}
+        older_messages = [
+            message for message in compacted_messages if id(message) not in recent_ids
+        ]
+
+        # 消息数不足以形成“旧历史”时，不生成一个无意义摘要。
+        if not older_messages:
+            return micro_result
+
         # 生成历史摘要
         summary = self._generate_dialog_summary(older_messages)
 

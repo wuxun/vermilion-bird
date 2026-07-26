@@ -91,8 +91,34 @@ class TestTaskExecutions:
     @pytest.fixture
     def storage(self, tmp_path):
         from llm_chat.storage import Storage
+        from datetime import datetime
+        from llm_chat.scheduler.models import Task, TaskType
+
         db_path = tmp_path / "test.db"
         s = Storage(db_path=str(db_path))
+        now = datetime.now()
+        for task_id in (
+            "task-1",
+            "task-2",
+            "task-3",
+            "task-a",
+            "task-b",
+            "task-c",
+            "task-x",
+            "task-y",
+        ):
+            s.save_task(
+                Task(
+                    id=task_id,
+                    name=task_id,
+                    task_type=TaskType.LLM_CHAT,
+                    trigger_config={},
+                    params={"message": "test"},
+                    enabled=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
         yield s
 
     def _make_execution(self, task_id, status="COMPLETED", result="ok"):

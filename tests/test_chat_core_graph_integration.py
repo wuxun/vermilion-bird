@@ -101,9 +101,9 @@ class TestChatCoreGraphIntegration:
         from llm_chat.chat_core_graph import _post_shortcut_router
         from llm_chat.pipeline.chat_state import ChatRoutingState
 
-        # Short circuit → persist_assistant
+        # ShortcutStage already persists the response → finish
         state = ChatGraphState(routing=ChatRoutingState(should_short_circuit=True))
-        assert _post_shortcut_router(state) == "persist_assistant"
+        assert _post_shortcut_router(state) == "__finish__"
 
         # Normal → persist_user
         state2 = ChatGraphState(routing=ChatRoutingState(should_short_circuit=False))

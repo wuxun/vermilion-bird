@@ -37,6 +37,7 @@ from llm_chat.pipeline.stages import (
     TokenRecordStage,
 )
 from llm_chat.pipeline import MutableStrHolder
+from llm_chat.runtime import RunManager, RunType
 from llm_chat.utils.observability import observe
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,17 @@ def _set_ctx(ctx: PipelineContext) -> None:
     _chat_ctx_local.ctx = ctx
 
 
+def _clear_ctx() -> None:
+    """Remove request-local context after a graph invocation."""
+    if hasattr(_chat_ctx_local, "ctx"):
+        del _chat_ctx_local.ctx
+
+
+def _routing_update(state: ChatGraphState, **changes) -> ChatRoutingState:
+    """Patch routing fields without resetting counters and execution budgets."""
+    return state.routing.model_copy(update=changes)
+
+
 # ── Node functions ────────────────────────────────────────────────
 
 
@@ -94,7 +106,8 @@ async def _intent_node(state: ChatGraphState) -> dict:
         _ctx().effective_message = decision.override_message
 
     return {
-        "routing": ChatRoutingState(
+        "routing": _routing_update(
+            state,
             intent=decision.intent.value,
             skip_llm=decision.skip_llm,
         ),
@@ -111,7 +124,8 @@ async def _shortcut_node(state: ChatGraphState) -> dict:
     await stage.teardown(_ctx())
 
     return {
-        "routing": ChatRoutingState(
+        "routing": _routing_update(
+            state,
             should_short_circuit=_ctx().should_short_circuit,
             skip_llm=_ctx().routing_decision.skip_llm if _ctx().routing_decision else False,
         ),
@@ -177,7 +191,13 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
     Sync: uses chat_single_with_tools.
     """
     client = _ctx()._extra.get("client")
-    tools = client.get_builtin_tools() if client.has_builtin_tools() else []
+    config = _ctx()._extra.get("config")
+    tools_enabled = getattr(config, "enable_tools", True)
+    tools = (
+        client.get_builtin_tools()
+        if tools_enabled and client.has_builtin_tools()
+        else []
+    )
 
     # Build/accumulate messages
     msgs = _ctx()._extra.get("_tool_messages")
@@ -199,7 +219,11 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
         if _ctx().on_chunk:
             _ctx().on_chunk(text)
         _ctx().response = text
-        return {"routing": ChatRoutingState(has_response=True)}
+        return {
+            "routing": _routing_update(
+                state, has_response=True, has_tool_calls=False
+            )
+        }
 
     # Streaming: use streaming single-call for token-by-token output
     if _ctx().on_chunk:
@@ -221,17 +245,26 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
         if "assistant_message" in result:
             _ctx()._extra["_tool_messages"] = msgs + [result["assistant_message"]]
         return {
-            "routing": ChatRoutingState(
+            "routing": _routing_update(
+                state,
                 has_tool_calls=True,
-                tool_call_count=state.routing.tool_call_count + 1,
             ),
         }
     else:
         text = result.get("text", "")
+        if tool_calls and not text:
+            text = (
+                "工具调用已达到最大迭代次数 "
+                f"({state.routing.max_tool_iterations})，已停止继续执行。"
+            )
         if not _ctx().on_chunk and text:
             _ctx().on_chunk(text) if _ctx().on_chunk else None
         _ctx().response = text
-        return {"routing": ChatRoutingState(has_response=True)}
+        return {
+            "routing": _routing_update(
+                state, has_response=True, has_tool_calls=False
+            )
+        }
 
 
 async def _execute_tools_node(state: ChatGraphState) -> dict:
@@ -251,7 +284,10 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
         })
 
     executor = ToolExecutor(registry, max_workers=5)
-    results = executor.execute_tools_parallel(tool_call_dicts)
+    try:
+        results = executor.execute_tools_parallel(tool_call_dicts)
+    finally:
+        executor.shutdown()
 
     for tc, result in zip(tool_calls, results):
         tc_id = tc.id if hasattr(tc, 'id') else f"tc_{tc.name}"
@@ -268,7 +304,13 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
         })
 
     _ctx()._extra.pop("_pending_tool_calls", None)
-    return {"routing": ChatRoutingState(has_tool_calls=False)}
+    return {
+        "routing": _routing_update(
+            state,
+            has_tool_calls=False,
+            tool_call_count=state.routing.tool_call_count + 1,
+        )
+    }
 
 
 
@@ -318,13 +360,13 @@ async def _token_record_node(state: ChatGraphState) -> dict:
 def _post_shortcut_router(state: ChatGraphState) -> str:
     """After shortcut: route based on short_circuit flag.
 
-    should_short_circuit = True: shortcut handled the request (e.g. /style, /help).
-    response is already set → skip to persist_assistant.
+    should_short_circuit = True: shortcut handled and persisted the request
+    (e.g. /style, /help) → finish without a duplicate assistant write.
 
     Otherwise: proceed through the full pipeline (greetings go through LLM normally).
     """
     if state.routing.should_short_circuit:
-        return "persist_assistant"
+        return "__finish__"
     return "persist_user"
 
 
@@ -419,10 +461,12 @@ class ChatCoreGraph:
         client: LLMClient,
         conversation_manager: ConversationManager,
         config: Config,
+        run_manager: Optional[RunManager] = None,
     ):
         self.client = client
         self.conversation_manager = conversation_manager
         self.config = config
+        self.run_manager = run_manager or RunManager()
         self._cancel_event: Optional[threading.Event] = None
         self._prompt_skills_holder = MutableStrHolder("")
         self._style_holder = MutableStrHolder("default")
@@ -448,6 +492,11 @@ class ChatCoreGraph:
         **model_params,
     ) -> str:
         """Synchronous send_message — uses async graph internally."""
+        run = self.run_manager.start(
+            RunType.CHAT,
+            conversation_id=conversation_id,
+            input={"message": message},
+        )
         ctx = PipelineContext(
             conversation_id=conversation_id,
             user_message=message,
@@ -462,6 +511,7 @@ class ChatCoreGraph:
             "style_holder": self._style_holder,
             "client": self.client,
             "config": self.config,
+            "run_id": run.id,
         }
 
         _set_ctx(ctx)
@@ -472,19 +522,24 @@ class ChatCoreGraph:
         state = ChatGraphState()
 
         try:
-            result_state = asyncio.run(self._compiled.ainvoke(state))
+            asyncio.run(self._compiled.ainvoke(state))
         except Exception as e:
             logger.error(f"send_message graph failed: {e}", exc_info=True)
+            self.run_manager.fail(run.id, str(e))
             return f"处理消息时发生错误: {str(e)}"
+        finally:
+            # Extract before clearing request-local state. ContextVar cleanup
+            # must also happen on graph failures.
+            card = get_pending_card() or ctx.pending_card
+            clear_card_context()
+            _clear_ctx()
 
-        # Extract pending card from submit_decision_card tool calls
-        card = get_pending_card() or _ctx().pending_card
-        clear_card_context()
+        self.run_manager.complete(run.id, ctx.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
 
-        return _ctx().response
+        return ctx.response
 
     @observe("chat_core.send_message_stream")
     def send_message_stream(
@@ -499,6 +554,11 @@ class ChatCoreGraph:
         **model_params,
     ) -> str:
         """Streaming send_message."""
+        run = self.run_manager.start(
+            RunType.CHAT,
+            conversation_id=conversation_id,
+            input={"message": message, "stream": True},
+        )
         self._cancel_event = threading.Event()
         ctx = PipelineContext(
             conversation_id=conversation_id,
@@ -518,6 +578,7 @@ class ChatCoreGraph:
             "style_holder": self._style_holder,
             "client": self.client,
             "config": self.config,
+            "run_id": run.id,
         }
 
         _set_ctx(ctx)
@@ -527,18 +588,22 @@ class ChatCoreGraph:
         state = ChatGraphState()
 
         try:
-            result_state = asyncio.run(self._compiled.ainvoke(state))
+            asyncio.run(self._compiled.ainvoke(state))
         except Exception as e:
             logger.error(f"send_message_stream graph failed: {e}", exc_info=True)
+            self.run_manager.fail(run.id, str(e))
             return f"处理消息时发生错误: {str(e)}"
+        finally:
+            card = get_pending_card() or ctx.pending_card
+            clear_card_context()
+            _clear_ctx()
 
-        card = get_pending_card() or _ctx().pending_card
-        clear_card_context()
+        self.run_manager.complete(run.id, ctx.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
 
-        return _ctx().response
+        return ctx.response
 
     def cancel_generation(self) -> None:
         """Cancel ongoing stream generation."""

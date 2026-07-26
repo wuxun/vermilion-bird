@@ -166,12 +166,15 @@ class SpawnSubagentTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "创建子agent执行任务。支持两种模式:\n"
-            "1. pattern= 一站式: 用预定义协作模式自动编排多agent。\n"
+            "创建子agent执行任务。支持三种模式:\n"
+            "1. ghost= 模板引用: 使用预定义的 Ghost YAML 模板。\n"
+            "   适用: 复用已配置好的Agent（通过 vermilion-bird ghost create 创建）\n"
+            "2. pattern= 一站式: 用预定义协作模式自动编排多agent。\n"
             "   适用: 调研/对比/评估/审查 等标准任务\n"
-            "2. role= 手动: 创建单个agent，可配合depends_on串行。\n"
+            "3. role= 手动: 创建单个agent，可配合depends_on串行。\n"
             "   适用: 自定义流程，需要精细控制\n\n"
             "示例:\n"
+            "  - 引用模板: spawn_subagent(ghost='researcher', task='调研XX')\n"
             "  - 简单调研: spawn_subagent(pattern='research', task='调研XX')\n"
             "  - 对比分析: spawn_subagent(pattern='compare', task='对比A和B')\n"
             "  - 代码审查: spawn_subagent(pattern='review', task='审查代码')\n"
@@ -231,6 +234,10 @@ class SpawnSubagentTool(BaseTool):
                         "简单: 快速关键词搜索/简单问答 | 复杂: 深度分析/多步推理"
                     ),
                 },
+                "ghost": {
+                    "type": "string",
+                    "description": self._build_ghost_description(),
+                },
                 "role": {
                     "type": "string",
                     "enum": self._build_role_enum(),
@@ -272,6 +279,73 @@ class SpawnSubagentTool(BaseTool):
         self.parent_context = parent_context
         self.config = config
         self._tool_registry = tool_registry  # 注入共享 ToolRegistry
+
+    def _build_ghost_description(self) -> str:
+        """Build ghost description from available ghosts, one line per ghost."""
+        try:
+            from llm_chat.ghost.store import get_ghost_store
+            store = get_ghost_store()
+            ghosts = store.all_cached()
+            if not ghosts:
+                return (
+                    "预定义的 Ghost 模板引用。使用 vermilion-bird ghost create 创建。\n"
+                    "当前没有可用的 Ghost 模板。"
+                )
+            lines = ["预定义的 Ghost 模板引用。当前可用模板:"]
+            for key, ghost in ghosts.items():
+                desc = ghost.description[:60] if ghost.description else "(无描述)"
+                tools_str = ", ".join(ghost.tools[:3]) if ghost.tools else "无"
+                lines.append(f"  {key}: {desc} [tools: {tools_str}]")
+            return "\n".join(lines)
+        except ImportError:
+            return "预定义的 Ghost 模板引用（ghost 系统未启用）"
+
+    def _resolve_ghost(self, ghost_name: str, task: str, role_name: str,
+                       allowed_tools: Optional[list], model_config: dict,
+                       complexity: Optional[str]) -> tuple:
+        """Resolve a ghost reference into concrete parameters.
+
+        Returns:
+            (system_prompt, allowed_tools, model_config, complexity, skills)
+        """
+        try:
+            from llm_chat.ghost.store import get_ghost_store
+            store = get_ghost_store()
+            ghost = store.load(ghost_name)
+            if not ghost:
+                available = ", ".join(store.list_all()) or "(none)"
+                raise ValueError(
+                    f"Ghost '{ghost_name}' not found. Available ghosts: {available}"
+                )
+
+            system_prompt = ghost.system_prompt + f"\n\nCurrent task: {task}"
+            resolved_tools = list(allowed_tools or [])
+
+            # Ghost tools override defaults, unless caller explicitly sets allowed_tools
+            if ghost.tools and allowed_tools is None:
+                resolved_tools = list(ghost.tools)
+                logger.info(f"Ghost '{ghost_name}' → tools={resolved_tools}")
+
+            # Ghost model overrides, unless caller explicitly sets model_config
+            if ghost.model and not model_config:
+                model_config = {"model": ghost.model}
+                logger.info(f"Ghost '{ghost_name}' → model={ghost.model}")
+
+            # Ghost complexity overrides
+            if ghost.complexity and not complexity:
+                complexity = ghost.complexity
+                logger.info(f"Ghost '{ghost_name}' → complexity={ghost.complexity}")
+
+            return (
+                system_prompt,
+                resolved_tools,
+                model_config,
+                complexity,
+                list(ghost.skills),
+            )
+
+        except ImportError:
+            raise ValueError("Ghost system is not available")
 
     def _resolve_system_prompt(self, task: str, role_name: str = "") -> str:
         """Resolve system prompt from AgentRole preset, or return task as-is."""
@@ -411,30 +485,78 @@ class SpawnSubagentTool(BaseTool):
     @observe("spawn_subagent")
     def execute(self, **kwargs) -> str:
         task = kwargs.get("task", "")
-        allowed_tools = kwargs.get("allowed_tools", []) or []
-        # 默认工具：分析类子 Agent 至少需要搜索和抓取能力
-        if not allowed_tools:
-            allowed_tools = ["web_search", "web_fetch"]
+        tools_were_explicit = "allowed_tools" in kwargs
+        allowed_tools = list(kwargs.get("allowed_tools") or [])
         timeout = kwargs.get("timeout", 300)
         model_config = kwargs.get("model_config")
         complexity = kwargs.get("complexity")
+        ghost_name = kwargs.get("ghost", "")
         role_name = kwargs.get("role", "")
         pattern_name = kwargs.get("pattern", "")
         depends_on = kwargs.get("depends_on", [])
         result_var = kwargs.get("result_var", "")
         blackboard = kwargs.get("blackboard", None)
         work_dir_arg = kwargs.get("work_dir")
+        skills_filter = None
+
+        selected_modes = [
+            name
+            for name, selected in (
+                ("ghost", ghost_name),
+                ("pattern", pattern_name),
+                ("role", role_name),
+            )
+            if selected
+        ]
+        if len(selected_modes) > 1:
+            return json.dumps(
+                {
+                    "error": (
+                        "ghost, pattern and role are mutually exclusive; "
+                        f"received: {', '.join(selected_modes)}"
+                    ),
+                    "status": "failed",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
 
         # Dependency resolution: wait for upstream agents, inject results into task
         if depends_on:
             task = self._resolve_dependencies(depends_on, task)
+
+        # Ghost mode: resolve predefined agent template
+        if ghost_name:
+            try:
+                (
+                    system_prompt,
+                    allowed_tools,
+                    model_config,
+                    complexity,
+                    skills_filter,
+                ) = self._resolve_ghost(
+                    ghost_name,
+                    task,
+                    role_name,
+                    allowed_tools if tools_were_explicit else None,
+                    model_config,
+                    complexity,
+                )
+            except ValueError as exc:
+                return json.dumps(
+                    {"error": str(exc), "status": "failed"},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        else:
+            system_prompt = self._resolve_system_prompt(task, role_name)
 
         # Pattern mode: execute a predefined collaboration pattern
         if pattern_name:
             return self._execute_pattern(pattern_name, task, timeout)
 
         # 角色预设：自动注入 system_prompt 和默认工具
-        if role_name and not allowed_tools:
+        if role_name and not tools_were_explicit:
             try:
                 from ember_agent.agent.role import get_preset
                 role = get_preset(role_name)
@@ -443,6 +565,11 @@ class SpawnSubagentTool(BaseTool):
                     logger.info(f"Role '{role_name}' → default_tools={allowed_tools}")
             except ImportError:
                 pass
+
+        # Plain tasks get a conservative read-only research baseline. An
+        # explicitly supplied empty list means "no tools".
+        if not allowed_tools and not tools_were_explicit and not role_name and not ghost_name:
+            allowed_tools = ["web_search", "web_fetch"]
 
         # 复杂度→模型映射（config.tools.subagent_models）
         if complexity and not model_config:
@@ -488,15 +615,26 @@ class SpawnSubagentTool(BaseTool):
                     indent=2,
                 )
 
-        filtered_tools = [t for t in allowed_tools if t != "spawn_subagent"]
+        filtered_tools = [
+            tool_name
+            for tool_name in allowed_tools
+            if tool_name not in self.BLOCKED_TOOLS
+        ]
         work_dir = self._get_work_dir(work_dir_arg)
         os.makedirs(work_dir, exist_ok=True)
 
         agent_id = str(uuid.uuid4())
 
-        # Resolve AgentRole system_prompt and prepend to task
+        # Resolve system_prompt and prepend to task
+        # Priority: ghost > role > raw task
         enhanced_task = task
-        if role_name:
+        if ghost_name:
+            enhanced_task = system_prompt
+            logger.info(
+                f"Ghost '{ghost_name}' system_prompt injected "
+                f"({len(system_prompt)} chars)"
+            )
+        elif role_name:
             resolved_prompt = self._resolve_system_prompt(task, role_name)
             if resolved_prompt != task:
                 enhanced_task = resolved_prompt
@@ -542,7 +680,7 @@ class SpawnSubagentTool(BaseTool):
             agent_id,
             self._execute_async,
             agent_id, enhanced_task, filtered_tools, timeout, context, model_config,
-            parent_client, parent_cancel_event, blackboard,
+            parent_client, parent_cancel_event, blackboard, skills_filter,
         )
 
         wait = kwargs.get("wait", False)
@@ -621,6 +759,7 @@ class SpawnSubagentTool(BaseTool):
         parent_client=None,
         parent_cancel_event=None,
         blackboard=None,
+        skills_filter=None,
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
         # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
@@ -628,7 +767,7 @@ class SpawnSubagentTool(BaseTool):
         try:
             return self._execute_async_inner(
                 agent_id, task, allowed_tools, timeout, context, model_config,
-                parent_client, parent_cancel_event, blackboard,
+                parent_client, parent_cancel_event, blackboard, skills_filter,
             )
         finally:
             _set_agent_id(None)
@@ -644,6 +783,7 @@ class SpawnSubagentTool(BaseTool):
         parent_client=None,
         parent_cancel_event=None,
         blackboard=None,
+        skills_filter=None,
     ) -> str:
         client = None
         own_client = False  # Track if we created this client (needs close)
@@ -653,6 +793,7 @@ class SpawnSubagentTool(BaseTool):
         try:
             from llm_chat.client import LLMClient
 
+            subagent_config = None
             if model_config:
                 subagent_config = self._create_subagent_config(model_config)
                 logger.info(
@@ -662,7 +803,7 @@ class SpawnSubagentTool(BaseTool):
                 )
                 context.model = subagent_config.llm.model
                 context.protocol = subagent_config.llm.protocol
-            elif parent_client is not None:
+            elif parent_client is not None and not skills_filter:
                 # Reuse parent LLMClient — share HTTP session, avoid new connection pool
                 client = parent_client
                 context.model = client.config.llm.model
@@ -696,13 +837,14 @@ class SpawnSubagentTool(BaseTool):
                 self.registry._notify_status_change(agent_id)
 
             if client is None:
-                # No parent client, no model_config override — create dedicated client
-                subagent_config = self.config
+                # Create a dedicated client for custom models or skill filters.
+                if subagent_config is None:
+                    subagent_config = self.config
                 context.model = subagent_config.llm.model
                 context.protocol = subagent_config.llm.protocol
 
                 # 为子 agent 创建独立的 ToolRegistry，加载安全技能子集
-                subagent_registry = ToolRegistry()
+                subagent_registry = ToolRegistry.create_isolated()
                 for tool in self._tool_registry.get_all_tools():
                     if hasattr(tool, '_is_mcp_tool') or tool.name.startswith("mcp__"):
                         subagent_registry.register(tool)
@@ -711,7 +853,7 @@ class SpawnSubagentTool(BaseTool):
                     subagent_config, skip_skills_setup=False,
                     tool_call_hook=_on_tool_call,
                     tool_registry=subagent_registry,
-                    skills_filter=None,  # Load all skills, BLOCKED_TOOLS filters at tool level
+                    skills_filter=skills_filter,
                 )
                 own_client = True
 
@@ -730,6 +872,23 @@ class SpawnSubagentTool(BaseTool):
                 if t.get("function", {}).get("name") not in SpawnSubagentTool.BLOCKED_TOOLS
             ]
 
+            # A Ghost may activate skills instead of enumerating every tool
+            # produced by those skills. Resolve the selected skills to their
+            # concrete tool names, then apply the same strict capability filter.
+            if skills_filter:
+                skill_manager = client.get_skill_manager()
+                for skill_name in skills_filter:
+                    skill = skill_manager.get_skill(skill_name)
+                    if skill is None:
+                        logger.warning(
+                            f"Subagent {agent_id} requested unavailable skill: "
+                            f"{skill_name}"
+                        )
+                        continue
+                    allowed_tools.extend(
+                        tool.name for tool in skill.get_tools()
+                    )
+
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
                 _bb_tools = _build_blackboard_tool_defs()
@@ -741,20 +900,18 @@ class SpawnSubagentTool(BaseTool):
                 logger.debug(f"Subagent {agent_id}: blackboard tools added")
 
             if allowed_tools:
-                all_names = {t.get("function", {}).get("name") for t in all_tools}
-                _internal_tools = {
-                    "spawn_subagent", "get_subagent_status", "cancel_subagent",
-                    "list_subagents",
+                allowed_names = set(allowed_tools) - self.BLOCKED_TOOLS
+                available_names = {
+                    tool.get("function", {}).get("name") for tool in all_tools
                 }
-                merged_allowed = set(allowed_tools) | (all_names - _internal_tools)
-                if merged_allowed != set(allowed_tools):
-                    extra = merged_allowed - set(allowed_tools)
-                    logger.info(
-                        f"Subagent {agent_id} auto-included external tools: {extra}"
+                unavailable = allowed_names - available_names
+                if unavailable:
+                    logger.warning(
+                        f"Subagent {agent_id} requested unavailable tools: {unavailable}"
                     )
                 filtered_tool_defs = [
                     t for t in all_tools
-                    if t.get("function", {}).get("name") in merged_allowed
+                    if t.get("function", {}).get("name") in allowed_names
                 ]
                 result = self._call_llm_with_retry(
                     client, agent_id, task, filtered_tool_defs, context,

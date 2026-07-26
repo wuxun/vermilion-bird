@@ -1,11 +1,18 @@
 import logging
+import os
+from functools import lru_cache
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 try:
     import tiktoken
-    TIKTOKEN_AVAILABLE = True
+    # tiktoken downloads encoding tables on first use. Keep the desktop app
+    # offline-safe by making exact counting explicit rather than triggering
+    # hidden network I/O while building context.
+    TIKTOKEN_AVAILABLE = os.getenv(
+        "VERMILION_ENABLE_TIKTOKEN", ""
+    ).lower() in {"1", "true", "yes"}
 except ImportError:
     TIKTOKEN_AVAILABLE = False
     tiktoken = None
@@ -84,13 +91,14 @@ MODEL_CONTEXT_LIMITS = {
 DEFAULT_CONTEXT_LIMIT = 8192
 
 
+@lru_cache(maxsize=32)
 def get_encoding_for_model(model: str) -> Optional[Any]:
     if not TIKTOKEN_AVAILABLE:
         return None
     
     try:
         return tiktoken.encoding_for_model(model)
-    except KeyError:
+    except Exception:
         try:
             return tiktoken.get_encoding("cl100k_base")
         except Exception:

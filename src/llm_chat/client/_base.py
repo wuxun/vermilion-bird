@@ -381,45 +381,51 @@ class LLMClientBase:
 
         available = {m.id: m for m in self.config.llm.available_models}
 
-        for fb_id in fallback_ids:
-            fb_info = available.get(fb_id)
-            if not fb_info:
-                logger.warning(f"fallback 模型 '{fb_id}' 不在 available_models 中，跳过")
-                continue
+        try:
+            for fb_id in fallback_ids:
+                fb_info = available.get(fb_id)
+                if not fb_info:
+                    logger.warning(
+                        f"fallback 模型 '{fb_id}' 不在 available_models 中，跳过"
+                    )
+                    continue
 
-            # 切换到 fallback 模型
-            self.config.llm.model = fb_info.id
-            if fb_info.base_url:
-                self.config.llm.base_url = fb_info.base_url
-            if fb_info.api_key:
-                self.config.llm.api_key = fb_info.api_key
-            if fb_info.protocol:
-                self.config.llm.protocol = fb_info.protocol
-            self.reconfigure()
+                # Request-scoped switch. The finally block below restores the
+                # shared client configuration even when this attempt succeeds.
+                self.config.llm.model = fb_info.id
+                if fb_info.base_url:
+                    self.config.llm.base_url = fb_info.base_url
+                if fb_info.api_key:
+                    self.config.llm.api_key = fb_info.api_key
+                if fb_info.protocol:
+                    self.config.llm.protocol = fb_info.protocol
+                self.reconfigure()
 
-            logger.info(
-                f"[{label}] 内容审核拒绝，尝试 fallback 模型: "
-                f"{orig_model} → {fb_id}"
-            )
-
-            try:
-                url, data, headers = build_request_fn()
-                result = self._http_post_json_with_retry(
-                    url, data, headers, label=f"{label}→{fb_id}"
+                logger.info(
+                    f"[{label}] 内容审核拒绝，尝试 fallback 模型: "
+                    f"{orig_model} → {fb_id}"
                 )
-                logger.info(f"[{label}] fallback 模型 {fb_id} 调用成功")
-                return result
-            except ContentModerationError:
-                logger.warning(f"[{label}] fallback 模型 {fb_id} 也被审核拒绝")
-                continue
-            except Exception as fb_err:
-                logger.warning(f"[{label}] fallback 模型 {fb_id} 调用失败: {fb_err}")
-                continue
 
-        # 所有 fallback 都失败，恢复原始配置并抛出
-        self.config.llm.model = orig_model
-        self.config.llm.base_url = orig_base_url
-        self.config.llm.api_key = orig_api_key
-        self.config.llm.protocol = orig_protocol
-        self.reconfigure()
-        raise error
+                try:
+                    url, data, headers = build_request_fn()
+                    result = self._http_post_json_with_retry(
+                        url, data, headers, label=f"{label}→{fb_id}"
+                    )
+                    logger.info(f"[{label}] fallback 模型 {fb_id} 调用成功")
+                    return result
+                except ContentModerationError:
+                    logger.warning(
+                        f"[{label}] fallback 模型 {fb_id} 也被审核拒绝"
+                    )
+                except Exception as fb_err:
+                    logger.warning(
+                        f"[{label}] fallback 模型 {fb_id} 调用失败: {fb_err}"
+                    )
+
+            raise error
+        finally:
+            self.config.llm.model = orig_model
+            self.config.llm.base_url = orig_base_url
+            self.config.llm.api_key = orig_api_key
+            self.config.llm.protocol = orig_protocol
+            self.reconfigure()

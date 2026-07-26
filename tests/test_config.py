@@ -126,3 +126,27 @@ def test_scheduler_from_yaml_basic():
         import os
 
         os.unlink(config_path)
+
+
+def test_yaml_round_trip_keeps_cross_domain_settings(tmp_path):
+    """Fields written by to_yaml must be read back without silent defaults."""
+    config_path = tmp_path / "config.yaml"
+    original = Config()
+    original.notification.enabled = False
+    original.prompt_skill_dirs = ["/tmp/prompt-skills"]
+    original.memory.heavy_op_min_interval_secs = 123
+    original.memory.long_term.consolidate_min_facts = 17
+    original.context.reserve_tokens = 2048
+    original.knowledge.semantic_enabled = True
+    original.knowledge.semantic_threshold = 0.62
+
+    original.to_yaml(str(config_path))
+    restored = Config.from_yaml(str(config_path))
+
+    assert restored.notification.enabled is False
+    assert restored.prompt_skill_dirs == ["/tmp/prompt-skills"]
+    assert restored.memory.heavy_op_min_interval_secs == 123
+    assert restored.memory.long_term.consolidate_min_facts == 17
+    assert restored.context.reserve_tokens == 2048
+    assert restored.knowledge.semantic_enabled is True
+    assert restored.knowledge.semantic_threshold == 0.62
