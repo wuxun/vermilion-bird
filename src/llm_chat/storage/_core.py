@@ -97,9 +97,11 @@ class StorageCore:
             self._create_context_cache_table_in(conn)
             self._create_decision_log_table_in(conn)
             self._create_digest_tables_in(conn)
+            self._create_runtime_tables_in(conn)
 
     def _create_conversations_table_in(self, conn):
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -109,10 +111,12 @@ class StorageCore:
             );
             CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
                 ON conversations(updated_at);
-        """)
+        """
+        )
 
     def _create_messages_table_in(self, conn):
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT NOT NULL,
@@ -127,11 +131,13 @@ class StorageCore:
                 ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
                 ON messages(created_at);
-        """)
+        """
+        )
 
     def _create_fts_index_in(self, conn):
         try:
-            conn.executescript("""
+            conn.executescript(
+                """
                 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                     content,
                     content='messages',
@@ -157,7 +163,8 @@ class StorageCore:
                     INSERT INTO messages_fts(rowid, content)
                     VALUES (new.id, new.content);
                 END;
-            """)
+            """
+            )
             # Repair databases created before the synchronization triggers
             # existed. FTS5 rebuild is idempotent.
             conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
@@ -169,7 +176,8 @@ class StorageCore:
         conn.execute("PRAGMA foreign_keys=ON")
 
     def _create_tasks_tables_in(self, conn):
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -202,7 +210,8 @@ class StorageCore:
                 ON task_executions(task_id);
             CREATE INDEX IF NOT EXISTS idx_task_executions_started_at
                 ON task_executions(started_at);
-        """)
+        """
+        )
         self._migrate_tasks_columns(conn)
         self._migrate_decision_log_columns(conn)
 
@@ -213,9 +222,7 @@ class StorageCore:
         def add_if_missing(col_name, col_def):
             if col_name not in columns:
                 try:
-                    conn.execute(
-                        f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}"
-                    )
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}")
                 except sqlite3.OperationalError:
                     pass
 
@@ -232,9 +239,7 @@ class StorageCore:
         def add_if_missing(col_name, col_def):
             if col_name not in columns:
                 try:
-                    conn.execute(
-                        f"ALTER TABLE decision_log ADD COLUMN {col_name} {col_def}"
-                    )
+                    conn.execute(f"ALTER TABLE decision_log ADD COLUMN {col_name} {col_def}")
                 except sqlite3.OperationalError:
                     pass
 
@@ -242,17 +247,20 @@ class StorageCore:
         add_if_missing("executed_at", "TIMESTAMP")
 
     def _create_feishu_table_in(self, conn):
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS recent_feishu_chat (
                 id INTEGER PRIMARY KEY,
                 chat_id TEXT NOT NULL,
                 chat_id_type TEXT NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
     def _create_context_cache_table_in(self, conn):
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS context_cache (
                 cache_key TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL,
@@ -263,14 +271,16 @@ class StorageCore:
                 last_accessed REAL NOT NULL,
                 access_count INTEGER NOT NULL DEFAULT 0
             )
-        """)
+        """
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_context_conversation_id "
             "ON context_cache(conversation_id)"
         )
 
     def _create_decision_log_table_in(self, conn):
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS decision_log (
                 id TEXT PRIMARY KEY,
                 card_id TEXT NOT NULL,
@@ -290,7 +300,8 @@ class StorageCore:
                 ON decision_log(card_id);
             CREATE INDEX IF NOT EXISTS idx_decision_log_created_at
                 ON decision_log(created_at);
-        """)
+        """
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_context_last_accessed "
             "ON context_cache(last_accessed)"
@@ -308,7 +319,8 @@ class StorageCore:
 
         if not columns:
             # Fresh install — create with correct schema
-            conn.executescript("""
+            conn.executescript(
+                """
                 CREATE TABLE daily_digest (
                     id TEXT PRIMARY KEY,
                     date TEXT NOT NULL,
@@ -322,13 +334,15 @@ class StorageCore:
                     ON daily_digest(date);
                 CREATE INDEX IF NOT EXISTS idx_daily_digest_source
                     ON daily_digest(source);
-            """)
+            """
+            )
             return
 
         if "source" not in columns:
             # Migrate: add source column, remove old UNIQUE on date
             logger.info("Migrating daily_digest schema: adding source column")
-            conn.executescript("""
+            conn.executescript(
+                """
                 ALTER TABLE daily_digest ADD COLUMN source TEXT NOT NULL DEFAULT '';
                 CREATE TABLE daily_digest_new (
                     id TEXT PRIMARY KEY,
@@ -348,5 +362,71 @@ class StorageCore:
                     ON daily_digest(date);
                 CREATE INDEX IF NOT EXISTS idx_daily_digest_source
                     ON daily_digest(source);
-            """)
+            """
+            )
             logger.info("daily_digest migration complete")
+
+    def _create_runtime_tables_in(self, conn):
+        """创建跨会话保留的运行与动作审批表。"""
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                id TEXT PRIMARY KEY,
+                parent_run_id TEXT,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                conversation_id TEXT,
+                input_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT,
+                error TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_runs_status_created
+                ON runs(status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_runs_type_created
+                ON runs(type, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_runs_parent
+                ON runs(parent_run_id);
+            CREATE INDEX IF NOT EXISTS idx_runs_conversation
+                ON runs(conversation_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS run_events (
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                data_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (run_id, sequence),
+                FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS action_proposals (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                conversation_id TEXT,
+                tool_name TEXT NOT NULL,
+                arguments_json TEXT NOT NULL DEFAULT '{}',
+                capabilities_json TEXT NOT NULL DEFAULT '[]',
+                reason TEXT NOT NULL DEFAULT '',
+                impact TEXT NOT NULL DEFAULT '',
+                risk TEXT NOT NULL DEFAULT 'medium',
+                reversible INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                decided_at TEXT,
+                finished_at TEXT,
+                result_json TEXT,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_status_created
+                ON action_proposals(status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_run
+                ON action_proposals(run_id);
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_conversation
+                ON action_proposals(conversation_id, created_at DESC);
+        """
+        )
