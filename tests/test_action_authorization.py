@@ -5,14 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from ember_core.tools import BaseTool
+from langgraph.runtime import Runtime
 
 from llm_chat.app import App
 from llm_chat.chat_core_graph import (
     ChatCoreGraph,
     ChatGraphState,
-    _clear_ctx,
     _execute_tools_node,
-    _set_ctx,
 )
 from llm_chat.pipeline.stage import PipelineContext
 from llm_chat.runtime import (
@@ -25,6 +24,7 @@ from llm_chat.runtime import (
     RunStatus,
     RunType,
 )
+from llm_chat.runtime.chat_execution import ChatRuntimeContext, SerializableToolCall
 from llm_chat.tools.registry import ToolRegistry
 
 
@@ -72,30 +72,34 @@ def test_graph_proposes_instead_of_executing_high_impact_tool():
     proposals = ActionProposalManager()
     ctx = PipelineContext(conversation_id="conv", user_message="write")
     ctx._extra = {
-        "_pending_tool_calls": [
-            SimpleNamespace(
-                id="call-1",
-                name="write_file",
-                arguments={"file_path": "a.txt", "content": "hello"},
-            )
-        ],
         "capability_policy": CapabilityPolicy(),
         "action_proposals": proposals,
         "run_manager": runs,
         "run_id": run.id,
+        "tool_registry": registry,
     }
-    _set_ctx(ctx)
+    state = ChatGraphState.from_pipeline_context(ctx).model_copy(
+        update={
+            "pending_tool_calls": [
+                SerializableToolCall(
+                    id="call-1",
+                    name="write_file",
+                    arguments={"file_path": "a.txt", "content": "hello"},
+                )
+            ]
+        }
+    )
+    runtime = Runtime(context=ChatRuntimeContext.from_pipeline_context(ctx))
     try:
-        asyncio.run(_execute_tools_node(ChatGraphState()))
+        update = asyncio.run(_execute_tools_node(state, runtime))
     finally:
-        _clear_ctx()
         ToolRegistry.reset()
 
     pending = proposals.list(status=ActionStatus.PENDING)
     assert tool.calls == []
     assert len(pending) == 1
     assert pending[0].tool_name == "write_file"
-    assert "requires user approval" in ctx._extra["_tool_messages"][0]["content"]
+    assert "requires user approval" in update["tool_messages"][0]["content"]
     assert any(event.type == "action.proposed" for event in runs.get(run.id).events)
 
 

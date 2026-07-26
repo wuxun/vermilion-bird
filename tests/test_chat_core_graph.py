@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from ember_core.graph import StateGraph
+from langgraph.runtime import Runtime
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.chat_core_graph import (
     ChatGraphState,
@@ -21,10 +22,9 @@ from llm_chat.chat_core_graph import (
     _post_llm_router,
     _llm_call_node,
     _routing_update,
-    _set_ctx,
-    _clear_ctx,
 )
 from llm_chat.pipeline.stage import PipelineContext
+from llm_chat.runtime.chat_execution import ChatRuntimeContext
 
 
 # ── Router function tests ───────────────────────────────────────
@@ -113,11 +113,9 @@ class TestRouting:
             "client": client,
             "config": SimpleNamespace(enable_tools=False),
         }
-        _set_ctx(ctx)
-        try:
-            update = asyncio.run(_llm_call_node(ChatGraphState()))
-        finally:
-            _clear_ctx()
+        state = ChatGraphState.from_pipeline_context(ctx)
+        runtime = Runtime(context=ChatRuntimeContext.from_pipeline_context(ctx))
+        update = asyncio.run(_llm_call_node(state, runtime))
 
         client.chat.assert_called_once()
         client.chat_single_with_tools.assert_not_called()

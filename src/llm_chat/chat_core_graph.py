@@ -19,10 +19,9 @@ import logging
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-
 from ember_agent.consensus import init_card_context, get_pending_card, clear_card_context
 from langgraph.graph import END, StateGraph
+from langgraph.runtime import Runtime
 
 from llm_chat.config import Config
 from llm_chat.client import LLMClient
@@ -52,6 +51,11 @@ from llm_chat.runtime import (
     RunManager,
     RunType,
 )
+from llm_chat.runtime.chat_execution import (
+    ChatGraphState,
+    ChatRuntimeContext,
+    SerializableToolCall,
+)
 from llm_chat.utils.observability import observe
 
 logger = logging.getLogger(__name__)
@@ -62,115 +66,95 @@ ToolCallEndCallback = Callable[[str, str, str], None]
 CardCallback = Callable[[Any], None]
 
 
-# ── Graph state ───────────────────────────────────────────────────
-
-
-class ChatGraphState(BaseModel):
-    """State flowing through the ChatCore StateGraph.
-
-    routing:  Minimal routing state for conditional edges.
-    """
-
-    routing: ChatRoutingState = Field(default_factory=ChatRoutingState)
-
-    model_config = {"arbitrary_types_allowed": True}
-
-
-# PipelineContext is stored in thread-local storage because it contains
-# non-serializable objects (threading.Event, callbacks) and cannot be part
-# of the Pydantic state that gets reconstructed during graph state merges.
-# Thread-local ensures isolation when multiple requests run concurrently
-# (e.g., scheduler + user message in parallel).
-import threading
-
-_chat_ctx_local = threading.local()
-
-
-def _ctx() -> PipelineContext:
-    """Get the current PipelineContext. Raises if not set."""
-    ctx = getattr(_chat_ctx_local, "ctx", None)
-    assert ctx is not None, "PipelineContext not initialized"
-    return ctx
-
-
-def _set_ctx(ctx: PipelineContext) -> None:
-    _chat_ctx_local.ctx = ctx
-
-
-def _clear_ctx() -> None:
-    """Remove request-local context after a graph invocation."""
-    if hasattr(_chat_ctx_local, "ctx"):
-        del _chat_ctx_local.ctx
-
-
 def _routing_update(state: ChatGraphState, **changes) -> ChatRoutingState:
     """Patch routing fields without resetting counters and execution budgets."""
     return state.routing.model_copy(update=changes)
 
 
+def _pipeline_context(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> PipelineContext:
+    return state.to_pipeline_context(runtime.context)
+
+
+async def _run_stage(stage, ctx: PipelineContext) -> Dict[str, Any]:
+    await stage.setup(ctx)
+    await stage.process(ctx)
+    await stage.teardown(ctx)
+    return ChatGraphState.pipeline_update(ctx)
+
+
 # ── Node functions ────────────────────────────────────────────────
 
 
-async def _intent_node(state: ChatGraphState) -> dict:
+async def _intent_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Intent classification node."""
-    from llm_chat.intent import IntentClassifier
-
-    classifier = _ctx()._extra.get("intent_classifier")
-    decision = classifier.classify(_ctx().user_message)
-    _ctx().routing_decision = decision
+    ctx = _pipeline_context(state, runtime)
+    decision = runtime.context.intent_classifier.classify(ctx.user_message)
+    ctx.routing_decision = decision
     if decision.override_message:
-        _ctx().effective_message = decision.override_message
+        ctx.effective_message = decision.override_message
 
-    return {
-        "routing": _routing_update(
-            state,
-            intent=decision.intent.value,
-            skip_llm=decision.skip_llm,
-        ),
-    }
+    update = ChatGraphState.pipeline_update(ctx)
+    update["routing"] = _routing_update(
+        state,
+        intent=decision.intent.value,
+        skip_llm=decision.skip_llm,
+    )
+    return update
 
 
-async def _shortcut_node(state: ChatGraphState) -> dict:
+async def _shortcut_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Shortcut handling node."""
-    cm = _ctx()._extra.get("conversation_manager")
-    style_holder = _ctx()._extra.get("style_holder")
-    stage = ShortcutStage(cm, style_holder)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-
-    return {
-        "routing": _routing_update(
-            state,
-            should_short_circuit=_ctx().should_short_circuit,
-            skip_llm=_ctx().routing_decision.skip_llm if _ctx().routing_decision else False,
-        ),
-    }
+    ctx = _pipeline_context(state, runtime)
+    stage = ShortcutStage(
+        runtime.context.conversation_manager,
+        runtime.context.style_holder,
+    )
+    update = await _run_stage(stage, ctx)
+    update["routing"] = _routing_update(
+        state,
+        should_short_circuit=ctx.should_short_circuit,
+        skip_llm=ctx.routing_decision.skip_llm if ctx.routing_decision else False,
+    )
+    return update
 
 
-async def _persist_user_node(state: ChatGraphState) -> dict:
+async def _persist_user_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Persist user message to storage."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = PersistUserStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        PersistUserStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _system_context_node(state: ChatGraphState) -> dict:
+async def _system_context_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Build system context (memory + prompts + style)."""
-    cm = _ctx()._extra.get("conversation_manager")
-    prompt_holder = _ctx()._extra.get("prompt_skills_holder")
-    style_holder = _ctx()._extra.get("style_holder")
-    context_hub = _ctx()._extra.get("context_hub")
-    stage = SystemContextStage(cm, prompt_holder, style_holder, context_hub)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    run_manager = _ctx()._extra.get("run_manager")
-    run_id = _ctx()._extra.get("run_id")
-    context_items = _ctx().metadata.get("context_items", [])
+    ctx = _pipeline_context(state, runtime)
+    stage = SystemContextStage(
+        runtime.context.conversation_manager,
+        runtime.context.prompt_skills_holder,
+        runtime.context.style_holder,
+        runtime.context.context_hub,
+    )
+    update = await _run_stage(stage, ctx)
+    run_manager = runtime.context.run_manager
+    run_id = runtime.context.run_id
+    context_items = ctx.metadata.get("context_items", [])
     if run_manager and run_id:
         run_manager.emit(
             run_id,
@@ -188,82 +172,106 @@ async def _system_context_node(state: ChatGraphState) -> dict:
                 ],
             },
         )
-    return {}
+    return update
 
 
-async def _history_node(state: ChatGraphState) -> dict:
+async def _history_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Load and process conversation history."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = HistoryStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        HistoryStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _model_route_node(state: ChatGraphState) -> dict:
+async def _model_route_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Route to appropriate model based on intent."""
-    config = _ctx()._extra.get("config")
-    stage = ModelRouteStage(config)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        ModelRouteStage(runtime.context.config),
+        ctx,
+    )
 
 
-async def _compress_node(state: ChatGraphState) -> dict:
+async def _compress_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Compress conversation context if needed."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = CompressStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        CompressStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _llm_call_node(state: ChatGraphState) -> dict:
+async def _llm_call_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Call LLM — single iteration. Graph-level tool loop.
 
     Streaming: uses chat_stream_single_with_tools with on_chunk callback.
     Sync: uses chat_single_with_tools.
     """
-    client = _ctx()._extra.get("client")
-    config = _ctx()._extra.get("config")
+    ctx = _pipeline_context(state, runtime)
+    client = runtime.context.client
+    config = runtime.context.config
     tools_enabled = getattr(config, "enable_tools", True)
     tools = client.get_builtin_tools() if tools_enabled and client.has_builtin_tools() else []
 
     # Build/accumulate messages
-    msgs = _ctx()._extra.get("_tool_messages")
-    if msgs is None:
-        msgs = []
-        if _ctx().system_context:
-            msgs.append({"role": "system", "content": _ctx().system_context})
-        msgs.extend(_ctx().processed_history or [])
-        msgs.append({"role": "user", "content": _ctx().processed_message})
-        _ctx()._extra["_tool_messages"] = msgs
+    msgs = list(state.tool_messages)
+    if not msgs:
+        if ctx.system_context:
+            msgs.append({"role": "system", "content": ctx.system_context})
+        msgs.extend(ctx.processed_history or [])
+        msgs.append({"role": "user", "content": ctx.processed_message})
 
     if not tools:
         text = client.chat(
-            _ctx().processed_message,
-            history=_ctx().processed_history,
-            system_context=_ctx().system_context,
-            **_ctx().params,
+            ctx.processed_message,
+            history=ctx.processed_history,
+            system_context=ctx.system_context,
+            **ctx.params,
         )
-        if _ctx().on_chunk:
-            _ctx().on_chunk(text)
-        _ctx().response = text
-        return {"routing": _routing_update(state, has_response=True, has_tool_calls=False)}
+        if ctx.on_chunk:
+            ctx.on_chunk(text)
+        ctx.response = text
+        update = ChatGraphState.pipeline_update(ctx)
+        update.update(
+            {
+                "tool_messages": msgs,
+                "routing": _routing_update(
+                    state,
+                    has_response=True,
+                    has_tool_calls=False,
+                ),
+            }
+        )
+        return update
 
     # Streaming: use streaming single-call for token-by-token output
-    if _ctx().on_chunk:
+    if ctx.on_chunk:
         result = client.chat_stream_single_with_tools(
             tools,
             msgs,
-            chunk_callback=_ctx().on_chunk,
-            **_ctx().params,
+            chunk_callback=ctx.on_chunk,
+            **ctx.params,
         )
     else:
-        result = client.chat_single_with_tools("", tools, messages_override=msgs, **_ctx().params)
+        result = client.chat_single_with_tools(
+            "",
+            tools,
+            messages_override=msgs,
+            **ctx.params,
+        )
 
     tool_calls = result.get("tool_calls")
     if tool_calls and state.routing.tool_call_count < state.routing.max_tool_iterations:
@@ -272,38 +280,59 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
             args_json = json.dumps(
                 tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False
             )
-            if _ctx().on_tool_start:
-                _ctx().on_tool_start(tc.name, args_json)
+            if ctx.on_tool_start:
+                ctx.on_tool_start(tc.name, args_json)
 
-        _ctx()._extra["_pending_tool_calls"] = tool_calls
         if "assistant_message" in result:
-            _ctx()._extra["_tool_messages"] = msgs + [result["assistant_message"]]
-        return {
-            "routing": _routing_update(
-                state,
-                has_tool_calls=True,
-            ),
-        }
+            msgs = msgs + [result["assistant_message"]]
+        update = ChatGraphState.pipeline_update(ctx)
+        update.update(
+            {
+                "tool_messages": msgs,
+                "pending_tool_calls": [
+                    SerializableToolCall.from_tool_call(item) for item in tool_calls
+                ],
+                "routing": _routing_update(
+                    state,
+                    has_tool_calls=True,
+                ),
+            }
+        )
+        return update
     else:
         text = result.get("text", "")
         if tool_calls and not text:
             text = "工具调用已达到最大迭代次数 " f"({state.routing.max_tool_iterations})，已停止继续执行。"
-        if not _ctx().on_chunk and text:
-            _ctx().on_chunk(text) if _ctx().on_chunk else None
-        _ctx().response = text
-        return {"routing": _routing_update(state, has_response=True, has_tool_calls=False)}
+        ctx.response = text
+        update = ChatGraphState.pipeline_update(ctx)
+        update.update(
+            {
+                "tool_messages": msgs,
+                "pending_tool_calls": [],
+                "routing": _routing_update(
+                    state,
+                    has_response=True,
+                    has_tool_calls=False,
+                ),
+            }
+        )
+        return update
 
 
-async def _execute_tools_node(state: ChatGraphState) -> dict:
+async def _execute_tools_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Execute pending tool calls, fire GUI callbacks, append results."""
-    from llm_chat.tools import get_tool_registry, ToolExecutor
+    from llm_chat.tools import ToolExecutor, get_tool_registry
 
-    registry = get_tool_registry()
-    tool_calls = _ctx()._extra.get("_pending_tool_calls", [])
-    policy = _ctx()._extra.get("capability_policy")
-    proposals = _ctx()._extra.get("action_proposals")
-    run_manager = _ctx()._extra.get("run_manager")
-    run_id = _ctx()._extra.get("run_id")
+    ctx = _pipeline_context(state, runtime)
+    registry = runtime.context.tool_registry or get_tool_registry()
+    tool_calls = [item.to_tool_call() for item in state.pending_tool_calls]
+    policy = runtime.context.capability_policy
+    proposals = runtime.context.action_proposals
+    run_manager = runtime.context.run_manager
+    run_id = runtime.context.run_id
 
     allowed_call_dicts = []
     results_by_id = {}
@@ -319,12 +348,12 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
         if decision == PolicyDecision.REQUIRE_APPROVAL and proposals:
             proposal = proposals.propose(
                 run_id=run_id,
-                conversation_id=_ctx().conversation_id,
+                conversation_id=ctx.conversation_id,
                 tool_name=tc.name,
                 arguments=args,
                 capabilities=capabilities,
             )
-            prepare_action = _ctx()._extra.get("action_prepare")
+            prepare_action = runtime.context.action_prepare
             if prepare_action:
                 proposal = prepare_action(proposal)
             if run_manager:
@@ -411,17 +440,18 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
             )
         )
 
+    messages = list(state.tool_messages)
     for tc, result in zip(tool_calls, results):
         tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
         content = result.get("content", "")
         # Fire tool_call_end callback for GUI
-        if _ctx().on_tool_end:
+        if ctx.on_tool_end:
             args_str = json.dumps(
                 tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False
             )
-            _ctx().on_tool_end(tc.name, args_str, content[:200])
+            ctx.on_tool_end(tc.name, args_str, content[:200])
         # Append tool result to messages
-        _ctx()._extra.setdefault("_tool_messages", []).append(
+        messages.append(
             {
                 "role": "tool",
                 "tool_call_id": tc_id,
@@ -429,54 +459,67 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
             }
         )
 
-    _ctx()._extra.pop("_pending_tool_calls", None)
-    return {
-        "routing": _routing_update(
-            state,
-            has_tool_calls=False,
-            tool_call_count=state.routing.tool_call_count + 1,
-        )
-    }
+    update = ChatGraphState.pipeline_update(ctx)
+    update.update(
+        {
+            "tool_messages": messages if tool_calls else list(state.tool_messages),
+            "pending_tool_calls": [],
+            "routing": _routing_update(
+                state,
+                has_tool_calls=False,
+                tool_call_count=state.routing.tool_call_count + 1,
+            ),
+        }
+    )
+    return update
 
 
-async def _persist_assistant_node(state: ChatGraphState) -> dict:
+async def _persist_assistant_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Persist assistant response to storage."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = PersistAssistantStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        PersistAssistantStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _memory_extract_node(state: ChatGraphState) -> dict:
+async def _memory_extract_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Extract memories from conversation."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = MemoryExtractStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        MemoryExtractStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _knowledge_extract_node(state: ChatGraphState) -> dict:
+async def _knowledge_extract_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Extract knowledge from conversation."""
-    cm = _ctx()._extra.get("conversation_manager")
-    stage = KnowledgeExtractStage(cm)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        KnowledgeExtractStage(runtime.context.conversation_manager),
+        ctx,
+    )
 
 
-async def _token_record_node(state: ChatGraphState) -> dict:
+async def _token_record_node(
+    state: ChatGraphState,
+    runtime: Runtime[ChatRuntimeContext],
+) -> dict:
     """Record token usage."""
-    config = _ctx()._extra.get("config")
-    stage = TokenRecordStage(config)
-    await stage.setup(_ctx())
-    await stage.process(_ctx())
-    await stage.teardown(_ctx())
-    return {}
+    ctx = _pipeline_context(state, runtime)
+    return await _run_stage(
+        TokenRecordStage(runtime.context.config),
+        ctx,
+    )
 
 
 # ── Router functions ─────────────────────────────────────────────
@@ -517,7 +560,10 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
                     └─ text response → persist_assistant
                         → memory_extract → knowledge_extract → token_record → finish
     """
-    g = StateGraph(ChatGraphState)
+    g = StateGraph(
+        ChatGraphState,
+        context_schema=ChatRuntimeContext,
+    )
 
     # Register all nodes
     g.add_node("intent", _intent_node)
@@ -651,57 +697,44 @@ class ChatCoreGraph:
             self.run_manager.complete(run.id, action_response)
             return action_response
 
-        ctx = PipelineContext(
-            conversation_id=conversation_id,
-            user_message=message,
-            on_card=on_card,
-            params=model_params,
-        )
-        # Attach extras for node functions
-        ctx._extra = {
-            "intent_classifier": self.intent_classifier,
-            "conversation_manager": self.conversation_manager,
-            "prompt_skills_holder": self._prompt_skills_holder,
-            "style_holder": self._style_holder,
-            "client": self.client,
-            "config": self.config,
-            "run_manager": self.run_manager,
-            "capability_policy": self.capability_policy,
-            "action_proposals": self.action_proposals,
-            "action_prepare": self.action_prepare,
-            "context_hub": self.context_hub,
-            "run_id": run.id,
-        }
-
-        _set_ctx(ctx)
-
         # Initialize decision card context for submit_decision_card tool
         init_card_context()
 
-        state = ChatGraphState()
+        state = ChatGraphState.from_request(
+            conversation_id=conversation_id,
+            message=message,
+            params=model_params,
+        )
+        runtime_context = self._build_runtime_context(
+            run.id,
+            on_card=on_card,
+        )
 
         try:
-            asyncio.run(self._compiled.ainvoke(state))
+            output = asyncio.run(
+                self._compiled.ainvoke(
+                    state,
+                    context=runtime_context,
+                )
+            )
+            final_state = ChatGraphState.model_validate(output)
         except Exception as e:
             logger.error(f"send_message graph failed: {e}", exc_info=True)
             self.run_manager.fail(run.id, str(e))
             return f"处理消息时发生错误: {str(e)}"
         finally:
-            # Extract before clearing request-local state. ContextVar cleanup
-            # must also happen on graph failures.
-            card = get_pending_card() or ctx.pending_card
+            card = get_pending_card()
             clear_card_context()
-            _clear_ctx()
 
-        if ctx.cancel_event and ctx.cancel_event.is_set():
+        if runtime_context.cancel_event and runtime_context.cancel_event.is_set():
             self.run_manager.cancel(run.id)
         else:
-            self.run_manager.complete(run.id, ctx.response)
+            self.run_manager.complete(run.id, final_state.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
 
-        return ctx.response
+        return final_state.response
 
     @observe("chat_core.send_message_stream")
     def send_message_stream(
@@ -737,58 +770,83 @@ class ChatCoreGraph:
             return action_response
 
         self._cancel_event = threading.Event()
-        ctx = PipelineContext(
+        init_card_context()
+
+        state = ChatGraphState.from_request(
             conversation_id=conversation_id,
-            user_message=message,
+            message=message,
+            params=model_params,
+        )
+        runtime_context = self._build_runtime_context(
+            run.id,
             on_chunk=on_chunk,
             on_tool_start=on_tool_start,
             on_tool_end=on_tool_end,
             on_context_update=on_context_update,
             on_card=on_card,
             cancel_event=self._cancel_event,
-            params=model_params,
         )
-        ctx._extra = {
-            "intent_classifier": self.intent_classifier,
-            "conversation_manager": self.conversation_manager,
-            "prompt_skills_holder": self._prompt_skills_holder,
-            "style_holder": self._style_holder,
-            "client": self.client,
-            "config": self.config,
-            "run_manager": self.run_manager,
-            "capability_policy": self.capability_policy,
-            "action_proposals": self.action_proposals,
-            "action_prepare": self.action_prepare,
-            "context_hub": self.context_hub,
-            "run_id": run.id,
-        }
-
-        _set_ctx(ctx)
-
-        init_card_context()
-
-        state = ChatGraphState()
 
         try:
-            asyncio.run(self._compiled.ainvoke(state))
+            output = asyncio.run(
+                self._compiled.ainvoke(
+                    state,
+                    context=runtime_context,
+                )
+            )
+            final_state = ChatGraphState.model_validate(output)
         except Exception as e:
             logger.error(f"send_message_stream graph failed: {e}", exc_info=True)
             self.run_manager.fail(run.id, str(e))
             return f"处理消息时发生错误: {str(e)}"
         finally:
-            card = get_pending_card() or ctx.pending_card
+            card = get_pending_card()
             clear_card_context()
-            _clear_ctx()
 
-        if ctx.cancel_event and ctx.cancel_event.is_set():
+        if runtime_context.cancel_event and runtime_context.cancel_event.is_set():
             self.run_manager.cancel(run.id)
         else:
-            self.run_manager.complete(run.id, ctx.response)
+            self.run_manager.complete(run.id, final_state.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
 
-        return ctx.response
+        return final_state.response
+
+    def _build_runtime_context(
+        self,
+        run_id: str,
+        *,
+        on_chunk: Optional[StreamCallback] = None,
+        on_tool_start: Optional[ToolCallStartCallback] = None,
+        on_tool_end: Optional[ToolCallEndCallback] = None,
+        on_context_update: Optional[Callable[[int, int], None]] = None,
+        on_card: Optional[CardCallback] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> ChatRuntimeContext:
+        from llm_chat.tools import get_tool_registry
+
+        return ChatRuntimeContext(
+            client=self.client,
+            conversation_manager=self.conversation_manager,
+            config=self.config,
+            intent_classifier=self.intent_classifier,
+            prompt_skills_holder=self._prompt_skills_holder,
+            style_holder=self._style_holder,
+            run_manager=self.run_manager,
+            capability_policy=self.capability_policy,
+            action_proposals=self.action_proposals,
+            context_hub=self.context_hub,
+            tool_registry=get_tool_registry(),
+            run_id=run_id,
+            action_prepare=self.action_prepare,
+            on_chunk=on_chunk,
+            on_tool_start=on_tool_start,
+            on_tool_end=on_tool_end,
+            on_context_update=on_context_update,
+            on_card=on_card,
+            cancel_event=cancel_event,
+        )
 
     def cancel_generation(self) -> None:
         """Cancel ongoing stream generation."""
