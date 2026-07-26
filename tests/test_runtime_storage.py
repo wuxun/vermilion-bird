@@ -7,6 +7,7 @@ from llm_chat.runtime import (
     ActionProposalManager,
     ActionStatus,
     Capability,
+    RecoveryPolicy,
     Run,
     RunEvent,
     RunManager,
@@ -174,3 +175,62 @@ def test_inflight_action_is_failed_during_restart_recovery(storage):
     assert restored is not None
     assert restored.status == ActionStatus.FAILED
     assert "应用重启" in restored.error
+
+
+def test_idempotency_key_returns_the_original_run_across_managers(storage):
+    first = RunManager(repository=storage)
+    original = first.start(
+        RunType.SCHEDULED,
+        idempotency_key="daily-report:2026-07-27",
+    )
+    first.complete(original.id, "done")
+
+    second = RunManager(repository=storage)
+    duplicate = second.start(
+        RunType.SCHEDULED,
+        idempotency_key="daily-report:2026-07-27",
+    )
+
+    assert duplicate.id == original.id
+    assert duplicate.status == RunStatus.COMPLETED
+    assert len(storage.list_runs()) == 1
+
+
+def test_checkpoint_and_resume_policy_survive_restart(storage):
+    first = RunManager(repository=storage)
+    run = first.start(
+        RunType.WORKFLOW,
+        recovery_policy=RecoveryPolicy.RESUME,
+        max_attempts=2,
+    )
+    first.checkpoint(run.id, cursor="approval", state={"approved": False})
+
+    restored_manager = RunManager(repository=storage)
+    interrupted = restored_manager.get(run.id)
+
+    assert interrupted.status == RunStatus.PAUSED
+    assert interrupted.can_resume is True
+    assert interrupted.checkpoint.cursor == "approval"
+    assert interrupted.metadata["recovery_action"] == "resume"
+
+    resumed = restored_manager.resume(run.id)
+    assert resumed.status == RunStatus.RUNNING
+    assert resumed.checkpoint.state == {"approved": False}
+
+
+def test_unexpired_lease_prevents_competing_manager_claim(storage):
+    first = RunManager(repository=storage, owner_id="runner-a")
+    run = first.start(
+        RunType.WORKFLOW,
+        recovery_policy=RecoveryPolicy.MANUAL,
+    )
+    assert first.claim(run.id, lease_seconds=120) is True
+
+    second = RunManager(
+        repository=storage,
+        owner_id="runner-b",
+        recover_interrupted=False,
+    )
+
+    assert second.claim(run.id, lease_seconds=120) is False
+    assert storage.get_run(run.id).lease_owner == "runner-a"

@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from llm_chat.runtime.actions import ActionProposal, ActionStatus, Capability
-from llm_chat.runtime.models import Run, RunEvent, RunStatus, RunType
+from llm_chat.runtime.models import (
+    RecoveryPolicy,
+    Run,
+    RunCheckpoint,
+    RunEvent,
+    RunStatus,
+    RunType,
+)
 
 
 def _dump_json(value: Any) -> str:
@@ -44,8 +51,12 @@ class StorageRuntimeMixin:
                 INSERT INTO runs (
                     id, parent_run_id, type, status, conversation_id,
                     input_json, result_json, error, metadata_json,
+                    attempt, max_attempts, idempotency_key, recovery_policy,
+                    checkpoint_json, heartbeat_at, lease_owner, lease_expires_at,
                     created_at, started_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 ON CONFLICT(id) DO UPDATE SET
                     parent_run_id = excluded.parent_run_id,
                     type = excluded.type,
@@ -55,24 +66,64 @@ class StorageRuntimeMixin:
                     result_json = excluded.result_json,
                     error = excluded.error,
                     metadata_json = excluded.metadata_json,
+                    attempt = excluded.attempt,
+                    max_attempts = excluded.max_attempts,
+                    idempotency_key = excluded.idempotency_key,
+                    recovery_policy = excluded.recovery_policy,
+                    checkpoint_json = excluded.checkpoint_json,
+                    heartbeat_at = excluded.heartbeat_at,
+                    lease_owner = excluded.lease_owner,
+                    lease_expires_at = excluded.lease_expires_at,
                     started_at = excluded.started_at,
                     finished_at = excluded.finished_at
                 """,
-                (
-                    run.id,
-                    run.parent_run_id,
-                    run.type.value,
-                    run.status.value,
-                    run.conversation_id,
-                    _dump_json(run.input),
-                    _dump_json(run.result),
-                    run.error,
-                    _dump_json(run.metadata),
-                    run.created_at.isoformat(),
-                    run.started_at.isoformat() if run.started_at else None,
-                    run.finished_at.isoformat() if run.finished_at else None,
-                ),
+                self._run_values(run),
             )
+
+    def create_run(self, run: Run) -> bool:
+        """原子创建 Run；幂等键已存在时返回 False。"""
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO runs (
+                    id, parent_run_id, type, status, conversation_id,
+                    input_json, result_json, error, metadata_json,
+                    attempt, max_attempts, idempotency_key, recovery_policy,
+                    checkpoint_json, heartbeat_at, lease_owner, lease_expires_at,
+                    created_at, started_at, finished_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                self._run_values(run),
+            )
+            return cursor.rowcount == 1
+
+    @staticmethod
+    def _run_values(run: Run) -> tuple:
+        return (
+            run.id,
+            run.parent_run_id,
+            run.type.value,
+            run.status.value,
+            run.conversation_id,
+            _dump_json(run.input),
+            _dump_json(run.result),
+            run.error,
+            _dump_json(run.metadata),
+            run.attempt,
+            run.max_attempts,
+            run.idempotency_key,
+            run.recovery_policy.value,
+            _dump_json(run.checkpoint.model_dump(mode="json")) if run.checkpoint else None,
+            run.heartbeat_at.isoformat() if run.heartbeat_at else None,
+            run.lease_owner,
+            run.lease_expires_at.isoformat() if run.lease_expires_at else None,
+            run.created_at.isoformat(),
+            run.started_at.isoformat() if run.started_at else None,
+            run.finished_at.isoformat() if run.finished_at else None,
+        )
 
     def append_run_event(self, run_id: str, event: RunEvent) -> None:
         """追加运行事件；相同序号的重复写入保持幂等。"""
@@ -103,6 +154,71 @@ class StorageRuntimeMixin:
                 return None
             events = self._fetch_run_events(conn, run_id)
         return self._row_to_run(row, events)
+
+    def get_run_by_idempotency_key(self, idempotency_key: str) -> Optional[Run]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM runs WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            events = self._fetch_run_events(conn, row["id"])
+        return self._row_to_run(row, events)
+
+    def try_claim_run(
+        self,
+        run_id: str,
+        *,
+        owner: str,
+        heartbeat_at: datetime,
+        lease_expires_at: datetime,
+    ) -> bool:
+        """跨进程原子获取执行租约。"""
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE runs
+                SET lease_owner = ?,
+                    heartbeat_at = ?,
+                    lease_expires_at = ?,
+                    status = ?
+                WHERE id = ?
+                  AND status IN (?, ?, ?)
+                  AND (
+                      lease_owner IS NULL
+                      OR lease_owner = ?
+                      OR lease_expires_at IS NULL
+                      OR lease_expires_at <= ?
+                  )
+                """,
+                (
+                    owner,
+                    heartbeat_at.isoformat(),
+                    lease_expires_at.isoformat(),
+                    RunStatus.RUNNING.value,
+                    run_id,
+                    RunStatus.PENDING.value,
+                    RunStatus.RUNNING.value,
+                    RunStatus.PAUSED.value,
+                    owner,
+                    heartbeat_at.isoformat(),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def release_run_lease(self, run_id: str, *, owner: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE runs
+                SET lease_owner = NULL, lease_expires_at = NULL
+                WHERE id = ? AND lease_owner = ?
+                """,
+                (run_id, owner),
+            )
+            return cursor.rowcount == 1
 
     def list_runs(
         self,
@@ -210,6 +326,18 @@ class StorageRuntimeMixin:
             result=_load_json(row["result_json"], None),
             error=row["error"],
             metadata=_load_json(row["metadata_json"], {}),
+            attempt=row["attempt"],
+            max_attempts=row["max_attempts"],
+            idempotency_key=row["idempotency_key"],
+            recovery_policy=RecoveryPolicy(row["recovery_policy"]),
+            checkpoint=(
+                RunCheckpoint.model_validate(_load_json(row["checkpoint_json"], {}))
+                if row["checkpoint_json"]
+                else None
+            ),
+            heartbeat_at=_parse_datetime(row["heartbeat_at"]),
+            lease_owner=row["lease_owner"],
+            lease_expires_at=_parse_datetime(row["lease_expires_at"]),
             created_at=_parse_datetime(row["created_at"]) or now,
             started_at=_parse_datetime(row["started_at"]),
             finished_at=_parse_datetime(row["finished_at"]),

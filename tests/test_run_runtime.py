@@ -1,6 +1,8 @@
 """Tests for the first unified Run runtime slice."""
 
-from llm_chat.runtime import RunManager, RunStatus, RunType
+import pytest
+
+from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
 
 
 def test_run_lifecycle_emits_ordered_events():
@@ -59,3 +61,51 @@ def test_parent_child_runs_are_queryable_in_creation_order():
         first.id,
         second.id,
     ]
+
+
+def test_retry_increments_attempt_and_preserves_logical_run():
+    manager = RunManager()
+    run = manager.start(
+        RunType.WORKFLOW,
+        recovery_policy=RecoveryPolicy.RETRY,
+        max_attempts=3,
+    )
+    manager.fail(run.id, "temporary")
+
+    retried = manager.retry(run.id)
+
+    assert retried.id == run.id
+    assert retried.status == RunStatus.RUNNING
+    assert retried.attempt == 2
+    assert retried.error is None
+    assert retried.events[-1].type == "run.retried"
+
+
+def test_resume_requires_checkpoint_and_checks_version():
+    manager = RunManager()
+    run = manager.start(
+        RunType.WORKFLOW,
+        recovery_policy=RecoveryPolicy.RESUME,
+    )
+
+    with pytest.raises(ValueError, match="no checkpoint"):
+        manager.pause(run.id)
+        manager.resume(run.id)
+
+    checkpointed = manager.checkpoint(
+        run.id,
+        cursor="review",
+        state={"draft": "v1"},
+    )
+    assert checkpointed.checkpoint.version == 1
+    with pytest.raises(ValueError, match="version conflict"):
+        manager.checkpoint(
+            run.id,
+            cursor="review",
+            state={"draft": "stale"},
+            expected_version=0,
+        )
+
+    resumed = manager.resume(run.id)
+    assert resumed.status == RunStatus.RUNNING
+    assert resumed.checkpoint.state == {"draft": "v1"}

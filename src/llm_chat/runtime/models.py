@@ -27,6 +27,7 @@ class RunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -40,11 +41,29 @@ class RunStatus(str, Enum):
         }
 
 
+class RecoveryPolicy(str, Enum):
+    """进程中断后如何处置尚未结束的 Run。"""
+
+    FAIL = "fail"
+    RETRY = "retry"
+    RESUME = "resume"
+    MANUAL = "manual"
+
+
 class RunEvent(BaseModel):
     sequence: int
     type: str
     timestamp: datetime = Field(default_factory=utc_now)
     data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RunCheckpoint(BaseModel):
+    """可恢复执行的最新状态快照。"""
+
+    cursor: str
+    state: Dict[str, Any] = Field(default_factory=dict)
+    version: int = 1
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class Run(BaseModel):
@@ -60,6 +79,22 @@ class Run(BaseModel):
     error: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     events: List[RunEvent] = Field(default_factory=list)
+    attempt: int = 1
+    max_attempts: int = 1
+    idempotency_key: Optional[str] = None
+    recovery_policy: RecoveryPolicy = RecoveryPolicy.FAIL
+    checkpoint: Optional[RunCheckpoint] = None
+    heartbeat_at: Optional[datetime] = None
+    lease_owner: Optional[str] = None
+    lease_expires_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utc_now)
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+
+    @property
+    def can_retry(self) -> bool:
+        return self.status == RunStatus.FAILED and self.attempt < self.max_attempts
+
+    @property
+    def can_resume(self) -> bool:
+        return self.status == RunStatus.PAUSED and self.checkpoint is not None

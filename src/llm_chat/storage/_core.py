@@ -381,6 +381,14 @@ class StorageCore:
                 result_json TEXT,
                 error TEXT,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
+                attempt INTEGER NOT NULL DEFAULT 1,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                idempotency_key TEXT,
+                recovery_policy TEXT NOT NULL DEFAULT 'fail',
+                checkpoint_json TEXT,
+                heartbeat_at TEXT,
+                lease_owner TEXT,
+                lease_expires_at TEXT,
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT
@@ -429,4 +437,36 @@ class StorageCore:
             CREATE INDEX IF NOT EXISTS idx_action_proposals_conversation
                 ON action_proposals(conversation_id, created_at DESC);
         """
+        )
+        self._migrate_runtime_columns(conn)
+
+    def _migrate_runtime_columns(self, conn):
+        """为已有 runs 表增量补齐恢复控制字段。"""
+
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        additions = {
+            "attempt": "INTEGER NOT NULL DEFAULT 1",
+            "max_attempts": "INTEGER NOT NULL DEFAULT 1",
+            "idempotency_key": "TEXT",
+            "recovery_policy": "TEXT NOT NULL DEFAULT 'fail'",
+            "checkpoint_json": "TEXT",
+            "heartbeat_at": "TEXT",
+            "lease_owner": "TEXT",
+            "lease_expires_at": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency_key
+            ON runs(idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_runs_lease
+            ON runs(status, lease_expires_at)
+            """
         )
