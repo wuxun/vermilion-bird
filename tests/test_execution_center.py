@@ -113,6 +113,8 @@ def test_execution_center_enables_recovery_controls_for_graph_run(qt_app):
     assert not dialog._retry_run_button.isEnabled()
     assert not dialog._replay_run_button.isEnabled()
     assert "恢复点" in dialog._run_detail.toPlainText()
+    assert "恢复处理器" in dialog._run_detail.toPlainText()
+    assert "租约到期" in dialog._run_detail.toPlainText()
 
     dialog.close()
     qt_app.processEvents()

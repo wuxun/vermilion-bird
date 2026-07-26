@@ -427,7 +427,10 @@ def _execute_tools_node(
                 )
         executor = ToolExecutor(registry, max_workers=5)
         try:
-            executed = executor.execute_tools_parallel(allowed_call_dicts)
+            executed = executor.execute_tools_parallel(
+                allowed_call_dicts,
+                invocation_context=runtime.context,
+            )
         finally:
             executor.shutdown()
         for result in executed:
@@ -987,6 +990,7 @@ class ChatCoreGraph:
                 run_id,
                 cursor="__start__",
                 state={
+                    "schema_version": ChatGraphState.CURRENT_SCHEMA_VERSION,
                     "graph_runtime": "langgraph",
                     "graph_name": self.GRAPH_NAME,
                     "thread_id": run_id,
@@ -1008,6 +1012,7 @@ class ChatCoreGraph:
             run_id,
             cursor=",".join(next_nodes) if next_nodes else "__end__",
             state={
+                "schema_version": ChatGraphState.CURRENT_SCHEMA_VERSION,
                 "graph_runtime": "langgraph",
                 "graph_name": self.GRAPH_NAME,
                 "thread_id": run_id,

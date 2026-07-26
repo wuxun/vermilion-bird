@@ -31,6 +31,20 @@ from llm_chat.runtime.chat_execution import ChatRuntimeContext
 
 
 class TestRouting:
+    def test_checkpoint_schema_defaults_to_current_version(self):
+        state = ChatGraphState.model_validate({"conversation_id": "conv"})
+
+        assert state.schema_version == ChatGraphState.CURRENT_SCHEMA_VERSION
+
+    def test_future_checkpoint_schema_is_rejected(self):
+        with pytest.raises(ValueError, match="newer than supported"):
+            ChatGraphState.model_validate(
+                {
+                    "schema_version": ChatGraphState.CURRENT_SCHEMA_VERSION + 1,
+                    "conversation_id": "conv",
+                }
+            )
+
     def test_short_circuit_skips_to_persist(self):
         """Shortcuts persist inside ShortcutStage and must not be written twice."""
         state = ChatGraphState(

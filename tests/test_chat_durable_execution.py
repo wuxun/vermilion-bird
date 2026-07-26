@@ -91,6 +91,7 @@ def test_failed_chat_retries_from_sqlite_checkpoint_after_restart(tmp_path):
     assert failed.status == RunStatus.FAILED
     assert failed.checkpoint is not None
     assert failed.checkpoint.cursor == "llm_call"
+    assert failed.checkpoint.state["schema_version"] == 1
     first_runtime.close()
 
     restored_runs, restored_runtime, restored = _build_core(

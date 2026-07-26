@@ -54,6 +54,7 @@ def test_failed_graph_retries_from_framework_checkpoint(tmp_path):
     assert completed.attempt == 2
     assert completed.result["result"] == "done:A"
     assert attempts == ["A", "A"]
+    assert completed.checkpoint.state["schema_version"] == 1
     runtime.close()
 
 

@@ -11,6 +11,7 @@ from llm_chat.skills.task_delegator.tools import (
     CancelSubagentTool,
     ListSubagentsTool,
 )
+
 # Deprecated: ExecuteWorkflowTool, GetWorkflowStatusTool replaced by spawn_subagent(pattern=...)
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
@@ -41,6 +42,9 @@ class TaskDelegatorSkill(BaseSkill):
         self._spawn_tool: Optional[SpawnSubagentTool] = None
         self._workflow_executor = None
         self._executor_ref: Dict[str, Any] = {}
+        self._run_manager = None
+        self._capability_policy = None
+        self._run_handlers = None
 
     def _init_root_context(self):
         """创建根上下文，让直接 spawn 的 agent 有可追溯的 parent_id。"""
@@ -67,8 +71,12 @@ class TaskDelegatorSkill(BaseSkill):
             parent_context=self._parent_context,
             config=self._config,
             tool_registry=self.tool_registry,  # 注入共享 ToolRegistry
+            run_manager=self._run_manager,
+            capability_policy=self._capability_policy,
         )
         self._spawn_tool = spawn  # keep ref for workflow executor
+        if self._run_handlers is not None:
+            self._run_handlers.register("subagent", spawn, replace=True)
 
         tools: List[BaseTool] = [
             spawn,
@@ -78,6 +86,23 @@ class TaskDelegatorSkill(BaseSkill):
         ]
 
         return tools
+
+    def configure_runtime(
+        self,
+        *,
+        run_manager,
+        capability_policy,
+        run_handlers,
+    ) -> None:
+        self._run_manager = run_manager
+        self._capability_policy = capability_policy
+        self._run_handlers = run_handlers
+        if self._spawn_tool is not None:
+            self._spawn_tool.configure_runtime(
+                run_manager=run_manager,
+                capability_policy=capability_policy,
+            )
+            run_handlers.register("subagent", self._spawn_tool, replace=True)
 
     def on_load(self, config: Dict[str, Any]) -> None:
         import llm_chat.config as config_module

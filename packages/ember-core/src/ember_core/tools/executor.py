@@ -34,7 +34,11 @@ class ToolExecutor:
         self._executor: Optional[ThreadPoolExecutor] = None
 
     def execute_single_tool(
-        self, tool_name: str, tool_args: Dict[str, Any], tool_call_id: str
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_call_id: str,
+        invocation_context: Any = None,
     ) -> Dict[str, Any]:
         """Execute one tool with retry on transient errors.
 
@@ -48,9 +52,12 @@ class ToolExecutor:
                 logger.info(f"执行工具: {tool_name}, args={tool_args}")
 
                 if self.tool_registry.has_tool(tool_name):
-                    result = self.tool_registry.execute_tool(
-                        tool_name, arguments=tool_args
-                    )
+                    tool = self.tool_registry.get_tool(tool_name)
+                    contextual_execute = getattr(tool, "execute_with_context", None)
+                    if invocation_context is not None and callable(contextual_execute):
+                        result = contextual_execute(invocation_context, **tool_args)
+                    else:
+                        result = self.tool_registry.execute_tool(tool_name, arguments=tool_args)
                     logger.info(
                         f"工具注册表执行完成: result_type={type(result)}, "
                         f"result_is_none={result is None}"
@@ -80,7 +87,7 @@ class ToolExecutor:
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
-                    delay = min(self.retry_delay * (2 ** attempt), 60)
+                    delay = min(self.retry_delay * (2**attempt), 60)
                     jitter = delay * 0.1 * random.random()
                     total_delay = delay + jitter
                     logger.warning(
@@ -97,7 +104,10 @@ class ToolExecutor:
         }
 
     def execute_tools_parallel(
-        self, tool_calls: List[Dict[str, Any]]
+        self,
+        tool_calls: List[Dict[str, Any]],
+        *,
+        invocation_context: Any = None,
     ) -> List[Dict[str, Any]]:
         """Execute multiple tool calls in parallel, preserving order.
 
@@ -118,20 +128,31 @@ class ToolExecutor:
                 tool_args = json.loads(tool_call["function"]["arguments"])
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 logger.error(f"Failed to parse tool call arguments for {tool_name}: {e}")
-                return [{
-                    "tool_call_id": tool_call.get("id", "unknown"),
-                    "content": f"Error: invalid tool arguments - {e}",
-                    "is_error": True,
-                }]
+                return [
+                    {
+                        "tool_call_id": tool_call.get("id", "unknown"),
+                        "content": f"Error: invalid tool arguments - {e}",
+                        "is_error": True,
+                    }
+                ]
             try:
-                return [self.execute_single_tool(tool_name, tool_args, tool_call["id"])]
+                return [
+                    self.execute_single_tool(
+                        tool_name,
+                        tool_args,
+                        tool_call["id"],
+                        invocation_context,
+                    )
+                ]
             except ValueError as e:
                 logger.error(f"工具 {tool_name} 参数错误: {e}")
-                return [{
-                    "tool_call_id": tool_call["id"],
-                    "content": str(e),
-                    "is_error": True,
-                }]
+                return [
+                    {
+                        "tool_call_id": tool_call["id"],
+                        "content": str(e),
+                        "is_error": True,
+                    }
+                ]
 
         logger.info(f"并行执行 {len(tool_calls)} 个工具调用")
 
@@ -147,16 +168,22 @@ class ToolExecutor:
                 tool_args = json.loads(tool_call["function"]["arguments"])
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 logger.error(f"Failed to parse tool call arguments for {tool_name}: {e}")
-                results.append({
-                    "tool_call_id": tool_call.get("id", "unknown"),
-                    "content": f"Error: invalid tool arguments - {e}",
-                    "is_error": True,
-                })
+                results.append(
+                    {
+                        "tool_call_id": tool_call.get("id", "unknown"),
+                        "content": f"Error: invalid tool arguments - {e}",
+                        "is_error": True,
+                    }
+                )
                 continue
             tool_call_id = tool_call["id"]
 
             future = executor.submit(
-                self.execute_single_tool, tool_name, tool_args, tool_call_id
+                self.execute_single_tool,
+                tool_name,
+                tool_args,
+                tool_call_id,
+                invocation_context,
             )
             futures_map[future] = tool_call_id
 
@@ -180,11 +207,13 @@ class ToolExecutor:
             if tc_id in results_map:
                 results.append(results_map[tc_id])
             else:
-                results.append({
-                    "tool_call_id": tc_id,
-                    "content": "Error: Tool execution lost (unknown error)",
-                    "is_error": True,
-                })
+                results.append(
+                    {
+                        "tool_call_id": tc_id,
+                        "content": "Error: Tool execution lost (unknown error)",
+                        "is_error": True,
+                    }
+                )
 
         return results
 

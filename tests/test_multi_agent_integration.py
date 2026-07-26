@@ -6,6 +6,7 @@ Tests wiring correctness — LLM calls are mocked.
 
 import json
 import time
+import threading
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from types import SimpleNamespace
@@ -20,8 +21,9 @@ from ember_agent.patterns import CollaborationPattern, get_pattern, list_pattern
 from llm_chat.skills.task_delegator.tools import SpawnSubagentTool
 from llm_chat.skills.task_delegator.context import AgentContext
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
+from llm_chat.tools import ToolExecutor
 from llm_chat.tools.registry import ToolRegistry
-from llm_chat.runtime import RunManager, RunStatus, RunType
+from llm_chat.runtime import CapabilityPolicy, RunManager, RunStatus, RunType
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -172,6 +174,45 @@ def test_subagent_wrapper_finishes_its_unified_run(spawn_tool, parent_context):
 
     assert result == "agent result"
     assert manager.get(child.id).status == RunStatus.COMPLETED
+
+
+def test_tool_executor_passes_parent_run_context_to_subagent(
+    spawn_tool,
+    tool_registry,
+):
+    manager = RunManager()
+    parent = manager.start(RunType.CHAT)
+    tool_registry.register(spawn_tool)
+    runtime_context = SimpleNamespace(
+        client=MagicMock(),
+        cancel_event=threading.Event(),
+        run_id=parent.id,
+        run_manager=manager,
+        capability_policy=CapabilityPolicy(),
+    )
+    executor = ToolExecutor(tool_registry, max_workers=1, max_retries=1)
+
+    with patch.object(spawn_tool, "_execute_async_inner", return_value="agent result"):
+        result = executor.execute_tools_parallel(
+            [
+                {
+                    "id": "call-1",
+                    "function": {
+                        "name": "spawn_subagent",
+                        "arguments": json.dumps({"task": "research", "wait": True}),
+                    },
+                }
+            ],
+            invocation_context=runtime_context,
+        )
+    executor.shutdown()
+
+    child = manager.children(parent.id)[0]
+    assert result[0]["is_error"] is False
+    assert child.metadata["run_handler"] == "subagent"
+    assert child.status == RunStatus.COMPLETED
+    assert spawn_tool.run_manager is None
+    assert spawn_tool.capability_policy is None
 
 
 # ── SpawnSubagentTool + AgentRole tests ─────────────────────────────

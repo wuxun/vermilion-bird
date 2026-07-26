@@ -21,6 +21,7 @@ class GraphExecutionService:
     """
 
     RUNTIME_NAME = "langgraph"
+    CHECKPOINT_SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -185,6 +186,7 @@ class GraphExecutionService:
         next_nodes = tuple(snapshot.next_nodes) if snapshot else ()
         cursor = ",".join(next_nodes) if next_nodes else "__end__"
         checkpoint_state = {
+            "schema_version": self.CHECKPOINT_SCHEMA_VERSION,
             "graph_runtime": self.RUNTIME_NAME,
             "graph_name": graph_name,
             "thread_id": run_id,

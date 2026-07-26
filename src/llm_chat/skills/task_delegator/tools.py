@@ -301,6 +301,62 @@ class SpawnSubagentTool(BaseTool):
         self.capability_policy = capability_policy
         self.registry.add_cancel_callback(self._cancel_agent_run)
 
+    def configure_runtime(
+        self,
+        *,
+        run_manager=None,
+        capability_policy=None,
+    ) -> None:
+        self.run_manager = run_manager or self.run_manager
+        self.capability_policy = capability_policy or self.capability_policy
+
+    def retry(self, run_id: str):
+        if self.run_manager is None:
+            raise ValueError("Subagent run manager is unavailable")
+        run = self.run_manager.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        self.run_manager.retry(run_id)
+        self.execute(
+            **dict(run.input),
+            wait=False,
+            _existing_run_id=run_id,
+        )
+        restored = self.run_manager.get(run_id)
+        assert restored is not None
+        return restored
+
+    def replay(self, run_id: str):
+        if self.run_manager is None:
+            raise ValueError("Subagent run manager is unavailable")
+        source = self.run_manager.get(run_id)
+        if source is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        replay = self.run_manager.replay(run_id)
+        self.execute(
+            **dict(replay.input),
+            wait=False,
+            _existing_run_id=replay.id,
+        )
+        restored = self.run_manager.get(replay.id)
+        assert restored is not None
+        return restored
+
+    def resume(self, run_id: str, value=None):
+        raise ValueError(f"Subagent run {run_id} cannot resume; retry it instead")
+
+    @staticmethod
+    def can_resume(_run) -> bool:
+        return False
+
+    @staticmethod
+    def can_retry(run) -> bool:
+        return run.metadata.get("run_handler") == "subagent"
+
+    @staticmethod
+    def can_replay(run) -> bool:
+        return run.metadata.get("run_handler") == "subagent" and run.status.terminal
+
     def _cancel_agent_run(self, agent_id: str) -> None:
         """Keep the unified Run terminal state aligned with registry cancel."""
         context = self.registry.get(agent_id)
@@ -507,6 +563,14 @@ class SpawnSubagentTool(BaseTool):
 
     @observe("spawn_subagent")
     def execute(self, **kwargs) -> str:
+        return self._execute_impl(None, **kwargs)
+
+    def execute_with_context(self, invocation_context, **kwargs) -> str:
+        """由 ToolExecutor 显式传入当前 Chat Run 依赖。"""
+
+        return self._execute_impl(invocation_context, **kwargs)
+
+    def _execute_impl(self, invocation_context=None, **kwargs) -> str:
         task = kwargs.get("task", "")
         tools_were_explicit = "allowed_tools" in kwargs
         allowed_tools = list(kwargs.get("allowed_tools") or [])
@@ -520,6 +584,7 @@ class SpawnSubagentTool(BaseTool):
         result_var = kwargs.get("result_var", "")
         blackboard = kwargs.get("blackboard", None)
         work_dir_arg = kwargs.get("work_dir")
+        existing_run_id = kwargs.pop("_existing_run_id", None)
         skills_filter = None
 
         selected_modes = [
@@ -638,24 +703,15 @@ class SpawnSubagentTool(BaseTool):
 
         agent_id = str(uuid.uuid4())
 
-        # Capture request-scoped runtime dependencies before crossing into the
-        # executor thread. ContextVars do not automatically propagate there.
-        parent_client = None
-        parent_cancel_event = None
-        parent_run_id = None
-        try:
-            from llm_chat.chat_core_graph import _ctx
-
-            parent_ctx = _ctx()
-            parent_client = parent_ctx._extra.get("client")
-            parent_cancel_event = parent_ctx.cancel_event
-            parent_run_id = parent_ctx._extra.get("run_id")
-            self.run_manager = parent_ctx._extra.get("run_manager") or self.run_manager
-            self.capability_policy = (
-                parent_ctx._extra.get("capability_policy") or self.capability_policy
-            )
-        except (ImportError, AssertionError):
-            pass
+        # Runtime dependencies cross the tool boundary explicitly. This avoids
+        # mutable globals and keeps parallel Chat executions isolated.
+        parent_client = getattr(invocation_context, "client", None)
+        parent_cancel_event = getattr(invocation_context, "cancel_event", None)
+        parent_run_id = getattr(invocation_context, "run_id", None)
+        run_manager = getattr(invocation_context, "run_manager", None) or self.run_manager
+        capability_policy = (
+            getattr(invocation_context, "capability_policy", None) or self.capability_policy
+        )
 
         # Resolve system_prompt and prepend to task
         # Priority: ghost > role > raw task
@@ -684,21 +740,40 @@ class SpawnSubagentTool(BaseTool):
             work_dir=work_dir,
             timeout=timeout,
         )
-        if self.run_manager:
-            from llm_chat.runtime import RunType
+        if run_manager:
+            from llm_chat.runtime import RecoveryPolicy, RunStatus, RunType
 
-            agent_run = self.run_manager.start(
-                RunType.WORKFLOW,
-                conversation_id=context.conversation_id,
-                parent_run_id=parent_run_id,
-                input={"task": task},
-                metadata={
-                    "agent_id": agent_id,
-                    "profile": profile.name if profile else None,
-                    "ghost": ghost_name or None,  # compatibility audit fields
-                    "role": role_name or None,
-                },
-            )
+            if existing_run_id:
+                agent_run = run_manager.get(existing_run_id)
+                if agent_run is None or agent_run.status != RunStatus.RUNNING:
+                    raise ValueError(f"Existing subagent run is not running: {existing_run_id}")
+            else:
+                agent_run = run_manager.start(
+                    RunType.WORKFLOW,
+                    conversation_id=context.conversation_id,
+                    parent_run_id=parent_run_id,
+                    input={
+                        "task": task,
+                        "allowed_tools": allowed_tools,
+                        "timeout": timeout,
+                        "model_config": model_config,
+                        "complexity": complexity,
+                        "ghost": ghost_name,
+                        "role": role_name,
+                        "depends_on": [],
+                        "result_var": result_var,
+                        "work_dir": work_dir_arg,
+                    },
+                    metadata={
+                        "agent_id": agent_id,
+                        "profile": profile.name if profile else None,
+                        "ghost": ghost_name or None,
+                        "role": role_name or None,
+                        "run_handler": "subagent",
+                    },
+                    recovery_policy=RecoveryPolicy.RETRY,
+                    max_attempts=2,
+                )
             context.run_id = agent_run.id
 
         # Store result variable name for downstream dependency resolution
@@ -726,6 +801,8 @@ class SpawnSubagentTool(BaseTool):
             blackboard,
             skills_filter,
             profile_capability_policy,
+            run_manager,
+            capability_policy,
         )
 
         wait = kwargs.get("wait", False)
@@ -818,8 +895,11 @@ class SpawnSubagentTool(BaseTool):
         blackboard=None,
         skills_filter=None,
         profile_capability_policy=None,
+        run_manager=None,
+        capability_policy=None,
     ) -> str:
         """在后台线程中执行子agent任务（含重试 + 资源清理）。"""
+        run_manager = run_manager or self.run_manager
         # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
         _set_agent_id(agent_id)
         try:
@@ -835,18 +915,19 @@ class SpawnSubagentTool(BaseTool):
                 blackboard,
                 skills_filter,
                 profile_capability_policy,
+                capability_policy,
             )
-            if self.run_manager and context.run_id:
+            if run_manager and context.run_id:
                 if context._cancelled.is_set() or context.status == "cancelled":
-                    self.run_manager.cancel(context.run_id)
+                    run_manager.cancel(context.run_id)
                 elif context.status == "failed":
-                    self.run_manager.fail(context.run_id, context.result or result)
+                    run_manager.fail(context.run_id, context.result or result)
                 else:
-                    self.run_manager.complete(context.run_id, result)
+                    run_manager.complete(context.run_id, result)
             return result
         except Exception as exc:
-            if self.run_manager and context.run_id:
-                self.run_manager.fail(context.run_id, str(exc))
+            if run_manager and context.run_id:
+                run_manager.fail(context.run_id, str(exc))
             raise
         finally:
             _set_agent_id(None)
@@ -864,6 +945,7 @@ class SpawnSubagentTool(BaseTool):
         blackboard=None,
         skills_filter=None,
         profile_capability_policy=None,
+        runtime_capability_policy=None,
     ) -> str:
         client = None
         own_client = False  # Track if we created this client (needs close)
@@ -964,7 +1046,9 @@ class SpawnSubagentTool(BaseTool):
             # capabilities remain available only to the parent execution.
             from llm_chat.runtime import CapabilityPolicy, PolicyDecision
 
-            capability_policy = self.capability_policy or CapabilityPolicy()
+            capability_policy = (
+                runtime_capability_policy or self.capability_policy or CapabilityPolicy()
+            )
             all_tools = [
                 tool_def
                 for tool_def in all_tools

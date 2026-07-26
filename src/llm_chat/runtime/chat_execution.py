@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,6 +53,9 @@ class SerializableToolCall(BaseModel):
 class ChatGraphState(BaseModel):
     """可由 LangGraph checkpointer 完整保存的请求状态。"""
 
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 1
+
+    schema_version: int = CURRENT_SCHEMA_VERSION
     conversation_id: str = ""
     user_message: str = ""
     effective_message: str = ""
@@ -77,6 +80,18 @@ class ChatGraphState(BaseModel):
         if isinstance(value, ChatRoutingState):
             return value.model_dump()
         return dict(value or {})
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("chat checkpoint schema_version must be positive")
+        if value > cls.CURRENT_SCHEMA_VERSION:
+            raise ValueError(
+                "chat checkpoint schema_version "
+                f"{value} is newer than supported version {cls.CURRENT_SCHEMA_VERSION}"
+            )
+        return value
 
     @classmethod
     def from_request(

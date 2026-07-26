@@ -103,6 +103,7 @@ class App:
             run_manager=self.run_manager,
             registry=self.run_handlers,
         )
+        self._bind_skill_runtime()
         self._ensure_graph_infrastructure()
         self.chat_core = self._init_chat_core()
         self.run_handlers.register("chat", self.chat_core)
@@ -392,6 +393,16 @@ class App:
     def _init_service_manager(self):
         return ServiceManager()
 
+    def _bind_skill_runtime(self) -> None:
+        skill = self.client.get_skill_manager().get_skill("task_delegator")
+        configure = getattr(skill, "configure_runtime", None)
+        if callable(configure):
+            configure(
+                run_manager=self.run_manager,
+                capability_policy=self.capability_policy,
+                run_handlers=self.run_handlers,
+            )
+
     def _init_health_checker(self):
         hc = get_checker()
         hc.register_checker("database", create_database_checker(self.storage))
@@ -563,6 +574,7 @@ class App:
         self.client.config = new_config
         self.client.reconfigure()  # 重建 protocol 以使用新模型/base_url
         self.client._setup_skills()
+        self._bind_skill_runtime()
         # Re-enable MCP tools (wiped by _setup_skills → tool_registry.clear())
         if self._tools_enabled:
             self._tools_enabled = False
