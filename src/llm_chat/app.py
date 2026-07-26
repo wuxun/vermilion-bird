@@ -79,9 +79,9 @@ class App:
         self.conversation_manager = self._init_conversation_manager()
         _t4 = time.time()
         logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
-        self.run_manager = RunManager()
+        self.run_manager = RunManager(repository=self.storage)
         self.capability_policy = CapabilityPolicy()
-        self.action_proposals = ActionProposalManager()
+        self.action_proposals = ActionProposalManager(repository=self.storage)
         self.chat_core = self._init_chat_core()
         _t5 = time.time()
         logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
@@ -111,11 +111,7 @@ class App:
 
     def _init_storage(self):
         db_path = os.environ.get("VB_DB_PATH", Storage.DEFAULT_DB_PATH)
-        s = (
-            self._storage_override
-            if self._storage_override is not None
-            else Storage(db_path)
-        )
+        s = self._storage_override if self._storage_override is not None else Storage(db_path)
         Storage.set_instance(s)
         return s
 

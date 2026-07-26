@@ -4,10 +4,12 @@ import pytest
 
 from llm_chat.runtime import (
     ActionProposal,
+    ActionProposalManager,
     ActionStatus,
     Capability,
     Run,
     RunEvent,
+    RunManager,
     RunStatus,
     RunType,
 )
@@ -109,3 +111,65 @@ def test_action_proposal_round_trip_and_filters(storage):
             conversation_id="conversation-3",
         )
     ] == [proposal.id]
+
+
+def test_run_manager_restores_history_and_recovers_interrupted_run(storage):
+    first_manager = RunManager(repository=storage)
+    completed = first_manager.start(RunType.CHAT, input={"message": "done"})
+    first_manager.complete(completed.id, "ok")
+    interrupted = first_manager.start(RunType.WORKFLOW, input={"task": "pending"})
+
+    restored_manager = RunManager(repository=storage)
+
+    restored_completed = restored_manager.get(completed.id)
+    restored_interrupted = restored_manager.get(interrupted.id)
+    assert restored_completed is not None
+    assert restored_completed.result == "ok"
+    assert restored_interrupted is not None
+    assert restored_interrupted.status == RunStatus.FAILED
+    assert restored_interrupted.error == "应用重启前运行未正常结束"
+    assert restored_interrupted.events[-1].type == "run.recovered"
+
+
+def test_pending_action_survives_restart_and_updates_observers(storage):
+    origin = Run(id="origin", type=RunType.CHAT, status=RunStatus.COMPLETED)
+    storage.save_run(origin)
+    first_manager = ActionProposalManager(repository=storage)
+    proposal = first_manager.propose(
+        run_id=origin.id,
+        conversation_id="conversation-4",
+        tool_name="write_file",
+        arguments={"path": "result.md"},
+        capabilities={Capability.WORKSPACE_WRITE},
+    )
+
+    restored_manager = ActionProposalManager(repository=storage)
+    observed = []
+    restored_manager.subscribe(lambda item: observed.append(item.status))
+    rejected = restored_manager.reject(
+        proposal.id,
+        conversation_id="conversation-4",
+    )
+
+    assert rejected.status == ActionStatus.REJECTED
+    assert observed == [ActionStatus.REJECTED]
+    assert storage.get_action_proposal(proposal.id).status == ActionStatus.REJECTED
+
+
+def test_inflight_action_is_failed_during_restart_recovery(storage):
+    proposal = ActionProposal(
+        run_id="origin",
+        tool_name="shell_exec",
+        capabilities={Capability.PROCESS},
+        reason="执行命令",
+        impact="启动子进程",
+        status=ActionStatus.EXECUTING,
+    )
+    storage.save_action_proposal(proposal)
+
+    restored_manager = ActionProposalManager(repository=storage)
+
+    restored = restored_manager.get(proposal.id)
+    assert restored is not None
+    assert restored.status == ActionStatus.FAILED
+    assert "应用重启" in restored.error
