@@ -41,6 +41,7 @@ class App:
 
     def __init__(self, config: Optional[Config] = None):
         import time
+
         _t0 = time.time()
 
         self.config = config or Config()
@@ -52,26 +53,36 @@ class App:
 
         # 组件分层初始化（保持依赖顺序）
         self.tool_registry = self._init_tool_registry()
-        _t1 = time.time(); logger.info(f"⏱ _init_tool_registry: {_t1-_t0:.3f}s")
+        _t1 = time.time()
+        logger.info(f"⏱ _init_tool_registry: {_t1-_t0:.3f}s")
         self._init_role_presets()
-        _t1b = time.time(); logger.info(f"⏱ _init_role_presets: {_t1b-_t1:.3f}s")
+        _t1b = time.time()
+        logger.info(f"⏱ _init_role_presets: {_t1b-_t1:.3f}s")
         self._init_ghosts()
-        _t1c = time.time(); logger.info(f"⏱ _init_ghosts: {_t1c-_t1b:.3f}s")
+        _t1c = time.time()
+        logger.info(f"⏱ _init_ghosts: {_t1c-_t1b:.3f}s")
         self.storage = self._init_storage()
-        _t2 = time.time(); logger.info(f"⏱ _init_storage: {_t2-_t1:.3f}s")
+        _t2 = time.time()
+        logger.info(f"⏱ _init_storage: {_t2-_t1:.3f}s")
         self.client = self._init_client()
-        _t3 = time.time(); logger.info(f"⏱ _init_client: {_t3-_t2:.3f}s")
+        _t3 = time.time()
+        logger.info(f"⏱ _init_client: {_t3-_t2:.3f}s")
         self.conversation_manager = self._init_conversation_manager()
-        _t4 = time.time(); logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
+        _t4 = time.time()
+        logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.run_manager = RunManager()
         self.chat_core = self._init_chat_core()
-        _t5 = time.time(); logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
+        _t5 = time.time()
+        logger.info(f"⏱ _init_chat_core: {_t5-_t4:.3f}s")
         self._init_prompt_skills()
-        _t6 = time.time(); logger.info(f"⏱ _init_prompt_skills: {_t6-_t5:.3f}s")
+        _t6 = time.time()
+        logger.info(f"⏱ _init_prompt_skills: {_t6-_t5:.3f}s")
         self.service_manager = self._init_service_manager()
-        _t7 = time.time(); logger.info(f"⏱ _init_service_manager: {_t7-_t6:.3f}s")
+        _t7 = time.time()
+        logger.info(f"⏱ _init_service_manager: {_t7-_t6:.3f}s")
         self._health_checker = self._init_health_checker()
-        _t8 = time.time(); logger.info(f"⏱ _init_health_checker: {_t8-_t7:.3f}s")
+        _t8 = time.time()
+        logger.info(f"⏱ _init_health_checker: {_t8-_t7:.3f}s")
         # Scheduler 延迟到 _start_background_services 中初始化
 
         logger.info(f"⏱ App init total: {_t8-_t0:.3f}s")
@@ -82,6 +93,7 @@ class App:
 
     def _init_tool_registry(self):
         from llm_chat.tools.registry import ToolRegistry
+
         tr = ToolRegistry()
         ToolRegistry.set_instance(tr)
         return tr
@@ -94,8 +106,10 @@ class App:
     def _init_role_presets(self):
         """Load custom agent roles and patterns from YAML config."""
         from ember_agent.agent.role import load_presets_from_yaml
+
         role_count = load_presets_from_yaml()
         from ember_agent.patterns import load_patterns_from_yaml
+
         pat_count = load_patterns_from_yaml()
         if role_count or pat_count:
             logger.info(
@@ -107,6 +121,7 @@ class App:
         """Preload Ghost templates from ~/.vermilion-bird/ghosts/."""
         try:
             from llm_chat.ghost.store import get_ghost_store
+
             store = get_ghost_store()
             count = len(store.all_cached())
             if count:
@@ -142,6 +157,7 @@ class App:
         try:
             from llm_chat.memory import MemoryManager, MemoryStorage
             from llm_chat.memory.summarizer import LLMSummarizer
+
             memory_storage = MemoryStorage(
                 memory_config.get("storage_dir", "~/.vermilion-bird/memory")
             )
@@ -190,9 +206,7 @@ class App:
             from llm_chat.scheduler import SchedulerService
 
             try:
-                self.scheduler = SchedulerService(
-                    self.config.scheduler, self.storage, self
-                )
+                self.scheduler = SchedulerService(self.config.scheduler, self.storage, self)
                 logger.info(f"SchedulerService created: {self.scheduler}")
 
                 # 注册到服务管理器
@@ -260,12 +274,14 @@ class App:
         try:
             from llm_chat.knowledge import KnowledgeManager, KnowledgeStorage
             from llm_chat.memory.summarizer import LLMSummarizer
+
             knowledge_storage = KnowledgeStorage(
                 knowledge_config.get("storage_dir", "~/.vermilion-bird/knowledge")
             )
             # 注入共享存储实例到 skill 模块，确保 LLM 工具和 pipeline 使用同一实例
             try:
                 from llm_chat.skills.knowledge_base.skill import set_storage
+
                 set_storage(knowledge_storage)
             except Exception:
                 pass  # skill 未加载时静默跳过
@@ -313,8 +329,7 @@ class App:
             context = skill_manager.get_prompt_skills_for_context()
             self.chat_core.set_prompt_skills_context(context)
             logger.info(
-                f"Prompt skills loaded: {len(discovered)} found, "
-                f"context={len(context)} chars"
+                f"Prompt skills loaded: {len(discovered)} found, " f"context={len(context)} chars"
             )
         else:
             logger.debug("No prompt skills found")
@@ -360,6 +375,7 @@ class App:
     def _get_mcp_manager(self):
         if self._mcp_manager is None:
             from llm_chat.mcp import MCPManager
+
             self._mcp_manager = MCPManager()
             MCPManager.set_instance(self._mcp_manager)
             new_servers = []
@@ -399,7 +415,7 @@ class App:
             return
 
         # 防止重复连接
-        if getattr(self, '_mcp_connecting', False):
+        if getattr(self, "_mcp_connecting", False):
             logger.info("MCP connection already in progress, skipping")
             return
         self._mcp_connecting = True
@@ -407,12 +423,11 @@ class App:
         manager = self._get_mcp_manager()
 
         enabled_servers = self.config.mcp.get_enabled_servers()
-        logger.info(
-            f"准备连接 {len(enabled_servers)} 个 MCP 服务器: {[s.name for s in enabled_servers]}"
-        )
+        logger.info(f"准备连接 {len(enabled_servers)} 个 MCP 服务器: {[s.name for s in enabled_servers]}")
 
         if background:
             import threading
+
             thread = threading.Thread(
                 target=self._connect_mcp_background,
                 args=(manager,),
@@ -474,9 +489,7 @@ class App:
         connected_tools = manager.get_tools_for_openai()
         logger.info(f"MCP 工具加载完成，共 {len(connected_tools)} 个工具")
         if connected_tools:
-            logger.info(
-                f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}"
-            )
+            logger.info(f"MCP 工具列表: {[t['function']['name'] for t in connected_tools]}")
             for mcp_tool in manager.get_all_tools():
                 adapter = MCPToolAdapter(
                     tool_name=mcp_tool.name,
@@ -485,10 +498,7 @@ class App:
                     executor=lambda name, args, mgr=manager: mgr.call_tool(name, args),
                 )
                 self.tool_registry.register(adapter)
-            logger.info(
-                f"MCP 工具已注册到 ToolRegistry: "
-                f"{[t.name for t in manager.get_all_tools()]}"
-            )
+            logger.info(f"MCP 工具已注册到 ToolRegistry: " f"{[t.name for t in manager.get_all_tools()]}")
 
     def _register_mcp_health_check(self, manager):
         """注册 MCP 健康检查到 HealthChecker。"""
@@ -556,6 +566,7 @@ class App:
         # 统一的消息处理回调 — 委托给 ChatCore（CLI/简单前端使用此路径）
         def handle_message(message: Message, ctx: ConversationContext):
             try:
+
                 def on_card(card):
                     frontend.display_card(card)
 
@@ -615,9 +626,7 @@ class App:
         conv = self.storage.get_conversation(conversation_id)
         current_title = conv.get("title", "") if conv else ""
 
-        new_title = self.current_frontend.request_rename_input(
-            conversation_id, current_title
-        )
+        new_title = self.current_frontend.request_rename_input(conversation_id, current_title)
 
         if new_title:
             self.storage.update_conversation(conversation_id, title=new_title)
@@ -640,6 +649,7 @@ class App:
             logger.warning(f"Received signal {signum}, forcing exit...")
             self.stop()
             import os as _os
+
             _os._exit(0)
 
         signal.signal(signal.SIGINT, _force_exit)
@@ -703,13 +713,15 @@ class App:
             {
                 "job_id": "proactive-digest",
                 "name": "每日新闻精选",
-                "hour": 8, "minute": 50,
+                "hour": 8,
+                "minute": 50,
                 "message": self._build_digest_prompt(),
             },
             {
                 "job_id": "proactive-daily",
                 "name": "每日话题",
-                "hour": 9, "minute": 0,
+                "hour": 9,
+                "minute": 0,
                 "message": self._build_discussion_prompt(),
             },
         ]
@@ -721,13 +733,11 @@ class App:
             minute = cfg["minute"]
 
             existing = [
-                t for t in self._get_tasks_by_type("PROACTIVE_CHAT")
-                if t.id.startswith(job_id)
+                t for t in self._get_tasks_by_type("PROACTIVE_CHAT") if t.id.startswith(job_id)
             ]
             if not existing:
                 existing = [
-                    t for t in self._get_tasks_by_type("LLM_CHAT")
-                    if t.id.startswith(job_id)
+                    t for t in self._get_tasks_by_type("LLM_CHAT") if t.id.startswith(job_id)
                 ]
             if existing:
                 task = existing[0]
@@ -735,10 +745,10 @@ class App:
                     job = self.scheduler._scheduler.get_job(task.id)
                     if job:
                         logger.info(f"{name} 已存在: {task.id}")
-                        if task.task_type == TaskType.PROACTIVE_CHAT:
-                            task.task_type = TaskType.LLM_CHAT
+                        if task.task_type == TaskType.LLM_CHAT:
+                            task.task_type = TaskType.PROACTIVE_CHAT
                             self.storage.save_task(task)
-                            logger.info(f"{name} 已升级为 LLM_CHAT")
+                            logger.info(f"{name} 已升级为 PROACTIVE_CHAT")
                         continue
                     else:
                         logger.warning(f"{name} job 丢失，重新注册: {task.id}")
@@ -749,7 +759,7 @@ class App:
             task = Task(
                 id=f"{job_id}-{uuid.uuid4().hex[:8]}",
                 name=name,
-                task_type=TaskType.LLM_CHAT,
+                task_type=TaskType.PROACTIVE_CHAT,
                 trigger_config={
                     "cron": f"{minute} {hour} * * *",
                     "timezone": "Asia/Shanghai",
@@ -762,9 +772,7 @@ class App:
                 notify_enabled=True,
             )
             self.scheduler.add_task(task)
-            logger.info(
-                f"已注册 {name} (每天 {hour:02d}:{minute:02d}): {task.id}"
-            )
+            logger.info(f"已注册 {name} (每天 {hour:02d}:{minute:02d}): {task.id}")
 
     def _build_digest_prompt(self) -> str:
         """每日新闻精选 prompt — 搜新闻，输出精选文本（不用卡片）。"""
@@ -831,6 +839,7 @@ class App:
         """按类型查询任务列表。"""
         try:
             from llm_chat.scheduler.models import TaskType
+
             all_tasks = self.storage.load_all_tasks()
             return [t for t in all_tasks if t.task_type.value == task_type]
         except Exception:

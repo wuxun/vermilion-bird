@@ -47,3 +47,15 @@ def test_terminal_run_is_idempotent():
     assert stored.status == RunStatus.FAILED
     assert stored.error == "boom"
     assert stored.result is None
+
+
+def test_parent_child_runs_are_queryable_in_creation_order():
+    manager = RunManager()
+    parent = manager.start(RunType.SCHEDULED)
+    first = manager.start(RunType.CHAT, parent_run_id=parent.id)
+    second = manager.start(RunType.WORKFLOW, parent_run_id=parent.id)
+
+    assert [run.id for run in manager.children(parent.id)] == [
+        first.id,
+        second.id,
+    ]

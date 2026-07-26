@@ -23,6 +23,7 @@ from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 if TYPE_CHECKING:
     from llm_chat.config import Config
     from llm_chat.client import LLMClient
+    from llm_chat.runtime import RunManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ def _set_agent_id(agent_id: Optional[str]):
 
 class _AgentIdFilter(logging.Filter):
     """注入线程级 agent_id 到日志消息。幂等，防止多个 handler 重复前缀。"""
+
     def filter(self, record):
         aid = getattr(_agent_id_local, "agent_id", None)
         if aid:
@@ -143,19 +145,34 @@ class SpawnSubagentTool(BaseTool):
 
     # Tools to REMOVE from sub-agents (dangerous or recursive)
     BLOCKED_TOOLS = {
-        "spawn_subagent", "get_subagent_status", "cancel_subagent",
+        "spawn_subagent",
+        "get_subagent_status",
+        "cancel_subagent",
         "list_subagents",  # task_delegator internals
         "submit_decision_card",  # decision card (parent handles)
         "activate_skill",  # skill management
-        "remember_fact", "read_facts",  # memory (parent handles)
-        "read_knowledge", "remember_knowledge",  # knowledge base
-        "create_scheduled_task", "list_scheduled_tasks", "delete_scheduled_task",
-        "toggle_scheduled_task", "run_scheduled_task",  # scheduler
+        "remember_fact",
+        "read_facts",  # memory (parent handles)
+        "read_knowledge",
+        "remember_knowledge",  # knowledge base
+        "create_scheduled_task",
+        "list_scheduled_tasks",
+        "delete_scheduled_task",
+        "toggle_scheduled_task",
+        "run_scheduled_task",  # scheduler
         "shell_exec",  # safety: no shell in sub-agents
         "fetch_rss",  # irrelevant for research
-        "create_task_plan", "update_step_progress", "get_task_status",
-        "get_next_step", "complete_step", "list_tasks", "switch_task",  # todo
-        "add_to_watchlist", "update_scores", "update_memo", "get_alert_candidates",
+        "create_task_plan",
+        "update_step_progress",
+        "get_task_status",
+        "get_next_step",
+        "complete_step",
+        "list_tasks",
+        "switch_task",  # todo
+        "add_to_watchlist",
+        "update_scores",
+        "update_memo",
+        "get_alert_candidates",
         "get_watchlist",  # stock watchlist — irrelevant
     }
 
@@ -197,8 +214,7 @@ class SpawnSubagentTool(BaseTool):
                 "wait": {
                     "type": "boolean",
                     "description": (
-                        "是否阻塞等待子agent完成后再返回。默认false（异步）。"
-                        "true=直接返回执行结果，false=立即返回agent_id并后台执行。"
+                        "是否阻塞等待子agent完成后再返回。默认false（异步）。" "true=直接返回执行结果，false=立即返回agent_id并后台执行。"
                     ),
                     "default": False,
                 },
@@ -254,14 +270,14 @@ class SpawnSubagentTool(BaseTool):
                     "description": (
                         "该agent依赖的其他agent ID列表。系统自动等待这些agent完成，"
                         "并将其结果注入task模板。在task中用 {agent_id.result} 引用。"
-                        "例如 depends_on=[\"abc-123\"]，task中用 {abc-123.result}。"
+                        '例如 depends_on=["abc-123"]，task中用 {abc-123.result}。'
                     ),
                 },
                 "result_var": {
                     "type": "string",
                     "description": (
                         "将本agent的结果绑定到指定变量名，方便下游agent引用。"
-                        "例如 result_var=\"plan\"，下游用 {plan.result} 引用。"
+                        '例如 result_var="plan"，下游用 {plan.result} 引用。'
                     ),
                 },
             },
@@ -274,23 +290,30 @@ class SpawnSubagentTool(BaseTool):
         parent_context: Optional[AgentContext] = None,
         config: Optional["Config"] = None,
         tool_registry=None,
+        run_manager: Optional["RunManager"] = None,
     ):
         self.registry = registry or SubAgentRegistry()
         self.parent_context = parent_context
         self.config = config
         self._tool_registry = tool_registry  # 注入共享 ToolRegistry
+        self.run_manager = run_manager
+        self.registry.add_cancel_callback(self._cancel_agent_run)
+
+    def _cancel_agent_run(self, agent_id: str) -> None:
+        """Keep the unified Run terminal state aligned with registry cancel."""
+        context = self.registry.get(agent_id)
+        if self.run_manager and context and context.run_id:
+            self.run_manager.cancel(context.run_id)
 
     def _build_ghost_description(self) -> str:
         """Build ghost description from available ghosts, one line per ghost."""
         try:
             from llm_chat.ghost.store import get_ghost_store
+
             store = get_ghost_store()
             ghosts = store.all_cached()
             if not ghosts:
-                return (
-                    "预定义的 Ghost 模板引用。使用 vermilion-bird ghost create 创建。\n"
-                    "当前没有可用的 Ghost 模板。"
-                )
+                return "预定义的 Ghost 模板引用。使用 vermilion-bird ghost create 创建。\n" "当前没有可用的 Ghost 模板。"
             lines = ["预定义的 Ghost 模板引用。当前可用模板:"]
             for key, ghost in ghosts.items():
                 desc = ghost.description[:60] if ghost.description else "(无描述)"
@@ -300,9 +323,15 @@ class SpawnSubagentTool(BaseTool):
         except ImportError:
             return "预定义的 Ghost 模板引用（ghost 系统未启用）"
 
-    def _resolve_ghost(self, ghost_name: str, task: str, role_name: str,
-                       allowed_tools: Optional[list], model_config: dict,
-                       complexity: Optional[str]) -> tuple:
+    def _resolve_ghost(
+        self,
+        ghost_name: str,
+        task: str,
+        role_name: str,
+        allowed_tools: Optional[list],
+        model_config: dict,
+        complexity: Optional[str],
+    ) -> tuple:
         """Resolve a ghost reference into concrete parameters.
 
         Returns:
@@ -310,13 +339,12 @@ class SpawnSubagentTool(BaseTool):
         """
         try:
             from llm_chat.ghost.store import get_ghost_store
+
             store = get_ghost_store()
             ghost = store.load(ghost_name)
             if not ghost:
                 available = ", ".join(store.list_all()) or "(none)"
-                raise ValueError(
-                    f"Ghost '{ghost_name}' not found. Available ghosts: {available}"
-                )
+                raise ValueError(f"Ghost '{ghost_name}' not found. Available ghosts: {available}")
 
             system_prompt = ghost.system_prompt + f"\n\nCurrent task: {task}"
             resolved_tools = list(allowed_tools or [])
@@ -352,6 +380,7 @@ class SpawnSubagentTool(BaseTool):
         if role_name:
             try:
                 from ember_agent.agent.role import get_preset
+
                 role = get_preset(role_name)
                 if role:
                     return role.system_prompt + f"\n\nCurrent task: {task}"
@@ -371,6 +400,7 @@ class SpawnSubagentTool(BaseTool):
         """Get available role names from registered presets (incl. YAML custom)."""
         try:
             from ember_agent.agent.role import list_presets
+
             return list_presets()
         except ImportError:
             return ["planner", "executor", "critic", "synthesizer"]
@@ -379,6 +409,7 @@ class SpawnSubagentTool(BaseTool):
         """Build role description from registered presets, one line per role."""
         try:
             from ember_agent.agent.role import get_preset, list_presets
+
             lines = ["子Agent角色预设，每行格式: key=简述。"]
             for key in list_presets():
                 preset = get_preset(key)
@@ -394,6 +425,7 @@ class SpawnSubagentTool(BaseTool):
         """Get available collaboration pattern names (incl. YAML custom)."""
         try:
             from ember_agent.patterns import list_patterns
+
             return list_patterns()
         except ImportError:
             return []
@@ -402,6 +434,7 @@ class SpawnSubagentTool(BaseTool):
         """Build pattern description from registered patterns."""
         try:
             from ember_agent.patterns import list_patterns, get_pattern
+
             lines = ["预定义多Agent协作模式。role和pattern互斥，选其一。"]
             for name in list_patterns():
                 pat = get_pattern(name)
@@ -412,28 +445,39 @@ class SpawnSubagentTool(BaseTool):
             return ""
 
     def _execute_pattern(
-        self, pattern_name: str, task: str, timeout: int,
+        self,
+        pattern_name: str,
+        task: str,
+        timeout: int,
     ) -> str:
         """Execute a named collaboration pattern."""
         try:
             from ember_agent.patterns import get_pattern
         except ImportError:
-            return json.dumps({
-                "error": "ember-agent not available", "status": "failed",
-            })
+            return json.dumps(
+                {
+                    "error": "ember-agent not available",
+                    "status": "failed",
+                }
+            )
 
         pattern = get_pattern(pattern_name)
         if not pattern:
-            return json.dumps({
-                "error": f"Unknown pattern: {pattern_name}",
-                "available": list(
-                    __import__("ember_agent.patterns", fromlist=["list_patterns"])
-                    .list_patterns()
-                ),
-                "status": "failed",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": f"Unknown pattern: {pattern_name}",
+                    "available": list(
+                        __import__(
+                            "ember_agent.patterns", fromlist=["list_patterns"]
+                        ).list_patterns()
+                    ),
+                    "status": "failed",
+                },
+                ensure_ascii=False,
+            )
 
         from llm_chat.skills.task_delegator.engine import CollaborationEngine
+
         engine = CollaborationEngine(self)
 
         try:
@@ -443,14 +487,19 @@ class SpawnSubagentTool(BaseTool):
             return final_result
         except Exception as e:
             logger.error(f"Pattern '{pattern_name}' failed: {e}")
-            return json.dumps({
-                "pattern": pattern_name,
-                "status": "failed",
-                "error": str(e),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "pattern": pattern_name,
+                    "status": "failed",
+                    "error": str(e),
+                },
+                ensure_ascii=False,
+            )
 
     def _resolve_dependencies(
-        self, depends_on: list, task: str,
+        self,
+        depends_on: list,
+        task: str,
     ) -> str:
         """Wait for dependency agents and inject their results into task.
 
@@ -458,6 +507,7 @@ class SpawnSubagentTool(BaseTool):
         """
         from llm_chat.skills.task_delegator.registry import SubAgentRegistry
         from llm_chat.skills.task_delegator.tools import GetSubagentStatusTool
+
         reg = self.registry or SubAgentRegistry()
         status_tool = GetSubagentStatusTool(registry=reg)
 
@@ -476,7 +526,7 @@ class SpawnSubagentTool(BaseTool):
             task = task.replace("{" + dep_id + ".result}", str(result))
 
             # Also inject aliases (result_var mappings)
-            varname = ctx.result_var if (ctx and hasattr(ctx, 'result_var')) else ""
+            varname = ctx.result_var if (ctx and hasattr(ctx, "result_var")) else ""
             if varname:
                 task = task.replace("{" + varname + ".result}", str(result))
 
@@ -559,6 +609,7 @@ class SpawnSubagentTool(BaseTool):
         if role_name and not tools_were_explicit:
             try:
                 from ember_agent.agent.role import get_preset
+
                 role = get_preset(role_name)
                 if role and role.default_tools:
                     allowed_tools = list(role.default_tools)
@@ -575,14 +626,13 @@ class SpawnSubagentTool(BaseTool):
         if complexity and not model_config:
             models_map = (
                 self.config.tools.subagent_models
-                if self.config and hasattr(self.config, "tools") else {}
+                if self.config and hasattr(self.config, "tools")
+                else {}
             )
             mapped_model = models_map.get(complexity)
             if mapped_model:
                 model_config = {"model": mapped_model}
-                logger.info(
-                    f"Subagent complexity={complexity} → model={mapped_model}"
-                )
+                logger.info(f"Subagent complexity={complexity} → model={mapped_model}")
 
         if self.parent_context and self.parent_context.depth >= 1:
             error_msg = (
@@ -599,7 +649,8 @@ class SpawnSubagentTool(BaseTool):
         # 并发上限检查
         max_concurrent = (
             self.config.tools.subagent_max_concurrent
-            if self.config and hasattr(self.config, "tools") else 10
+            if self.config and hasattr(self.config, "tools")
+            else 10
         )
         if max_concurrent > 0:
             running = self.registry.count_running()
@@ -616,14 +667,28 @@ class SpawnSubagentTool(BaseTool):
                 )
 
         filtered_tools = [
-            tool_name
-            for tool_name in allowed_tools
-            if tool_name not in self.BLOCKED_TOOLS
+            tool_name for tool_name in allowed_tools if tool_name not in self.BLOCKED_TOOLS
         ]
         work_dir = self._get_work_dir(work_dir_arg)
         os.makedirs(work_dir, exist_ok=True)
 
         agent_id = str(uuid.uuid4())
+
+        # Capture request-scoped runtime dependencies before crossing into the
+        # executor thread. ContextVars do not automatically propagate there.
+        parent_client = None
+        parent_cancel_event = None
+        parent_run_id = None
+        try:
+            from llm_chat.chat_core_graph import _ctx
+
+            parent_ctx = _ctx()
+            parent_client = parent_ctx._extra.get("client")
+            parent_cancel_event = parent_ctx.cancel_event
+            parent_run_id = parent_ctx._extra.get("run_id")
+            self.run_manager = parent_ctx._extra.get("run_manager") or self.run_manager
+        except (ImportError, AssertionError):
+            pass
 
         # Resolve system_prompt and prepend to task
         # Priority: ghost > role > raw task
@@ -631,14 +696,15 @@ class SpawnSubagentTool(BaseTool):
         if ghost_name:
             enhanced_task = system_prompt
             logger.info(
-                f"Ghost '{ghost_name}' system_prompt injected "
-                f"({len(system_prompt)} chars)"
+                f"Ghost '{ghost_name}' system_prompt injected " f"({len(system_prompt)} chars)"
             )
         elif role_name:
             resolved_prompt = self._resolve_system_prompt(task, role_name)
             if resolved_prompt != task:
                 enhanced_task = resolved_prompt
-                logger.info(f"Role '{role_name}' system_prompt injected ({len(resolved_prompt)} chars)")
+                logger.info(
+                    f"Role '{role_name}' system_prompt injected ({len(resolved_prompt)} chars)"
+                )
 
         context = make_agent_context(
             agent_id=agent_id,
@@ -650,6 +716,21 @@ class SpawnSubagentTool(BaseTool):
             work_dir=work_dir,
             timeout=timeout,
         )
+        if self.run_manager:
+            from llm_chat.runtime import RunType
+
+            agent_run = self.run_manager.start(
+                RunType.WORKFLOW,
+                conversation_id=context.conversation_id,
+                parent_run_id=parent_run_id,
+                input={"task": task},
+                metadata={
+                    "agent_id": agent_id,
+                    "ghost": ghost_name or None,
+                    "role": role_name or None,
+                },
+            )
+            context.run_id = agent_run.id
 
         # Store result variable name for downstream dependency resolution
         if result_var:
@@ -660,27 +741,21 @@ class SpawnSubagentTool(BaseTool):
         model_info = ""
         if model_config:
             model_info = f" (model: {model_config.get('model', 'default')})"
-        logger.info(
-            "Spawned subagent %s%s with task: %s",
-            agent_id, model_info, enhanced_task[:50]
-        )
-
-        # Capture parent LLMClient for reuse (avoids creating new HTTP sessions)
-        parent_client = None
-        parent_cancel_event = None
-        try:
-            from llm_chat.chat_core_graph import _ctx
-            parent_ctx = _ctx()
-            parent_client = parent_ctx._extra.get("client")
-            parent_cancel_event = parent_ctx.cancel_event
-        except (ImportError, AssertionError):
-            pass  # Not in a chat pipeline context (tests, scheduler, etc.)
+        logger.info("Spawned subagent %s%s with task: %s", agent_id, model_info, enhanced_task[:50])
 
         future = self.registry.submit(
             agent_id,
             self._execute_async,
-            agent_id, enhanced_task, filtered_tools, timeout, context, model_config,
-            parent_client, parent_cancel_event, blackboard, skills_filter,
+            agent_id,
+            enhanced_task,
+            filtered_tools,
+            timeout,
+            context,
+            model_config,
+            parent_client,
+            parent_cancel_event,
+            blackboard,
+            skills_filter,
         )
 
         wait = kwargs.get("wait", False)
@@ -695,7 +770,8 @@ class SpawnSubagentTool(BaseTool):
                     result = future.result(timeout=check_interval)
                     return json.dumps(
                         {"agent_id": agent_id, "status": "completed", "result": result},
-                        ensure_ascii=False, indent=2,
+                        ensure_ascii=False,
+                        indent=2,
                     )
                 except TimeoutError:
                     waited += check_interval
@@ -703,34 +779,45 @@ class SpawnSubagentTool(BaseTool):
                     ctx = self.registry.get(agent_id)
                     if ctx is None:
                         return json.dumps(
-                            {"agent_id": agent_id, "status": "failed",
-                             "error": f"Agent disappeared after {waited:.0f}s"},
-                            ensure_ascii=False, indent=2,
+                            {
+                                "agent_id": agent_id,
+                                "status": "failed",
+                                "error": f"Agent disappeared after {waited:.0f}s",
+                            },
+                            ensure_ascii=False,
+                            indent=2,
                         )
                     if ctx.status not in ("running", "spawned"):
                         return json.dumps(
-                            {"agent_id": agent_id, "status": ctx.status,
-                             "result": ctx.result or ""},
-                            ensure_ascii=False, indent=2,
+                            {
+                                "agent_id": agent_id,
+                                "status": ctx.status,
+                                "result": ctx.result or "",
+                            },
+                            ensure_ascii=False,
+                            indent=2,
                         )
                     # agent 仍在运行，继续等待
-                    logger.debug(
-                        f"Subagent {agent_id} still running after {waited:.0f}s"
-                    )
+                    logger.debug(f"Subagent {agent_id} still running after {waited:.0f}s")
                     continue
                 except Exception as e:
                     self.registry.cancel(agent_id)
                     return json.dumps(
                         {"agent_id": agent_id, "status": "failed", "error": str(e)},
-                        ensure_ascii=False, indent=2,
+                        ensure_ascii=False,
+                        indent=2,
                     )
 
             # 安全上限触发（极罕见：agent 运行超过 timeout+10min）
             self.registry.cancel(agent_id)
             return json.dumps(
-                {"agent_id": agent_id, "status": "timeout",
-                 "error": f"Safety cap reached after {safety_cap}s"},
-                ensure_ascii=False, indent=2,
+                {
+                    "agent_id": agent_id,
+                    "status": "timeout",
+                    "error": f"Safety cap reached after {safety_cap}s",
+                },
+                ensure_ascii=False,
+                indent=2,
             )
 
         return json.dumps(
@@ -739,8 +826,8 @@ class SpawnSubagentTool(BaseTool):
                 "status": "spawned",
                 "message": (
                     f"子agent已创建并在后台执行中。"
-                    f"使用 get_subagent_status(\"{agent_id}\") 查询进度和结果。"
-                    f"也可以使用 cancel_subagent(\"{agent_id}\") 取消任务。"
+                    f'使用 get_subagent_status("{agent_id}") 查询进度和结果。'
+                    f'也可以使用 cancel_subagent("{agent_id}") 取消任务。'
                 ),
             },
             ensure_ascii=False,
@@ -765,10 +852,30 @@ class SpawnSubagentTool(BaseTool):
         # 设置线程级 agent_id 前缀，所有后续日志自动带 [sub:xxx]
         _set_agent_id(agent_id)
         try:
-            return self._execute_async_inner(
-                agent_id, task, allowed_tools, timeout, context, model_config,
-                parent_client, parent_cancel_event, blackboard, skills_filter,
+            result = self._execute_async_inner(
+                agent_id,
+                task,
+                allowed_tools,
+                timeout,
+                context,
+                model_config,
+                parent_client,
+                parent_cancel_event,
+                blackboard,
+                skills_filter,
             )
+            if self.run_manager and context.run_id:
+                if context._cancelled.is_set() or context.status == "cancelled":
+                    self.run_manager.cancel(context.run_id)
+                elif context.status == "failed":
+                    self.run_manager.fail(context.run_id, context.result or result)
+                else:
+                    self.run_manager.complete(context.run_id, result)
+            return result
+        except Exception as exc:
+            if self.run_manager and context.run_id:
+                self.run_manager.fail(context.run_id, str(exc))
+            raise
         finally:
             _set_agent_id(None)
 
@@ -819,21 +926,25 @@ class SpawnSubagentTool(BaseTool):
                 context.protocol = subagent_config.llm.protocol
 
             # 记录初始任务到 tool_calls_log（对话回放用）
-            context.tool_calls_log.append({
-                "tool": "📤 Task",
-                "args": task[:200] + "..." if len(task) > 200 else task,
-                "result": "",
-                "ts": time.time(),
-            })
+            context.tool_calls_log.append(
+                {
+                    "tool": "📤 Task",
+                    "args": task[:200] + "..." if len(task) > 200 else task,
+                    "result": "",
+                    "ts": time.time(),
+                }
+            )
             self.registry._notify_status_change(agent_id)
 
             def _on_tool_call(tool_name: str, args: dict, result: str):
-                context.tool_calls_log.append({
-                    "tool": tool_name,
-                    "args": _truncate_args(args),
-                    "result": result[:300] + "..." if len(result) > 300 else result,
-                    "ts": time.time(),
-                })
+                context.tool_calls_log.append(
+                    {
+                        "tool": tool_name,
+                        "args": _truncate_args(args),
+                        "result": result[:300] + "..." if len(result) > 300 else result,
+                        "ts": time.time(),
+                    }
+                )
                 self.registry._notify_status_change(agent_id)
 
             if client is None:
@@ -846,11 +957,12 @@ class SpawnSubagentTool(BaseTool):
                 # 为子 agent 创建独立的 ToolRegistry，加载安全技能子集
                 subagent_registry = ToolRegistry.create_isolated()
                 for tool in self._tool_registry.get_all_tools():
-                    if hasattr(tool, '_is_mcp_tool') or tool.name.startswith("mcp__"):
+                    if hasattr(tool, "_is_mcp_tool") or tool.name.startswith("mcp__"):
                         subagent_registry.register(tool)
 
                 client = LLMClient(
-                    subagent_config, skip_skills_setup=False,
+                    subagent_config,
+                    skip_skills_setup=False,
                     tool_call_hook=_on_tool_call,
                     tool_registry=subagent_registry,
                     skills_filter=skills_filter,
@@ -860,15 +972,18 @@ class SpawnSubagentTool(BaseTool):
                 # Register blackboard tools on the dedicated registry
                 if blackboard:
                     from llm_chat.skills.task_delegator.blackboard_tools import (
-                        PostFindingTool, QueryFindingsTool,
+                        PostFindingTool,
+                        QueryFindingsTool,
                     )
+
                     subagent_registry.register(PostFindingTool(blackboard))
                     subagent_registry.register(QueryFindingsTool(blackboard))
 
             all_tools = client.get_builtin_tools()
             # Remove blocked tools (dangerous internals), keep everything else including MCP
             all_tools = [
-                t for t in all_tools
+                t
+                for t in all_tools
                 if t.get("function", {}).get("name") not in SpawnSubagentTool.BLOCKED_TOOLS
             ]
 
@@ -881,13 +996,10 @@ class SpawnSubagentTool(BaseTool):
                     skill = skill_manager.get_skill(skill_name)
                     if skill is None:
                         logger.warning(
-                            f"Subagent {agent_id} requested unavailable skill: "
-                            f"{skill_name}"
+                            f"Subagent {agent_id} requested unavailable skill: " f"{skill_name}"
                         )
                         continue
-                    allowed_tools.extend(
-                        tool.name for tool in skill.get_tools()
-                    )
+                    allowed_tools.extend(tool.name for tool in skill.get_tools())
 
             # Add blackboard tools if provided (agent-to-agent communication)
             if blackboard:
@@ -901,26 +1013,32 @@ class SpawnSubagentTool(BaseTool):
 
             if allowed_tools:
                 allowed_names = set(allowed_tools) - self.BLOCKED_TOOLS
-                available_names = {
-                    tool.get("function", {}).get("name") for tool in all_tools
-                }
+                available_names = {tool.get("function", {}).get("name") for tool in all_tools}
                 unavailable = allowed_names - available_names
                 if unavailable:
                     logger.warning(
                         f"Subagent {agent_id} requested unavailable tools: {unavailable}"
                     )
                 filtered_tool_defs = [
-                    t for t in all_tools
-                    if t.get("function", {}).get("name") in allowed_names
+                    t for t in all_tools if t.get("function", {}).get("name") in allowed_names
                 ]
                 result = self._call_llm_with_retry(
-                    client, agent_id, task, filtered_tool_defs, context,
+                    client,
+                    agent_id,
+                    task,
+                    filtered_tool_defs,
+                    context,
                     parent_cancel_event,
                 )
             else:
                 logger.info(f"Subagent {agent_id} calling LLM without tools")
                 result = self._call_llm_with_retry(
-                    client, agent_id, task, None, context, parent_cancel_event,
+                    client,
+                    agent_id,
+                    task,
+                    None,
+                    context,
+                    parent_cancel_event,
                 )
 
             if context._cancelled.is_set():
@@ -954,7 +1072,7 @@ class SpawnSubagentTool(BaseTool):
         parent_cancel_event=None,
     ) -> str:
         """带指数退避重试的 LLM 调用。检查 parent 和 sub-agent 取消信号。"""
-        tools_cfg = getattr(self.config, 'tools', None)
+        tools_cfg = getattr(self.config, "tools", None)
         max_retries = tools_cfg.subagent_max_retries if tools_cfg else 2
         retry_delay = tools_cfg.subagent_retry_delay if tools_cfg else 2.0
 
@@ -985,7 +1103,7 @@ class SpawnSubagentTool(BaseTool):
                 last_error = e
                 if attempt >= max_retries:
                     raise
-                delay = retry_delay * (2 ** attempt)
+                delay = retry_delay * (2**attempt)
                 logger.warning(
                     f"Subagent {agent_id} LLM call failed on attempt "
                     f"{attempt + 1}/{max_retries + 1}, "
@@ -1000,14 +1118,10 @@ class SpawnSubagentTool(BaseTool):
             except (KeyError, IndexError, TypeError) as e:
                 # API response format issue (e.g., no 'choices' field)
                 # This is fatal — retrying won't help
-                logger.error(
-                    f"Subagent {agent_id}: API response format error: {e}"
-                )
+                logger.error(f"Subagent {agent_id}: API response format error: {e}")
                 raise RuntimeError(f"API response error: {e}") from e
 
-        raise last_error or RuntimeError(
-            f"Subagent {agent_id}: unknown LLM call failure"
-        )
+        raise last_error or RuntimeError(f"Subagent {agent_id}: unknown LLM call failure")
 
     def _create_subagent_config(self, model_config: Dict[str, Any]) -> "Config":
         from llm_chat.config import Config, LLMConfig
@@ -1045,10 +1159,7 @@ class GetSubagentStatusTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return (
-            "查询子agent的状态和结果。支持阻塞等待（wait=true）或即时查询。"
-            "返回status, result, created_at等信息。"
-        )
+        return "查询子agent的状态和结果。支持阻塞等待（wait=true）或即时查询。" "返回status, result, created_at等信息。"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1083,20 +1194,14 @@ class GetSubagentStatusTool(BaseTool):
             return error_msg
 
         # 僵死检测：超过 deadline 仍在 running → 自动标记 timeout
-        if (
-            context.status == "running"
-            and context.deadline > 0
-            and time.time() > context.deadline
-        ):
+        if context.status == "running" and context.deadline > 0 and time.time() > context.deadline:
             logger.warning(
                 f"Subagent {agent_id} appears dead (running {time.time() - context.started_at:.0f}s, "
                 f"deadline exceeded by {time.time() - context.deadline:.0f}s)"
             )
             self.registry.cancel(agent_id)
             context.status = "timeout"
-            context.result = (
-                f"Agent timed out after {time.time() - context.started_at:.0f}s"
-            )
+            context.result = f"Agent timed out after {time.time() - context.started_at:.0f}s"
 
         wait = kwargs.get("wait", False)
         if wait and context.status == "running":
@@ -1115,6 +1220,7 @@ class GetSubagentStatusTool(BaseTool):
                 "created_at": context.created_at.isoformat(),
                 "result": context.result,
                 "work_dir": context.work_dir,
+                "run_id": context.run_id,
             },
             ensure_ascii=False,
             indent=2,
@@ -1135,9 +1241,7 @@ class CancelSubagentTool(BaseTool):
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                "agent_id": {"type": "string", "description": "要取消的子agent ID"}
-            },
+            "properties": {"agent_id": {"type": "string", "description": "要取消的子agent ID"}},
             "required": ["agent_id"],
         }
 
@@ -1173,10 +1277,7 @@ class ListSubagentsTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return (
-            "列出所有子agent及其状态。用于在异步模式下查看多个并行子agent的进度。"
-            "每个子agent提供 agent_id, status, result 等信息。"
-        )
+        return "列出所有子agent及其状态。用于在异步模式下查看多个并行子agent的进度。" "每个子agent提供 agent_id, status, result 等信息。"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}}
@@ -1189,7 +1290,8 @@ class ListSubagentsTool(BaseTool):
         if not agents:
             return json.dumps(
                 {"agents": [], "message": "No sub-agents found"},
-                ensure_ascii=False, indent=2,
+                ensure_ascii=False,
+                indent=2,
             )
 
         active_count = sum(1 for a in agents if a["status"] == "running")

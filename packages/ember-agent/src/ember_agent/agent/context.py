@@ -29,20 +29,19 @@ class AgentContext:
     conversation_id: str
     created_at: datetime
     status: str
-    task: str = ""                        # Task description for GUI display
+    task: str = ""  # Task description for GUI display
+    run_id: Optional[str] = None  # Unified runtime Run identity
     result: Optional[str] = None
-    result_var: str = ""                   # Alias for downstream agents to reference
+    result_var: str = ""  # Alias for downstream agents to reference
     work_dir: Optional[str] = None
     # Execution metadata — for GUI display
     model: str = ""
     protocol: str = ""
     tool_calls_log: list = field(default_factory=list)
-    _cancelled: threading.Event = field(
-        default_factory=threading.Event, init=False, repr=False
-    )
+    _cancelled: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     # Dead agent detection
-    started_at: float = 0.0   # time.time() when execution began
-    deadline: float = 0.0     # time.time() after which agent is considered dead
+    started_at: float = 0.0  # time.time() when execution began
+    deadline: float = 0.0  # time.time() after which agent is considered dead
 
 
 def make_agent_context(

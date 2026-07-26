@@ -86,6 +86,15 @@ class RunManager:
             ids = list(self._order)[-max(0, limit) :]
             return [self._runs[run_id].model_copy(deep=True) for run_id in reversed(ids)]
 
+    def children(self, parent_run_id: str) -> List[Run]:
+        """Return direct children in creation order."""
+        with self._lock:
+            return [
+                self._runs[run_id].model_copy(deep=True)
+                for run_id in self._order
+                if self._runs[run_id].parent_run_id == parent_run_id
+            ]
+
     def subscribe(self, observer: RunObserver) -> Callable[[], None]:
         with self._lock:
             self._observers.append(observer)

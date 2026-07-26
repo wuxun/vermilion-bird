@@ -21,9 +21,11 @@ from llm_chat.skills.task_delegator.tools import SpawnSubagentTool
 from llm_chat.skills.task_delegator.context import AgentContext
 from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 from llm_chat.tools.registry import ToolRegistry
+from llm_chat.runtime import RunManager, RunStatus, RunType
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_config():
@@ -86,6 +88,7 @@ def spawn_tool(mock_config, parent_context, subagent_registry, tool_registry):
 
 # ── AgentRole tests ────────────────────────────────────────────────
 
+
 class TestAgentRoleIntegration:
     """AgentRole presets work correctly with SpawnSubagentTool."""
 
@@ -140,14 +143,39 @@ class TestAgentRoleIntegration:
         assert "web_fetch" in role.default_tools
 
 
+def test_subagent_wrapper_finishes_its_unified_run(spawn_tool, parent_context):
+    manager = RunManager()
+    parent = manager.start(RunType.CHAT)
+    child = manager.start(RunType.WORKFLOW, parent_run_id=parent.id)
+    parent_context.run_id = child.id
+    spawn_tool.run_manager = manager
+
+    with patch.object(
+        spawn_tool,
+        "_execute_async_inner",
+        return_value="agent result",
+    ):
+        result = spawn_tool._execute_async(
+            parent_context.agent_id,
+            parent_context.task,
+            [],
+            30,
+            parent_context,
+        )
+
+    assert result == "agent result"
+    assert manager.get(child.id).status == RunStatus.COMPLETED
+
+
 # ── SpawnSubagentTool + AgentRole tests ─────────────────────────────
+
 
 class TestSpawnWithRole:
     """SpawnSubagentTool correctly applies AgentRole presets."""
 
     def test_spawn_with_planner_role(self, spawn_tool, mock_config):
         """Spawn with planner role: agent gets injected system prompt."""
-        with patch.object(spawn_tool, '_execute_async_inner', return_value="Plan created."):
+        with patch.object(spawn_tool, "_execute_async_inner", return_value="Plan created."):
             result = spawn_tool.execute(
                 task="Plan a research strategy for climate change",
                 role="planner",
@@ -159,7 +187,7 @@ class TestSpawnWithRole:
 
     def test_spawn_with_executor_role(self, spawn_tool, mock_config):
         """Spawn with executor role: default_tools are applied."""
-        with patch.object(spawn_tool, '_execute_async_inner', return_value="Data collected."):
+        with patch.object(spawn_tool, "_execute_async_inner", return_value="Data collected."):
             result = spawn_tool.execute(
                 task="Search for latest climate data",
                 role="executor",
@@ -181,8 +209,13 @@ class TestSpawnWithRole:
         spawn_tool.config.tools.subagent_max_concurrent = 1
         # Pre-register a running agent
         ctx = make_agent_context(
-            agent_id="busy", parent_id=None, depth=0,
-            allowed_tools=set(), conversation_id="c", task="busy", work_dir="/tmp",
+            agent_id="busy",
+            parent_id=None,
+            depth=0,
+            allowed_tools=set(),
+            conversation_id="c",
+            task="busy",
+            work_dir="/tmp",
         )
         ctx.status = "running"
         subagent_registry._agents["busy"] = ctx
@@ -194,6 +227,7 @@ class TestSpawnWithRole:
 
 
 # ── CardAggregator tests ──────────────────────────────────────────
+
 
 class TestCardAggregatorIntegration:
     """CardAggregator strategies with multi-agent scenarios."""
@@ -220,18 +254,30 @@ class TestCardAggregatorIntegration:
     def test_vote_three_agree(self):
         """Three agents agree: majority wins."""
         cards = [
-            self._make_card("What to do?", [
-                ("Option A", "First choice", 0.9),
-                ("Option B", "Second choice", 0.5),
-            ], recommendation="A"),
-            self._make_card("What to do?", [
-                ("Option A", "First choice", 0.8),
-                ("Option B", "Second choice", 0.6),
-            ], recommendation="A"),
-            self._make_card("What to do?", [
-                ("Option A", "First choice", 0.7),
-                ("Option B", "Second choice", 0.9),
-            ], recommendation="B"),
+            self._make_card(
+                "What to do?",
+                [
+                    ("Option A", "First choice", 0.9),
+                    ("Option B", "Second choice", 0.5),
+                ],
+                recommendation="A",
+            ),
+            self._make_card(
+                "What to do?",
+                [
+                    ("Option A", "First choice", 0.8),
+                    ("Option B", "Second choice", 0.6),
+                ],
+                recommendation="A",
+            ),
+            self._make_card(
+                "What to do?",
+                [
+                    ("Option A", "First choice", 0.7),
+                    ("Option B", "Second choice", 0.9),
+                ],
+                recommendation="B",
+            ),
         ]
         result = CardAggregator.vote(cards)
         assert result.recommendation == "A"  # 2 votes A, 1 vote B
@@ -239,14 +285,22 @@ class TestCardAggregatorIntegration:
     def test_weighted_score_different_weights(self):
         """Weighted scoring with agent-specific weights."""
         cards = [
-            self._make_card("Choice", [
-                ("Option A", "Good", 0.9),
-                ("Option B", "Bad", 0.3),
-            ], recommendation="A"),
-            self._make_card("Choice", [
-                ("Option A", "Risky", 0.2),
-                ("Option B", "Safe", 0.95),
-            ], recommendation="B"),
+            self._make_card(
+                "Choice",
+                [
+                    ("Option A", "Good", 0.9),
+                    ("Option B", "Bad", 0.3),
+                ],
+                recommendation="A",
+            ),
+            self._make_card(
+                "Choice",
+                [
+                    ("Option A", "Risky", 0.2),
+                    ("Option B", "Safe", 0.95),
+                ],
+                recommendation="B",
+            ),
         ]
         # Agent 0 (expert) weight 2.0, Agent 1 (junior) weight 0.5
         weights = {None: 0.5}  # Both cards have no ID → gets 0.5 each
@@ -273,12 +327,14 @@ class TestCardAggregatorIntegration:
 
 # ── CollaborationPattern tests ──────────────────────────────────────
 
+
 class TestCollaborationPatterns:
     """CollaborationPattern registry and built-in patterns."""
 
     def test_all_patterns_registered(self):
         """All 6 built-in patterns exist."""
         from ember_agent.patterns import list_patterns
+
         names = list_patterns()
         assert "research" in names
         assert "debate" in names
@@ -290,6 +346,7 @@ class TestCollaborationPatterns:
     def test_research_pattern_structure(self):
         """research: planner → executors (parallel) → synthesizer."""
         from ember_agent.patterns import get_pattern
+
         pat = get_pattern("research")
         assert pat.aggregator_role == "synthesizer"
         assert len(pat.stages) == 2
@@ -299,6 +356,7 @@ class TestCollaborationPatterns:
     def test_pipeline_pattern_sequence(self):
         """pipeline: sequential chain, each stage depends on previous."""
         from ember_agent.patterns import get_pattern
+
         pat = get_pattern("pipeline")
         assert len(pat.stages) == 3
         assert pat.stages[1].depends_on == ["stage_0"]
@@ -307,6 +365,7 @@ class TestCollaborationPatterns:
     def test_critique_refine_has_loops(self):
         """critique_refine pattern has max_rounds > 1 for the loop."""
         from ember_agent.patterns import get_pattern
+
         pat = get_pattern("critique_refine")
         assert pat.max_rounds == 3
         assert len(pat.stages) == 2
@@ -314,6 +373,7 @@ class TestCollaborationPatterns:
 
 
 # ── End-to-end manager-worker simulation ─────────────────────────
+
 
 class TestManagerWorkerSimulation:
     """Simulate the full manager-worker flow with mocked LLM calls.
@@ -331,7 +391,7 @@ class TestManagerWorkerSimulation:
         """Simulate different agent responses based on task content."""
         pass  # Not used — replaced by _execute_async_inner mock
 
-    @patch.object(SpawnSubagentTool, '_execute_async_inner')
+    @patch.object(SpawnSubagentTool, "_execute_async_inner")
     def test_full_manager_worker_flow(self, mock_exec, spawn_tool, mock_config):
         """Simulate the complete manager-worker pipeline."""
         # Mock responses for each agent call
@@ -342,16 +402,27 @@ class TestManagerWorkerSimulation:
             call_count[0] += 1
             responses = [
                 # Planner
-                json.dumps({
-                    "subtasks": [
-                        {"id": 1, "title": "Market size analysis",
-                         "query": "What is the current size of the climate tech market?"},
-                        {"id": 2, "title": "Key players identification",
-                         "query": "Who are the top 5 climate tech companies?"},
-                        {"id": 3, "title": "Investment trends",
-                         "query": "What are the latest VC investment trends in climate tech?"},
-                    ]
-                }),
+                json.dumps(
+                    {
+                        "subtasks": [
+                            {
+                                "id": 1,
+                                "title": "Market size analysis",
+                                "query": "What is the current size of the climate tech market?",
+                            },
+                            {
+                                "id": 2,
+                                "title": "Key players identification",
+                                "query": "Who are the top 5 climate tech companies?",
+                            },
+                            {
+                                "id": 3,
+                                "title": "Investment trends",
+                                "query": "What are the latest VC investment trends in climate tech?",
+                            },
+                        ]
+                    }
+                ),
                 # Executor 1
                 "The climate tech market is estimated at $20B in 2025, growing 18% YoY.",
                 # Executor 2
@@ -359,19 +430,27 @@ class TestManagerWorkerSimulation:
                 # Executor 3
                 "VC funding in climate tech reached $40B in 2024, up 25% from 2023.",
                 # Synthesizer
-                json.dumps({
-                    "title": "Climate Tech Investment Recommendation",
-                    "context": "Synthesized from 3 agents",
-                    "options": [
-                        {"label": "Invest in carbon capture",
-                         "description": "Fastest growing segment with strong policy tailwinds"},
-                        {"label": "Invest in green hydrogen",
-                         "description": "High growth potential but still early stage"},
-                        {"label": "Wait for market correction",
-                         "description": "Valuations currently elevated across all subsectors"},
-                    ],
-                    "recommendation": "A",
-                }),
+                json.dumps(
+                    {
+                        "title": "Climate Tech Investment Recommendation",
+                        "context": "Synthesized from 3 agents",
+                        "options": [
+                            {
+                                "label": "Invest in carbon capture",
+                                "description": "Fastest growing segment with strong policy tailwinds",
+                            },
+                            {
+                                "label": "Invest in green hydrogen",
+                                "description": "High growth potential but still early stage",
+                            },
+                            {
+                                "label": "Wait for market correction",
+                                "description": "Valuations currently elevated across all subsectors",
+                            },
+                        ],
+                        "recommendation": "A",
+                    }
+                ),
             ]
             if idx < len(responses):
                 return responses[idx]
@@ -475,12 +554,14 @@ class TestManagerWorkerSimulation:
 
 # ── SharedBlackboard + PeerReviewTool tests ──────────────────────
 
+
 class TestPeerCollaboration:
     """Agent peer review and dialogue patterns."""
 
     def test_peer_review_tool_schema(self):
         """PeerReviewTool has the expected schema."""
         from ember_agent.peer.review import PeerReviewTool
+
         tool = PeerReviewTool(registry=AgentRegistry())
         schema = tool.get_parameters_schema()
         props = schema.get("properties", {})
@@ -491,6 +572,7 @@ class TestPeerCollaboration:
     def test_shared_blackboard_basic(self):
         """SharedBlackboard post/query operations."""
         from ember_agent.agent.blackboard import SharedBlackboard, BlackboardEntry, EntryType
+
         board = SharedBlackboard()
 
         entry1 = BlackboardEntry(
@@ -512,6 +594,7 @@ class TestPeerCollaboration:
     def test_shared_blackboard_overwrite(self):
         """Blackboard entries can be queried and removed."""
         from ember_agent.agent.blackboard import SharedBlackboard, BlackboardEntry, EntryType
+
         board = SharedBlackboard()
 
         entry = BlackboardEntry(

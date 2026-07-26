@@ -30,10 +30,16 @@ from llm_chat.conversation import ConversationManager
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.pipeline.stage import PipelineContext
 from llm_chat.pipeline.stages import (
-    IntentStage, ShortcutStage,
-    PersistUserStage, SystemContextStage, HistoryStage,
-    ModelRouteStage, CompressStage,
-    PersistAssistantStage, MemoryExtractStage, KnowledgeExtractStage,
+    IntentStage,
+    ShortcutStage,
+    PersistUserStage,
+    SystemContextStage,
+    HistoryStage,
+    ModelRouteStage,
+    CompressStage,
+    PersistAssistantStage,
+    MemoryExtractStage,
+    KnowledgeExtractStage,
     TokenRecordStage,
 )
 from llm_chat.pipeline import MutableStrHolder
@@ -68,12 +74,13 @@ class ChatGraphState(BaseModel):
 # Thread-local ensures isolation when multiple requests run concurrently
 # (e.g., scheduler + user message in parallel).
 import threading
+
 _chat_ctx_local = threading.local()
 
 
 def _ctx() -> PipelineContext:
     """Get the current PipelineContext. Raises if not set."""
-    ctx = getattr(_chat_ctx_local, 'ctx', None)
+    ctx = getattr(_chat_ctx_local, "ctx", None)
     assert ctx is not None, "PipelineContext not initialized"
     return ctx
 
@@ -99,6 +106,7 @@ def _routing_update(state: ChatGraphState, **changes) -> ChatRoutingState:
 async def _intent_node(state: ChatGraphState) -> dict:
     """Intent classification node."""
     from llm_chat.intent import IntentClassifier
+
     classifier = _ctx()._extra.get("intent_classifier")
     decision = classifier.classify(_ctx().user_message)
     _ctx().routing_decision = decision
@@ -193,11 +201,7 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
     client = _ctx()._extra.get("client")
     config = _ctx()._extra.get("config")
     tools_enabled = getattr(config, "enable_tools", True)
-    tools = (
-        client.get_builtin_tools()
-        if tools_enabled and client.has_builtin_tools()
-        else []
-    )
+    tools = client.get_builtin_tools() if tools_enabled and client.has_builtin_tools() else []
 
     # Build/accumulate messages
     msgs = _ctx()._extra.get("_tool_messages")
@@ -219,16 +223,15 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
         if _ctx().on_chunk:
             _ctx().on_chunk(text)
         _ctx().response = text
-        return {
-            "routing": _routing_update(
-                state, has_response=True, has_tool_calls=False
-            )
-        }
+        return {"routing": _routing_update(state, has_response=True, has_tool_calls=False)}
 
     # Streaming: use streaming single-call for token-by-token output
     if _ctx().on_chunk:
         result = client.chat_stream_single_with_tools(
-            tools, msgs, chunk_callback=_ctx().on_chunk, **_ctx().params,
+            tools,
+            msgs,
+            chunk_callback=_ctx().on_chunk,
+            **_ctx().params,
         )
     else:
         result = client.chat_single_with_tools("", tools, messages_override=msgs, **_ctx().params)
@@ -237,7 +240,9 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
     if tool_calls and state.routing.tool_call_count < state.routing.max_tool_iterations:
         # Fire tool_call_start callbacks for GUI
         for tc in tool_calls:
-            args_json = json.dumps(tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False)
+            args_json = json.dumps(
+                tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False
+            )
             if _ctx().on_tool_start:
                 _ctx().on_tool_start(tc.name, args_json)
 
@@ -253,18 +258,11 @@ async def _llm_call_node(state: ChatGraphState) -> dict:
     else:
         text = result.get("text", "")
         if tool_calls and not text:
-            text = (
-                "工具调用已达到最大迭代次数 "
-                f"({state.routing.max_tool_iterations})，已停止继续执行。"
-            )
+            text = "工具调用已达到最大迭代次数 " f"({state.routing.max_tool_iterations})，已停止继续执行。"
         if not _ctx().on_chunk and text:
             _ctx().on_chunk(text) if _ctx().on_chunk else None
         _ctx().response = text
-        return {
-            "routing": _routing_update(
-                state, has_response=True, has_tool_calls=False
-            )
-        }
+        return {"routing": _routing_update(state, has_response=True, has_tool_calls=False)}
 
 
 async def _execute_tools_node(state: ChatGraphState) -> dict:
@@ -276,12 +274,14 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
 
     tool_call_dicts = []
     for tc in tool_calls:
-        tc_id = tc.id if hasattr(tc, 'id') else f"tc_{tc.name}"
+        tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
         args = tc.arguments if isinstance(tc.arguments, dict) else {}
-        tool_call_dicts.append({
-            "id": tc_id,
-            "function": {"name": tc.name, "arguments": json.dumps(args)},
-        })
+        tool_call_dicts.append(
+            {
+                "id": tc_id,
+                "function": {"name": tc.name, "arguments": json.dumps(args)},
+            }
+        )
 
     executor = ToolExecutor(registry, max_workers=5)
     try:
@@ -290,18 +290,22 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
         executor.shutdown()
 
     for tc, result in zip(tool_calls, results):
-        tc_id = tc.id if hasattr(tc, 'id') else f"tc_{tc.name}"
+        tc_id = tc.id if hasattr(tc, "id") else f"tc_{tc.name}"
         content = result.get("content", "")
         # Fire tool_call_end callback for GUI
         if _ctx().on_tool_end:
-            args_str = json.dumps(tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False)
+            args_str = json.dumps(
+                tc.arguments if isinstance(tc.arguments, dict) else {}, ensure_ascii=False
+            )
             _ctx().on_tool_end(tc.name, args_str, content[:200])
         # Append tool result to messages
-        _ctx()._extra.setdefault("_tool_messages", []).append({
-            "role": "tool",
-            "tool_call_id": tc_id,
-            "content": content,
-        })
+        _ctx()._extra.setdefault("_tool_messages", []).append(
+            {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": content,
+            }
+        )
 
     _ctx()._extra.pop("_pending_tool_calls", None)
     return {
@@ -311,7 +315,6 @@ async def _execute_tools_node(state: ChatGraphState) -> dict:
             tool_call_count=state.routing.tool_call_count + 1,
         )
     }
-
 
 
 async def _persist_assistant_node(state: ChatGraphState) -> dict:
@@ -417,7 +420,8 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
 
     # Conditional: shortcut may skip the rest
     g.add_conditional_edge(
-        "shortcut", _post_shortcut_router,
+        "shortcut",
+        _post_shortcut_router,
         {
             "persist_user": "persist_user",
             "persist_assistant": "persist_assistant",
@@ -434,7 +438,8 @@ def build_chat_graph() -> StateGraph[ChatGraphState]:
     # LLM → persist (tool loop handled internally by LLMCallStage/LLMClient)
     # Graph-level tool loop: llm_call → execute_tools → llm_call (or persist)
     g.add_conditional_edge(
-        "llm_call", _post_llm_router,
+        "llm_call",
+        _post_llm_router,
         {"execute_tools": "execute_tools", "persist_assistant": "persist_assistant"},
     )
     g.add_edge("execute_tools", "llm_call")
@@ -472,9 +477,11 @@ class ChatCoreGraph:
         self._style_holder = MutableStrHolder("default")
 
         from llm_chat.intent import IntentClassifier
+
         self.intent_classifier = IntentClassifier(
             enable_layer1=config.tools.enable_intent
-            if hasattr(config.tools, 'enable_intent') else True
+            if hasattr(config.tools, "enable_intent")
+            else True
         )
 
         self._graph = build_chat_graph()
@@ -489,12 +496,16 @@ class ChatCoreGraph:
         conversation_id: str,
         message: str,
         on_card: Optional[CardCallback] = None,
+        *,
+        parent_run_id: Optional[str] = None,
+        run_type: RunType = RunType.CHAT,
         **model_params,
     ) -> str:
         """Synchronous send_message — uses async graph internally."""
         run = self.run_manager.start(
-            RunType.CHAT,
+            run_type,
             conversation_id=conversation_id,
+            parent_run_id=parent_run_id,
             input={"message": message},
         )
         ctx = PipelineContext(
@@ -511,6 +522,7 @@ class ChatCoreGraph:
             "style_holder": self._style_holder,
             "client": self.client,
             "config": self.config,
+            "run_manager": self.run_manager,
             "run_id": run.id,
         }
 
@@ -534,7 +546,10 @@ class ChatCoreGraph:
             clear_card_context()
             _clear_ctx()
 
-        self.run_manager.complete(run.id, ctx.response)
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            self.run_manager.cancel(run.id)
+        else:
+            self.run_manager.complete(run.id, ctx.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
@@ -551,12 +566,16 @@ class ChatCoreGraph:
         on_tool_end: Optional[ToolCallEndCallback] = None,
         on_context_update: Optional[Callable[[int, int], None]] = None,
         on_card: Optional[CardCallback] = None,
+        *,
+        parent_run_id: Optional[str] = None,
+        run_type: RunType = RunType.CHAT,
         **model_params,
     ) -> str:
         """Streaming send_message."""
         run = self.run_manager.start(
-            RunType.CHAT,
+            run_type,
             conversation_id=conversation_id,
+            parent_run_id=parent_run_id,
             input={"message": message, "stream": True},
         )
         self._cancel_event = threading.Event()
@@ -578,6 +597,7 @@ class ChatCoreGraph:
             "style_holder": self._style_holder,
             "client": self.client,
             "config": self.config,
+            "run_manager": self.run_manager,
             "run_id": run.id,
         }
 
@@ -598,7 +618,10 @@ class ChatCoreGraph:
             clear_card_context()
             _clear_ctx()
 
-        self.run_manager.complete(run.id, ctx.response)
+        if ctx.cancel_event and ctx.cancel_event.is_set():
+            self.run_manager.cancel(run.id)
+        else:
+            self.run_manager.complete(run.id, ctx.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
@@ -632,5 +655,6 @@ class ChatCoreGraph:
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """Get all available tools (built-in + MCP)."""
         from llm_chat.tools import get_tool_registry
+
         registry = get_tool_registry()
         return registry.get_tools_for_openai()

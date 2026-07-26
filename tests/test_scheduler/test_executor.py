@@ -8,6 +8,7 @@ import pytest
 
 from llm_chat.scheduler.models import Task, TaskType, TaskStatus, TaskExecution
 from llm_chat.scheduler.task_executor import TaskExecutor
+from llm_chat.runtime import RunManager, RunStatus, RunType
 
 
 @pytest.fixture
@@ -112,6 +113,26 @@ class TestTaskExecutorInit:
         executor = TaskExecutor(app=mock_app, task_storage=mock_storage)
         assert executor.base_delay == 1.0
 
+    def test_executor_records_parent_and_forwards_it_to_chat(
+        self, mock_app, mock_storage, llm_chat_task
+    ):
+        mock_app.run_manager = RunManager()
+        mock_app.chat_core = MagicMock()
+        mock_app.chat_core.send_message.return_value = "done"
+        executor = TaskExecutor(app=mock_app, task_storage=mock_storage)
+
+        execution = executor.execute(llm_chat_task)
+
+        parent = mock_app.run_manager.list(limit=1)[0]
+        children = mock_app.run_manager.children(parent.id)
+        assert execution.status == TaskStatus.COMPLETED
+        assert parent.type == RunType.SCHEDULED
+        assert parent.status == RunStatus.COMPLETED
+        # ChatCore owns the child in production; verify the parent identity is
+        # forwarded across the scheduler boundary.
+        assert children == []
+        assert mock_app.chat_core.send_message.call_args.kwargs["parent_run_id"] == parent.id
+
 
 class TestExecuteLLMChat:
     """Tests for LLM chat task execution."""
@@ -131,22 +152,16 @@ class TestExecuteLLMChat:
     def test_execute_llm_chat_with_history(self, executor, llm_chat_task, mock_app):
         """Test LLM chat execution with conversation history."""
         mock_app.client.chat.return_value = "Response with context"
-        llm_chat_task.params["history"] = [
-            {"role": "user", "content": "Previous question"}
-        ]
+        llm_chat_task.params["history"] = [{"role": "user", "content": "Previous question"}]
 
         result = executor._execute_llm_chat(llm_chat_task)
 
         assert result == "Response with context"
         mock_app.client.chat.assert_called_once()
         _args, _kwargs = mock_app.client.chat.call_args
-        assert _kwargs.get("history") == [
-            {"role": "user", "content": "Previous question"}
-        ]
+        assert _kwargs.get("history") == [{"role": "user", "content": "Previous question"}]
 
-    def test_execute_llm_chat_with_custom_params(
-        self, executor, mock_app, mock_storage
-    ):
+    def test_execute_llm_chat_with_custom_params(self, executor, mock_app, mock_storage):
         """Test LLM chat execution with custom model params."""
         task = Task(
             id="task-1",
@@ -213,9 +228,7 @@ class TestExecuteSkill:
             created_at=datetime(2026, 3, 29, 12, 0, 0),
             updated_at=datetime(2026, 3, 29, 12, 0, 0),
         )
-        mock_app.client.execute_builtin_tool = MagicMock(
-            side_effect=ValueError("Skill not found")
-        )
+        mock_app.client.execute_builtin_tool = MagicMock(side_effect=ValueError("Skill not found"))
 
         with pytest.raises(ValueError, match="Skill not found"):
             executor._execute_skill(task)
@@ -224,9 +237,7 @@ class TestExecuteSkill:
 class TestExecuteMaintenance:
     """Tests for system maintenance tasks."""
 
-    def test_execute_maintenance_cleanup_memory(
-        self, executor, maintenance_task, mock_app
-    ):
+    def test_execute_maintenance_cleanup_memory(self, executor, maintenance_task, mock_app):
         """Test memory cleanup maintenance task."""
         memory_manager = MagicMock()
         memory_manager.compress_mid_term = MagicMock()
@@ -237,9 +248,7 @@ class TestExecuteMaintenance:
 
         assert "cleanup_memory" in result.lower() or "completed" in result.lower()
 
-    def test_execute_maintenance_archive_sessions(
-        self, executor, mock_app, mock_storage
-    ):
+    def test_execute_maintenance_archive_sessions(self, executor, mock_app, mock_storage):
         """Test session archival maintenance task."""
         task = Task(
             id="task-1",
@@ -285,9 +294,7 @@ class TestExecuteMaintenance:
 class TestExecute:
     """Tests for the main execute method."""
 
-    def test_execute_llm_chat_task(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_execute_llm_chat_task(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test execute method with LLM chat task type."""
         mock_app.client.chat.return_value = "Response"
 
@@ -310,9 +317,7 @@ class TestExecute:
         assert execution.result == "Skill result"
         mock_storage.save_execution.assert_called()
 
-    def test_execute_maintenance_task(
-        self, executor, maintenance_task, mock_app, mock_storage
-    ):
+    def test_execute_maintenance_task(self, executor, maintenance_task, mock_app, mock_storage):
         """Test execute method with maintenance task type."""
         execution = executor.execute(maintenance_task)
 
@@ -371,9 +376,7 @@ class TestRetryLogic:
         assert execution.retry_count == 2
         assert mock_app.client.chat.call_count == 3
 
-    def test_max_retries_exceeded(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_max_retries_exceeded(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test that retries stop after max attempts."""
         mock_app.client.chat.side_effect = Exception("Persistent error")
 
@@ -408,9 +411,7 @@ class TestRetryLogic:
         assert mock_app.client.chat.call_count == 2
 
     @patch("time.sleep")
-    def test_exponential_backoff(
-        self, mock_sleep, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_exponential_backoff(self, mock_sleep, executor, llm_chat_task, mock_app, mock_storage):
         """Test that exponential backoff is applied between retries."""
         mock_app.client.chat.side_effect = [
             Exception("Error 1"),
@@ -455,9 +456,7 @@ class TestRetryLogic:
 class TestExecutionHistory:
     """Tests for execution history recording."""
 
-    def test_save_execution_on_success(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_save_execution_on_success(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test that successful executions are saved."""
         mock_app.client.chat.return_value = "Response"
 
@@ -468,9 +467,7 @@ class TestExecutionHistory:
         assert isinstance(saved_execution, TaskExecution)
         assert saved_execution.status == TaskStatus.COMPLETED
 
-    def test_save_execution_on_failure(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_save_execution_on_failure(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test that failed executions are saved with error."""
         mock_app.client.chat.side_effect = Exception("API Error")
 
@@ -481,9 +478,7 @@ class TestExecutionHistory:
         assert saved_execution.status == TaskStatus.FAILED
         assert "API Error" in saved_execution.error
 
-    def test_execution_id_generated(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_execution_id_generated(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test that execution ID is generated."""
         mock_app.client.chat.return_value = "Response"
 
@@ -492,9 +487,7 @@ class TestExecutionHistory:
         assert execution.id is not None
         assert len(execution.id) > 0
 
-    def test_execution_links_to_task(
-        self, executor, llm_chat_task, mock_app, mock_storage
-    ):
+    def test_execution_links_to_task(self, executor, llm_chat_task, mock_app, mock_storage):
         """Test that execution is linked to its task."""
         mock_app.client.chat.return_value = "Response"
 

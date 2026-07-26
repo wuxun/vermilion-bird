@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional, List, Callable, Any, Dict
 # This is critical for Python 3.14 compatibility (pkg_resources deprecated)
 
 from .models import Task, TaskType, TaskStatus, TaskExecution
+from llm_chat.runtime import RunType
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -94,17 +95,14 @@ class SchedulerService:
 
         # Webhook 事件驱动触发器
         self._webhook_server: Optional[WebhookServer] = None
-        webhook_enabled = getattr(config, 'webhook_enabled', False)
-        webhook_port = getattr(config, 'webhook_port', 9100)
-        webhook_host = getattr(config, 'webhook_host', '127.0.0.1')
+        webhook_enabled = getattr(config, "webhook_enabled", False)
+        webhook_port = getattr(config, "webhook_port", 9100)
+        webhook_host = getattr(config, "webhook_host", "127.0.0.1")
         if webhook_enabled:
             from .webhook import WebhookServer
-            self._webhook_server = WebhookServer(
-                port=webhook_port, host=webhook_host
-            )
-            logger.info(
-                f"Webhook server configured on {webhook_host}:{webhook_port}"
-            )
+
+            self._webhook_server = WebhookServer(port=webhook_port, host=webhook_host)
+            logger.info(f"Webhook server configured on {webhook_host}:{webhook_port}")
 
     def _get_notification_service(self):
         """动态创建通知服务"""
@@ -136,9 +134,7 @@ class SchedulerService:
             )
         }
 
-        executors = {
-            "default": ThreadPoolExecutor(max_workers=self._config.max_workers)
-        }
+        executors = {"default": ThreadPoolExecutor(max_workers=self._config.max_workers)}
 
         job_defaults = {
             "coalesce": True,
@@ -355,15 +351,11 @@ class SchedulerService:
                 return True
             else:
                 # Job 不存在（可能是已执行的一次性任务），直接调用执行方法
-                logger.debug(
-                    f"Job not found in scheduler, executing directly: {task_id}"
-                )
+                logger.debug(f"Job not found in scheduler, executing directly: {task_id}")
                 # 在新线程中执行任务以避免阻塞 UI
                 import threading
 
-                thread = threading.Thread(
-                    target=self._execute_task, args=(task_id,), daemon=True
-                )
+                thread = threading.Thread(target=self._execute_task, args=(task_id,), daemon=True)
                 thread.start()
                 logger.info(f"Task triggered (direct execution): {task_id}")
                 return True
@@ -445,9 +437,7 @@ class SchedulerService:
                 return datetime.strptime(date_str, fmt)
             except ValueError:
                 continue
-        raise ValueError(
-            f"无法解析时间格式: {date_str}，支持的格式: YYYY-MM-DD HH:MM:SS 或 ISO 格式"
-        )
+        raise ValueError(f"无法解析时间格式: {date_str}，支持的格式: YYYY-MM-DD HH:MM:SS 或 ISO 格式")
 
     def _execute_task(self, task_id: str, task_override: Optional[Task] = None):
         """执行任务（由调度器调用）。
@@ -463,6 +453,16 @@ class SchedulerService:
             logger.error(f"Task not found: {task_id}")
             return
 
+        run_type = {
+            TaskType.WEBHOOK: RunType.WEBHOOK,
+            TaskType.PROACTIVE_CHAT: RunType.PROACTIVE,
+        }.get(task.task_type, RunType.SCHEDULED)
+        run = self._app.run_manager.start(
+            run_type,
+            input={"task_id": task.id, "params": task.params},
+            metadata={"task_name": task.name, "task_type": task.task_type.value},
+        )
+
         execution = TaskExecution(
             id=execution_id,
             task_id=task_id,
@@ -473,7 +473,7 @@ class SchedulerService:
         self._storage.save_execution(execution)
 
         try:
-            result = self._run_task(task)
+            result = self._run_task(task, parent_run_id=run.id)
 
             execution.status = TaskStatus.COMPLETED
             execution.finished_at = datetime.now()
@@ -481,6 +481,7 @@ class SchedulerService:
             self._storage.save_execution(execution)
 
             logger.info(f"Task completed: {task_id}")
+            self._app.run_manager.complete(run.id, result)
             self._notify_task_completion(task, result, success=True)
 
         except Exception as e:
@@ -490,9 +491,10 @@ class SchedulerService:
             self._storage.save_execution(execution)
 
             logger.error(f"Task failed: {task_id} - {e}")
+            self._app.run_manager.fail(run.id, str(e))
             self._notify_task_completion(task, str(e), success=False)
 
-    def _run_task(self, task: Task) -> str:
+    def _run_task(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """运行任务逻辑。
 
         Args:
@@ -502,29 +504,29 @@ class SchedulerService:
             任务执行结果
         """
         if task.task_type == TaskType.LLM_CHAT:
-            return self._run_llm_chat_task(task)
+            return self._run_llm_chat_task(task, parent_run_id=parent_run_id)
+        elif task.task_type == TaskType.PROACTIVE_CHAT:
+            return self._run_llm_chat_task(task, parent_run_id=parent_run_id)
         elif task.task_type == TaskType.SKILL_EXECUTION:
             return self._run_skill_task(task)
         elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
             return self._run_maintenance_task(task)
         elif task.task_type == TaskType.WEBHOOK:
-            return self._run_webhook_task(task)
+            return self._run_webhook_task(task, parent_run_id=parent_run_id)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
-    def _run_webhook_task(self, task: Task) -> str:
+    def _run_webhook_task(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """Execute a webhook-triggered chat while preserving its payload."""
         params = dict(task.params)
         payload = params.get("webhook_payload", {})
         message = params.get("message", "处理以下 webhook 事件")
         payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
         params["message"] = f"{message}\n\nWebhook payload:\n{payload_text}"
-        delegated = task.model_copy(
-            update={"task_type": TaskType.LLM_CHAT, "params": params}
-        )
-        return self._run_llm_chat_task(delegated)
+        delegated = task.model_copy(update={"task_type": TaskType.LLM_CHAT, "params": params})
+        return self._run_llm_chat_task(delegated, parent_run_id=parent_run_id)
 
-    def _run_llm_chat_task(self, task: Task) -> str:
+    def _run_llm_chat_task(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """执行 LLM 聊天任务，通过 ChatCore 完整管道。"""
         params = task.params
         message = params.get("message", "")
@@ -543,6 +545,7 @@ class SchedulerService:
 
         # 捕获决策卡片
         captured_cards = []
+
         def on_card(card):
             captured_cards.append(card)
 
@@ -556,6 +559,7 @@ class SchedulerService:
             conversation_id,
             message,
             on_card=on_card,
+            parent_run_id=parent_run_id,
             **extra_kwargs,
         )
 
@@ -669,13 +673,13 @@ class SchedulerService:
                     pass
             if not recent:
                 return
-            receive_id = (
-                recent.get("chat_id") or recent.get("open_id")
-                or recent.get("user_id")
-            )
+            receive_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
             receive_id_type = (
-                "chat_id" if "chat_id" in recent
-                else "open_id" if "open_id" in recent else "user_id"
+                "chat_id"
+                if "chat_id" in recent
+                else "open_id"
+                if "open_id" in recent
+                else "user_id"
             )
             if not receive_id:
                 return
@@ -739,7 +743,9 @@ class SchedulerService:
                     callback=lambda tid, payload, t=task: self._execute_webhook_task(tid, payload),
                     secret=secret,
                 )
-        logger.info(f"Registered {sum(1 for t in tasks if t.task_type == TaskType.WEBHOOK and t.enabled)} webhook tasks")
+        logger.info(
+            f"Registered {sum(1 for t in tasks if t.task_type == TaskType.WEBHOOK and t.enabled)} webhook tasks"
+        )
 
     def _execute_webhook_task(self, task_id: str, payload: dict):
         """执行 webhook 触发的任务。
@@ -797,13 +803,13 @@ class SchedulerService:
                     pass
             if not recent:
                 return
-            receive_id = (
-                recent.get("chat_id") or recent.get("open_id")
-                or recent.get("user_id")
-            )
+            receive_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
             receive_id_type = (
-                "chat_id" if "chat_id" in recent
-                else "open_id" if "open_id" in recent else "user_id"
+                "chat_id"
+                if "chat_id" in recent
+                else "open_id"
+                if "open_id" in recent
+                else "user_id"
             )
             if not receive_id:
                 return
@@ -812,10 +818,7 @@ class SchedulerService:
             if context:
                 lines.append(f"  {context}")
             for opt in getattr(card, "options", []) or []:
-                rec = (
-                    "✅" if getattr(opt, "id", "") == getattr(card, "recommendation", "")
-                    else "  "
-                )
+                rec = "✅" if getattr(opt, "id", "") == getattr(card, "recommendation", "") else "  "
                 lines.append(f"{rec} 选{opt.id}: {opt.label}")
             adapter.send_message(
                 receive_id=receive_id,
@@ -832,17 +835,20 @@ class SchedulerService:
             return
         try:
             from datetime import date
+
             today = date.today().isoformat()
             summary = result[:300].replace("\n", " ")
             self._app.storage.save_digest(
                 digest_date=today,
-                items=[{
-                    "title": task.name,
-                    "summary": summary,
-                    "source": "scheduled_task",
-                    "source_url": "",
-                    "relevance": task.id,
-                }],
+                items=[
+                    {
+                        "title": task.name,
+                        "summary": summary,
+                        "source": "scheduled_task",
+                        "source_url": "",
+                        "relevance": task.id,
+                    }
+                ],
                 raw_context=prompt,
                 source=task.name,
             )

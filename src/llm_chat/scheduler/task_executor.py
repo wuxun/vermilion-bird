@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+from llm_chat.runtime import RunManager, RunType
 from llm_chat.scheduler.models import Task, TaskExecution, TaskStatus, TaskType
 
 if TYPE_CHECKING:
@@ -21,10 +22,23 @@ class TaskExecutor:
     def __init__(self, app: "App", task_storage: "Storage"):
         self.app = app
         self.task_storage = task_storage
+        candidate = getattr(app, "run_manager", None)
+        self.run_manager = candidate if isinstance(candidate, RunManager) else None
 
     def execute(self, task: Task) -> TaskExecution:
         execution_id = str(uuid.uuid4())
         started_at = datetime.now()
+        run = None
+        if self.run_manager:
+            run_type = {
+                TaskType.WEBHOOK: RunType.WEBHOOK,
+                TaskType.PROACTIVE_CHAT: RunType.PROACTIVE,
+            }.get(task.task_type, RunType.SCHEDULED)
+            run = self.run_manager.start(
+                run_type,
+                input={"task_id": task.id, "params": task.params},
+                metadata={"task_name": task.name, "task_type": task.task_type.value},
+            )
 
         if not task.enabled:
             execution = TaskExecution(
@@ -38,6 +52,8 @@ class TaskExecutor:
                 retry_count=0,
             )
             self.task_storage.save_execution(execution)
+            if run:
+                self.run_manager.fail(run.id, execution.error)
             return execution
 
         retry_count = 0
@@ -47,8 +63,19 @@ class TaskExecutor:
 
         while retry_count < max_attempts:
             try:
-                if task.task_type == TaskType.LLM_CHAT:
-                    result = self._execute_llm_chat(task)
+                if task.task_type in {
+                    TaskType.LLM_CHAT,
+                    TaskType.PROACTIVE_CHAT,
+                }:
+                    result = self._execute_llm_chat(
+                        task,
+                        parent_run_id=run.id if run else None,
+                    )
+                elif task.task_type == TaskType.WEBHOOK:
+                    result = self._execute_webhook(
+                        task,
+                        parent_run_id=run.id if run else None,
+                    )
                 elif task.task_type == TaskType.SKILL_EXECUTION:
                     result = self._execute_skill(task)
                 elif task.task_type == TaskType.SYSTEM_MAINTENANCE:
@@ -67,9 +94,9 @@ class TaskExecutor:
                     retry_count=retry_count,
                 )
                 self.task_storage.save_execution(execution)
-                logger.info(
-                    f"Task {task.id} completed successfully after {retry_count} retries"
-                )
+                logger.info(f"Task {task.id} completed successfully after {retry_count} retries")
+                if run:
+                    self.run_manager.complete(run.id, result)
                 return execution
 
             except Exception as e:
@@ -80,9 +107,7 @@ class TaskExecutor:
 
                 retry_count += 1
                 if retry_count < max_attempts:
-                    delay = min(
-                        self.base_delay * (2 ** (retry_count - 1)), self.max_delay
-                    )
+                    delay = min(self.base_delay * (2 ** (retry_count - 1)), self.max_delay)
                     logger.info(f"Retrying task {task.id} in {delay} seconds...")
                     time.sleep(delay)
 
@@ -97,12 +122,12 @@ class TaskExecutor:
             retry_count=retry_count,
         )
         self.task_storage.save_execution(execution)
-        logger.error(
-            f"Task {task.id} failed after {retry_count} attempts: {last_error}"
-        )
+        logger.error(f"Task {task.id} failed after {retry_count} attempts: {last_error}")
+        if run:
+            self.run_manager.fail(run.id, last_error or "Task execution failed")
         return execution
 
-    def _execute_llm_chat(self, task: Task) -> str:
+    def _execute_llm_chat(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """通过 ChatCore 完整管道执行 LLM 对话 — 包含记忆注入、工具调用、决策卡片。
 
         使用固定 conversation_id '__scheduled__' 作为所有定时任务的共享会话，
@@ -123,17 +148,20 @@ class TaskExecutor:
 
         # 捕获 LLM 生成的决策卡片
         captured_cards = []
+
         def on_card(card):
             captured_cards.append(card)
 
         chat_core = getattr(self.app, "chat_core", None)
         if chat_core is not None:
-            result = chat_core.send_message(
+            chat_kwargs = dict(
                 conversation_id=f"scheduled:{task.id}",
                 message=message,
                 on_card=on_card,
-                **extra_kwargs,
             )
+            if parent_run_id:
+                chat_kwargs["parent_run_id"] = parent_run_id
+            result = chat_core.send_message(**chat_kwargs, **extra_kwargs)
         else:
             result = self.app.client.chat(
                 message=message,
@@ -150,6 +178,23 @@ class TaskExecutor:
         self._save_task_digest(task, message, result)
 
         return result
+
+    def _execute_webhook(self, task: Task, parent_run_id: Optional[str] = None) -> str:
+        """Turn a webhook payload into a regular governed chat request."""
+        import json
+
+        params = dict(task.params)
+        payload = params.get("webhook_payload", {})
+        message = params.get("message", "处理以下 webhook 事件")
+        params["message"] = (
+            f"{message}\n\nWebhook payload:\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+        delegated = task.model_copy(update={"task_type": TaskType.LLM_CHAT, "params": params})
+        return self._execute_llm_chat(
+            delegated,
+            parent_run_id=parent_run_id,
+        )
 
     def _execute_skill(self, task: Task) -> str:
         params = task.params
@@ -245,13 +290,9 @@ class TaskExecutor:
                     age_days = (cutoff_date - updated_at).days
 
                     if age_days > days_old:
-                        conversation_manager = getattr(
-                            self.app, "conversation_manager", None
-                        )
+                        conversation_manager = getattr(self.app, "conversation_manager", None)
                         if conversation_manager:
-                            memory_manager = getattr(
-                                conversation_manager, "_memory_manager", None
-                            )
+                            memory_manager = getattr(conversation_manager, "_memory_manager", None)
                             if memory_manager:
                                 memory_manager.archive_session(conv["id"])
                                 archived_count += 1
@@ -267,9 +308,7 @@ class TaskExecutor:
         try:
             conversation_manager = getattr(self.app, "conversation_manager", None)
             if conversation_manager is None:
-                logger.warning(
-                    "No conversation manager available for memory compression"
-                )
+                logger.warning("No conversation manager available for memory compression")
                 return
 
             memory_manager = getattr(conversation_manager, "_memory_manager", None)
@@ -278,9 +317,7 @@ class TaskExecutor:
                 return
 
             memory_manager.compress_mid_term(max_days)
-            logger.info(
-                f"Mid-term memory compression completed with max_days={max_days}"
-            )
+            logger.info(f"Mid-term memory compression completed with max_days={max_days}")
         except Exception as e:
             logger.error(f"Memory compression failed: {e}")
             raise
@@ -289,9 +326,7 @@ class TaskExecutor:
         try:
             conversation_manager = getattr(self.app, "conversation_manager", None)
             if conversation_manager is None:
-                logger.warning(
-                    "No conversation manager available for understanding evolution"
-                )
+                logger.warning("No conversation manager available for understanding evolution")
                 return
 
             memory_manager = getattr(conversation_manager, "_memory_manager", None)
@@ -315,17 +350,20 @@ class TaskExecutor:
 
         try:
             from datetime import date
+
             today = date.today().isoformat()
             summary = result[:300].replace("\n", " ")
             self.app.storage.save_digest(
                 digest_date=today,
-                items=[{
-                    "title": task.name,
-                    "summary": summary,
-                    "source": "scheduled_task",
-                    "source_url": "",
-                    "relevance": task.id,
-                }],
+                items=[
+                    {
+                        "title": task.name,
+                        "summary": summary,
+                        "source": "scheduled_task",
+                        "source_url": "",
+                        "relevance": task.id,
+                    }
+                ],
                 raw_context=prompt,
                 source=task.name,
             )
@@ -373,8 +411,10 @@ class TaskExecutor:
 
             receive_id = recent.get("chat_id") or recent.get("open_id") or recent.get("user_id")
             receive_id_type = (
-                "chat_id" if "chat_id" in recent
-                else "open_id" if "open_id" in recent
+                "chat_id"
+                if "chat_id" in recent
+                else "open_id"
+                if "open_id" in recent
                 else "user_id"
             )
             if not receive_id:
