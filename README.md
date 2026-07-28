@@ -93,6 +93,11 @@ poetry run vermilion-bird task grant add <work-item-id> \
   --capability workspace_write --resource-type directory \
   --resource /workspace/project --scope work_item
 
+# 导出交付物并记录采纳反馈
+poetry run vermilion-bird task artifact export <artifact-id> ./delivery.md
+poetry run vermilion-bird task artifact feedback \
+  <work-item-id> <artifact-id> accepted
+
 # 数据库版本、完整性检查和手动备份
 poetry run vermilion-bird database status
 poetry run vermilion-bird database backup --label before-upgrade

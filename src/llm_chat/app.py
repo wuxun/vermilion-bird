@@ -38,6 +38,7 @@ from llm_chat.runtime import (
 )
 from llm_chat.work import (
     ArtifactKind,
+    ArtifactFeedbackDecision,
     GrantScope,
     PlanStepStatus,
     ResourceGrantService,
@@ -330,6 +331,34 @@ class App:
             for proposal in proposals
             if proposal.run_id in run_ids or proposal.execution_run_id in run_ids
         ]
+
+    def submit_artifact_feedback(
+        self,
+        work_item_id: str,
+        artifact_id: str,
+        *,
+        decision: ArtifactFeedbackDecision,
+        note: str = "",
+    ):
+        return self.work_items.submit_artifact_feedback(
+            work_item_id,
+            artifact_id,
+            decision=decision,
+            note=note,
+        )
+
+    def export_artifact(
+        self,
+        artifact_id: str,
+        destination: str,
+        *,
+        overwrite: bool = False,
+    ) -> str:
+        return self.work_items.export_artifact(
+            artifact_id,
+            destination,
+            overwrite=overwrite,
+        )
 
     def execute_work_item(self, work_item_id: str):
         """通过主 ChatGraph 执行用户任务，并将文本结果固化为 Artifact。"""

@@ -55,6 +55,12 @@ class ArtifactKind(str, Enum):
     OTHER = "other"
 
 
+class ArtifactFeedbackDecision(str, Enum):
+    ACCEPTED = "accepted"
+    NEEDS_REVISION = "needs_revision"
+    REJECTED = "rejected"
+
+
 class PlanStatus(str, Enum):
     DRAFT = "draft"
     APPROVED = "approved"
@@ -125,6 +131,18 @@ class Artifact(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ArtifactFeedback(BaseModel):
+    """用户对交付物的一次不可变反馈事件。"""
+
+    id: str = Field(default_factory=lambda: f"feedback_{uuid4().hex}")
+    artifact_id: str
+    work_item_id: str
+    decision: ArtifactFeedbackDecision
+    note: str = ""
+    created_by: str = "local-user"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class PlanStep(BaseModel):
     """计划定义中的一个稳定步骤。"""
 
@@ -180,5 +198,6 @@ class WorkItemDetail(BaseModel):
     work_item: WorkItem
     runs: List[Run] = Field(default_factory=list)
     artifacts: List[Artifact] = Field(default_factory=list)
+    artifact_feedback: List[ArtifactFeedback] = Field(default_factory=list)
     plan: Optional[PlanRevision] = None
     grants: List[ResourceGrant] = Field(default_factory=list)

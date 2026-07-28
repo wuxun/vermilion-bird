@@ -32,6 +32,8 @@ class EvalResult(BaseModel):
     artifact_count: int = 0
     approval_count: int = 0
     uncertain_effect_count: int = 0
+    reviewed_artifact_count: int = 0
+    accepted_artifact_count: int = 0
 
 
 class EvalReport(BaseModel):
@@ -42,4 +44,5 @@ class EvalReport(BaseModel):
     artifact_rate: float = 0.0
     approval_compliance_rate: float = 0.0
     uncertain_effect_count: int = 0
+    artifact_acceptance_rate: Optional[float] = None
     average_duration_seconds: Optional[float] = None

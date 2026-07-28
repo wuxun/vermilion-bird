@@ -8,7 +8,7 @@ from typing import Any, Iterable, List, Sequence
 import yaml
 
 from llm_chat.runtime import ActionStatus, EffectStatus
-from llm_chat.work import WorkItemDetail
+from llm_chat.work import ArtifactFeedbackDecision, WorkItemDetail
 
 from .models import EvalReport, EvalResult, EvalScenario
 
@@ -16,10 +16,7 @@ from .models import EvalReport, EvalResult, EvalScenario
 def load_core_scenarios() -> List[EvalScenario]:
     resource = files("llm_chat.evaluation").joinpath("core_scenarios.yaml")
     payload = yaml.safe_load(resource.read_text(encoding="utf-8")) or {}
-    return [
-        EvalScenario.model_validate(item)
-        for item in payload.get("scenarios", [])
-    ]
+    return [EvalScenario.model_validate(item) for item in payload.get("scenarios", [])]
 
 
 class EvalRunner:
@@ -43,13 +40,10 @@ class EvalRunner:
                 f"status={item.status.value}, expected={scenario.expected_status.value}"
             )
 
-        checks["artifact_count"] = (
-            len(detail.artifacts) >= scenario.minimum_artifacts
-        )
+        checks["artifact_count"] = len(detail.artifacts) >= scenario.minimum_artifacts
         if not checks["artifact_count"]:
             failures.append(
-                f"artifacts={len(detail.artifacts)}, "
-                f"minimum={scenario.minimum_artifacts}"
+                f"artifacts={len(detail.artifacts)}, " f"minimum={scenario.minimum_artifacts}"
             )
 
         if scenario.accepted_artifact_kinds:
@@ -59,47 +53,42 @@ class EvalRunner:
             )
             if not checks["artifact_kind"]:
                 failures.append(
-                    "no accepted artifact kind: "
-                    + ", ".join(kind.value for kind in accepted)
+                    "no accepted artifact kind: " + ", ".join(kind.value for kind in accepted)
                 )
         else:
             checks["artifact_kind"] = True
 
-        decided_actions = [
-            action
-            for action in actions
-            if action.status != ActionStatus.PENDING
-        ]
-        checks["approval"] = (
-            not scenario.requires_approval or bool(decided_actions)
-        )
+        decided_actions = [action for action in actions if action.status != ActionStatus.PENDING]
+        checks["approval"] = not scenario.requires_approval or bool(decided_actions)
         if not checks["approval"]:
             failures.append("required approval was not decided")
 
         uncertain_effects = [
-            effect
-            for effect in effects
-            if effect.status == EffectStatus.UNCERTAIN
+            effect for effect in effects if effect.status == EffectStatus.UNCERTAIN
         ]
         checks["effects_certain"] = not uncertain_effects
         if uncertain_effects:
-            failures.append(
-                f"{len(uncertain_effects)} external effects are uncertain"
-            )
+            failures.append(f"{len(uncertain_effects)} external effects are uncertain")
 
         duration = self._duration_seconds(detail)
         if scenario.maximum_duration_seconds is not None:
             checks["duration"] = bool(
-                duration is not None
-                and duration <= scenario.maximum_duration_seconds
+                duration is not None and duration <= scenario.maximum_duration_seconds
             )
             if not checks["duration"]:
                 failures.append(
-                    f"duration={duration}, "
-                    f"maximum={scenario.maximum_duration_seconds}"
+                    f"duration={duration}, " f"maximum={scenario.maximum_duration_seconds}"
                 )
         else:
             checks["duration"] = True
+
+        latest_feedback = {}
+        for feedback in detail.artifact_feedback:
+            latest_feedback.setdefault(feedback.artifact_id, feedback)
+        accepted_artifacts = sum(
+            feedback.decision == ArtifactFeedbackDecision.ACCEPTED
+            for feedback in latest_feedback.values()
+        )
 
         return EvalResult(
             scenario_id=scenario.id,
@@ -111,16 +100,18 @@ class EvalRunner:
             artifact_count=len(detail.artifacts),
             approval_count=len(decided_actions),
             uncertain_effect_count=len(uncertain_effects),
+            reviewed_artifact_count=len(latest_feedback),
+            accepted_artifact_count=accepted_artifacts,
         )
 
     def report(self, results: Iterable[EvalResult]) -> EvalReport:
         values = list(results)
         count = len(values)
         durations = [
-            result.duration_seconds
-            for result in values
-            if result.duration_seconds is not None
+            result.duration_seconds for result in values if result.duration_seconds is not None
         ]
+        reviewed_artifacts = sum(result.reviewed_artifact_count for result in values)
+        accepted_artifacts = sum(result.accepted_artifact_count for result in values)
         return EvalReport(
             results=values,
             scenario_count=count,
@@ -141,13 +132,12 @@ class EvalRunner:
                 sum(result.checks.get("approval", False) for result in values),
                 count,
             ),
-            uncertain_effect_count=sum(
-                result.uncertain_effect_count for result in values
+            uncertain_effect_count=sum(result.uncertain_effect_count for result in values),
+            artifact_acceptance_rate=(
+                self._rate(accepted_artifacts, reviewed_artifacts) if reviewed_artifacts else None
             ),
             average_duration_seconds=(
-                round(sum(durations) / len(durations), 3)
-                if durations
-                else None
+                round(sum(durations) / len(durations), 3) if durations else None
             ),
         )
 
@@ -158,11 +148,7 @@ class EvalRunner:
             (run for run in detail.runs if run.id == item.latest_run_id),
             None,
         )
-        if (
-            latest is None
-            or latest.started_at is None
-            or latest.finished_at is None
-        ):
+        if latest is None or latest.started_at is None or latest.finished_at is None:
             return None
         return max(
             0.0,

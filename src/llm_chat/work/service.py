@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from llm_chat.runtime import RecoveryPolicy, Run, RunEvent, RunManager, RunStatus, RunType
 
 from .models import (
     Artifact,
+    ArtifactFeedback,
+    ArtifactFeedbackDecision,
     ArtifactKind,
     PlanRevision,
     PlanStatus,
@@ -71,6 +77,18 @@ class WorkItemRepository(Protocol):
         *,
         limit: int = 200,
     ) -> List[Artifact]:
+        ...
+
+    def create_artifact_feedback(self, feedback: ArtifactFeedback) -> bool:
+        ...
+
+    def list_artifact_feedback(
+        self,
+        work_item_id: str,
+        *,
+        artifact_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[ArtifactFeedback]:
         ...
 
     def create_plan_revision(self, plan: PlanRevision) -> bool:
@@ -313,6 +331,10 @@ class WorkItemService:
             work_item=item,
             runs=self.runs.list(limit=1000, work_item_id=work_item_id),
             artifacts=self.repository.list_artifacts(work_item_id),
+            artifact_feedback=self.repository.list_artifact_feedback(
+                work_item_id,
+                limit=500,
+            ),
             plan=self.repository.get_latest_plan_revision(work_item_id),
             grants=self.repository.list_resource_grants(
                 work_item_id=work_item_id,
@@ -320,6 +342,84 @@ class WorkItemService:
                 limit=200,
             ),
         )
+
+    def submit_artifact_feedback(
+        self,
+        work_item_id: str,
+        artifact_id: str,
+        *,
+        decision: ArtifactFeedbackDecision,
+        note: str = "",
+        created_by: str = "local-user",
+    ) -> ArtifactFeedback:
+        self._require(work_item_id)
+        artifact = self.repository.get_artifact(artifact_id)
+        if artifact is None or artifact.work_item_id != work_item_id:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        if not isinstance(decision, ArtifactFeedbackDecision):
+            decision = ArtifactFeedbackDecision(decision)
+        feedback = ArtifactFeedback(
+            artifact_id=artifact_id,
+            work_item_id=work_item_id,
+            decision=decision,
+            note=note.strip(),
+            created_by=created_by.strip() or "local-user",
+        )
+        if not self.repository.create_artifact_feedback(feedback):
+            raise ValueError(f"artifact feedback already exists: {feedback.id}")
+        return feedback.model_copy(deep=True)
+
+    def export_artifact(
+        self,
+        artifact_id: str,
+        destination: str,
+        *,
+        overwrite: bool = False,
+    ) -> str:
+        """把内嵌内容或本地文件原子导出到用户指定位置。"""
+
+        artifact = self.repository.get_artifact(artifact_id)
+        if artifact is None:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        destination_path = Path(destination).expanduser()
+        if destination_path.exists() and destination_path.is_dir():
+            destination_path = destination_path / artifact.name
+        destination_path = destination_path.resolve(strict=False)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        if destination_path.exists() and not overwrite:
+            raise FileExistsError(f"destination already exists: {destination_path}")
+
+        content = artifact.content
+        source = None
+        if content is None and artifact.uri:
+            if artifact.uri.startswith(("http://", "https://")):
+                content = artifact.uri
+            else:
+                source = Path(artifact.uri).expanduser().resolve(strict=False)
+                if not source.is_file():
+                    raise FileNotFoundError(f"artifact source not found: {source}")
+        if content is None and source is None:
+            content = artifact.content_preview
+        if content is None and source is None:
+            raise ValueError(f"artifact {artifact_id} has no exportable content")
+
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination_path.name}.",
+            suffix=".tmp",
+            dir=str(destination_path.parent),
+        )
+        os.close(file_descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            if source is not None:
+                shutil.copy2(source, temporary_path)
+            else:
+                temporary_path.write_text(content, encoding="utf-8")
+            temporary_path.replace(destination_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        return str(destination_path)
 
     def create_plan_revision(
         self,

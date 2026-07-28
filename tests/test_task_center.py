@@ -97,6 +97,8 @@ def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
         approve_work_item_plan=MagicMock(),
         create_resource_grant=MagicMock(),
         revoke_resource_grant=MagicMock(),
+        export_artifact=MagicMock(),
+        submit_artifact_feedback=MagicMock(),
         run_manager=MagicMock(),
         action_proposals=MagicMock(),
     )

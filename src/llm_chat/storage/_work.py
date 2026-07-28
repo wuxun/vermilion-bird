@@ -8,6 +8,8 @@ from typing import Any, List, Optional
 
 from llm_chat.work.models import (
     Artifact,
+    ArtifactFeedback,
+    ArtifactFeedbackDecision,
     ArtifactKind,
     GrantScope,
     GrantStatus,
@@ -212,6 +214,52 @@ class StorageWorkMixin:
                 (work_item_id, max(1, limit)),
             ).fetchall()
         return [self._row_to_artifact(row) for row in rows]
+
+    def create_artifact_feedback(self, feedback: ArtifactFeedback) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO artifact_feedback (
+                    id, artifact_id, work_item_id, decision, note,
+                    created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feedback.id,
+                    feedback.artifact_id,
+                    feedback.work_item_id,
+                    feedback.decision.value,
+                    feedback.note,
+                    feedback.created_by,
+                    feedback.created_at.isoformat(),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def list_artifact_feedback(
+        self,
+        work_item_id: str,
+        *,
+        artifact_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[ArtifactFeedback]:
+        clause = "AND artifact_id = ?" if artifact_id else ""
+        params = (
+            (work_item_id, artifact_id, max(1, limit))
+            if artifact_id
+            else (work_item_id, max(1, limit))
+        )
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM artifact_feedback
+                WHERE work_item_id = ? {clause}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_artifact_feedback(row) for row in rows]
 
     def create_plan_revision(self, plan: PlanRevision) -> bool:
         """原子保存计划头和步骤；版本冲突时不产生部分数据。"""
@@ -543,6 +591,18 @@ class StorageWorkMixin:
             checksum=row["checksum"],
             idempotency_key=row["idempotency_key"],
             metadata=_load_json(row["metadata_json"], {}),
+            created_at=_parse_datetime(row["created_at"]) or datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    def _row_to_artifact_feedback(row: Any) -> ArtifactFeedback:
+        return ArtifactFeedback(
+            id=row["id"],
+            artifact_id=row["artifact_id"],
+            work_item_id=row["work_item_id"],
+            decision=ArtifactFeedbackDecision(row["decision"]),
+            note=row["note"],
+            created_by=row["created_by"],
             created_at=_parse_datetime(row["created_at"]) or datetime.now(timezone.utc),
         )
 

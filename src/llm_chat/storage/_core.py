@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 5
+    CURRENT_SCHEMA_VERSION = 6
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -164,6 +164,7 @@ class StorageCore:
             SchemaMigration(3, "work_items_and_artifacts", self._create_work_tables_in),
             SchemaMigration(4, "cooperative_run_control", self._migrate_run_control),
             SchemaMigration(5, "plans_and_resource_grants", self._create_planning_tables_in),
+            SchemaMigration(6, "artifact_feedback", self._create_artifact_feedback_table_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -237,6 +238,7 @@ class StorageCore:
                 "scope",
                 "status",
             },
+            "artifact_feedback": {"artifact_id", "work_item_id", "decision"},
         }
         with sqlite3.connect(self._db_path) as conn:
             for table, columns in required.items():
@@ -257,6 +259,7 @@ class StorageCore:
         self._create_runtime_tables_in(conn)
         self._create_work_tables_in(conn)
         self._create_planning_tables_in(conn)
+        self._create_artifact_feedback_table_in(conn)
         self._migrate_run_control(conn)
 
     def _create_upgrade_backup(self, from_version: int) -> str:
@@ -930,5 +933,29 @@ class StorageCore:
                     scope
                 )
                 WHERE status = 'active';
+            """
+        )
+
+    @staticmethod
+    def _create_artifact_feedback_table_in(conn):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_feedback (
+                id TEXT PRIMARY KEY,
+                artifact_id TEXT NOT NULL,
+                work_item_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (artifact_id)
+                    REFERENCES artifacts(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifact_feedback_work
+                ON artifact_feedback(work_item_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_artifact_feedback_artifact
+                ON artifact_feedback(artifact_id, created_at DESC);
             """
         )

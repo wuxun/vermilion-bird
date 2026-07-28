@@ -7,6 +7,8 @@ from llm_chat.cli import cli
 from llm_chat.runtime import Capability, Run, RunStatus, RunType
 from llm_chat.work import (
     Artifact,
+    ArtifactFeedback,
+    ArtifactFeedbackDecision,
     ArtifactKind,
     PlanRevision,
     PlanStep,
@@ -230,3 +232,60 @@ def test_task_grant_add_uses_explicit_resource_boundary():
     assert kwargs["resource_type"] == ResourceType.DIRECTORY
     assert kwargs["resource"] == "/workspace/reports"
     app.stop.assert_called_once()
+
+
+def test_task_artifact_export_uses_application_service(tmp_path):
+    app = MagicMock()
+    destination = tmp_path / "report.md"
+    app.export_artifact.return_value = str(destination)
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "task",
+                "artifact",
+                "export",
+                "artifact_test",
+                str(destination),
+            ],
+        )
+
+    assert result.exit_code == 0
+    app.export_artifact.assert_called_once_with(
+        "artifact_test",
+        str(destination),
+        overwrite=False,
+    )
+
+
+def test_task_artifact_feedback_records_product_decision():
+    app = MagicMock()
+    app.submit_artifact_feedback.return_value = ArtifactFeedback(
+        id="feedback_test",
+        artifact_id="artifact_test",
+        work_item_id="work_test",
+        decision=ArtifactFeedbackDecision.ACCEPTED,
+    )
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "task",
+                "artifact",
+                "feedback",
+                "work_test",
+                "artifact_test",
+                "accepted",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "feedback_test" in result.output
+    app.submit_artifact_feedback.assert_called_once_with(
+        "work_test",
+        "artifact_test",
+        decision=ArtifactFeedbackDecision.ACCEPTED,
+        note="",
+    )

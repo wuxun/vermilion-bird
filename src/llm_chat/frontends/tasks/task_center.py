@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
 from llm_chat.frontends.theme import Colors
 from llm_chat.runtime import ActionStatus, Capability
 from llm_chat.work import (
+    ArtifactFeedbackDecision,
     GrantScope,
     GrantStatus,
     PlanStatus,
@@ -74,6 +76,7 @@ class TaskCenterDialog(QDialog):
         self._signals = TaskCenterSignals()
         self._items_by_id: Dict[str, Any] = {}
         self._artifacts_by_id: Dict[str, Any] = {}
+        self._artifact_feedback_by_id: Dict[str, Any] = {}
         self._actions_by_id: Dict[str, Any] = {}
         self._grants_by_id: Dict[str, Any] = {}
         self._current_plan = None
@@ -186,8 +189,8 @@ class TaskCenterDialog(QDialog):
         self._runs_table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.ResizeToContents
         )
-        self._artifacts_table = QTableWidget(0, 3)
-        self._artifacts_table.setHorizontalHeaderLabels(["名称", "类型", "位置"])
+        self._artifacts_table = QTableWidget(0, 4)
+        self._artifacts_table.setHorizontalHeaderLabels(["名称", "类型", "反馈", "位置"])
         self._artifacts_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._artifacts_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._artifacts_table.verticalHeader().setVisible(False)
@@ -198,7 +201,10 @@ class TaskCenterDialog(QDialog):
             1, QHeaderView.ResizeMode.ResizeToContents
         )
         self._artifacts_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._artifacts_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
         )
         self._artifacts_table.itemDoubleClicked.connect(self._open_artifact)
         self._approvals_table = QTableWidget(0, 5)
@@ -318,12 +324,25 @@ class TaskCenterDialog(QDialog):
         self._resume_button.clicked.connect(self._resume_selected)
         self._open_artifact_button = QPushButton("打开产物")
         self._open_artifact_button.clicked.connect(self._open_selected_artifact)
+        self._export_artifact_button = QPushButton("导出")
+        self._export_artifact_button.clicked.connect(self._export_selected_artifact)
+        self._accept_artifact_button = QPushButton("接受")
+        self._accept_artifact_button.clicked.connect(
+            lambda: self._feedback_selected_artifact(ArtifactFeedbackDecision.ACCEPTED)
+        )
+        self._revise_artifact_button = QPushButton("需修改")
+        self._revise_artifact_button.clicked.connect(
+            lambda: self._feedback_selected_artifact(ArtifactFeedbackDecision.NEEDS_REVISION)
+        )
         actions.addWidget(self._cancel_button)
         actions.addWidget(self._pause_button)
         actions.addWidget(self._retry_button)
         actions.addWidget(self._resume_button)
         actions.addStretch()
         actions.addWidget(self._open_artifact_button)
+        actions.addWidget(self._export_artifact_button)
+        actions.addWidget(self._accept_artifact_button)
+        actions.addWidget(self._revise_artifact_button)
         detail_layout.addLayout(actions)
         splitter.addWidget(detail_panel)
         splitter.setSizes([470, 630])
@@ -473,14 +492,23 @@ class TaskCenterDialog(QDialog):
             self._update_approval_actions()
 
         self._artifacts_by_id = {artifact.id: artifact for artifact in detail.artifacts}
+        self._artifact_feedback_by_id = {}
+        for feedback in detail.artifact_feedback:
+            self._artifact_feedback_by_id.setdefault(feedback.artifact_id, feedback)
         self._artifacts_table.setRowCount(len(detail.artifacts))
         for row, artifact in enumerate(detail.artifacts):
             name_item = QTableWidgetItem(artifact.name)
             name_item.setData(Qt.ItemDataRole.UserRole, artifact.id)
             self._artifacts_table.setItem(row, 0, name_item)
             self._artifacts_table.setItem(row, 1, QTableWidgetItem(artifact.kind.value))
+            feedback = self._artifact_feedback_by_id.get(artifact.id)
+            self._artifacts_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(feedback.decision.value if feedback else "未反馈"),
+            )
             location = artifact.uri or ("内嵌内容" if artifact.content else "")
-            self._artifacts_table.setItem(row, 2, QTableWidgetItem(location))
+            self._artifacts_table.setItem(row, 3, QTableWidgetItem(location))
         self._tabs.setTabText(3, f"产物 ({len(detail.artifacts)})")
         self._load_plan(detail.plan)
         self._load_grants(detail.grants)
@@ -859,12 +887,22 @@ class TaskCenterDialog(QDialog):
             QMessageBox.critical(self, "任务操作失败", message)
 
     def _open_selected_artifact(self) -> None:
+        artifact = self._selected_artifact()
+        if artifact is None:
+            return
+        self._open_artifact_by_value(artifact)
+
+    def _selected_artifact(self):
         selected = self._artifacts_table.selectedItems()
         if not selected and self._artifacts_table.rowCount():
             self._artifacts_table.selectRow(0)
             selected = self._artifacts_table.selectedItems()
-        if selected:
-            self._open_artifact(selected[0])
+        if not selected:
+            return None
+        artifact_id = self._artifacts_table.item(selected[0].row(), 0).data(
+            Qt.ItemDataRole.UserRole
+        )
+        return self._artifacts_by_id.get(artifact_id)
 
     def _open_artifact(self, item: QTableWidgetItem) -> None:
         row = item.row()
@@ -872,6 +910,9 @@ class TaskCenterDialog(QDialog):
         artifact = self._artifacts_by_id.get(artifact_id)
         if artifact is None:
             return
+        self._open_artifact_by_value(artifact)
+
+    def _open_artifact_by_value(self, artifact) -> None:
         if artifact.uri:
             url = (
                 QUrl(artifact.uri)
@@ -885,6 +926,56 @@ class TaskCenterDialog(QDialog):
             artifact.name,
             artifact.content or artifact.content_preview or "该产物没有可显示内容。",
         )
+
+    def _export_selected_artifact(self) -> None:
+        artifact = self._selected_artifact()
+        if artifact is None:
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出交付物",
+            artifact.name,
+        )
+        if not destination:
+            return
+        try:
+            exported = self._app.export_artifact(
+                artifact.id,
+                destination,
+                overwrite=True,
+            )
+            QMessageBox.information(self, "导出完成", exported)
+        except Exception as exc:
+            QMessageBox.critical(self, "导出失败", str(exc))
+
+    def _feedback_selected_artifact(
+        self,
+        decision: ArtifactFeedbackDecision,
+    ) -> None:
+        artifact = self._selected_artifact()
+        work_item_id = self._selected_work_item_id
+        if artifact is None or work_item_id is None:
+            return
+        note = ""
+        if decision == ArtifactFeedbackDecision.NEEDS_REVISION:
+            note, ok = QInputDialog.getMultiLineText(
+                self,
+                "交付物需要修改",
+                "请说明需要修改的内容：",
+            )
+            if not ok:
+                return
+            note = note.strip()
+        try:
+            self._app.submit_artifact_feedback(
+                work_item_id,
+                artifact.id,
+                decision=decision,
+                note=note,
+            )
+            self._load_detail(work_item_id)
+        except Exception as exc:
+            QMessageBox.critical(self, "反馈失败", str(exc))
 
     def _open_execution_center(self) -> None:
         if self._execution_dialog is not None and self._execution_dialog.isVisible():
@@ -925,7 +1016,11 @@ class TaskCenterDialog(QDialog):
         self._retry_button.setEnabled(can_retry)
         self._resume_button.setEnabled(can_resume)
         self._pause_button.setEnabled(can_pause)
-        self._open_artifact_button.setEnabled(bool(self._artifacts_by_id))
+        has_artifacts = bool(self._artifacts_by_id)
+        self._open_artifact_button.setEnabled(has_artifacts)
+        self._export_artifact_button.setEnabled(has_artifacts and not busy)
+        self._accept_artifact_button.setEnabled(has_artifacts and not busy)
+        self._revise_artifact_button.setEnabled(has_artifacts and not busy)
         self._add_grant_button.setEnabled(bool(item and not busy))
         self._approve_plan_button.setEnabled(
             bool(self._current_plan and self._current_plan.status == PlanStatus.DRAFT and not busy)
@@ -944,6 +1039,7 @@ class TaskCenterDialog(QDialog):
         self._plan_summary.setText("暂无计划")
         self._actions_by_id = {}
         self._artifacts_by_id = {}
+        self._artifact_feedback_by_id = {}
         self._grants_by_id = {}
         self._current_plan = None
         self._update_actions(None)

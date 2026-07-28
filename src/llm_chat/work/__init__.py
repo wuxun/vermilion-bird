@@ -2,6 +2,8 @@
 
 from .models import (
     Artifact,
+    ArtifactFeedback,
+    ArtifactFeedbackDecision,
     ArtifactKind,
     GrantScope,
     GrantStatus,
@@ -21,6 +23,8 @@ from .service import WorkItemRepository, WorkItemService
 
 __all__ = [
     "Artifact",
+    "ArtifactFeedback",
+    "ArtifactFeedbackDecision",
     "ArtifactKind",
     "GrantScope",
     "GrantStatus",

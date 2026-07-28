@@ -14,6 +14,7 @@ from llm_chat.app import App
 from llm_chat.config import Config
 from llm_chat.runtime import Capability
 from llm_chat.work import (
+    ArtifactFeedbackDecision,
     GrantScope,
     PlanStepStatus,
     ResourceType,
@@ -531,6 +532,90 @@ def revoke_grant(grant_id):
     try:
         grant = app.revoke_resource_grant(grant_id)
         click.echo(f"授权已撤销: {grant.id}")
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        app.stop()
+
+
+@task.group("artifact")
+def artifact_group():
+    """导出交付物并记录用户反馈。"""
+
+
+@artifact_group.command("export")
+@click.argument("artifact_id")
+@click.argument(
+    "destination",
+    type=click.Path(path_type=Path),
+)
+@click.option("--overwrite", is_flag=True, help="允许覆盖已有目标")
+def export_artifact(artifact_id, destination, overwrite):
+    """原子导出内嵌内容、本地文件或链接。"""
+
+    app = _build_app()
+    try:
+        exported = app.export_artifact(
+            artifact_id,
+            str(destination),
+            overwrite=overwrite,
+        )
+        click.echo(f"已导出: {exported}")
+    except (KeyError, ValueError, FileExistsError, FileNotFoundError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        app.stop()
+
+
+@artifact_group.command("feedback")
+@click.argument("work_item_id")
+@click.argument("artifact_id")
+@click.argument(
+    "decision",
+    type=click.Choice([decision.value for decision in ArtifactFeedbackDecision]),
+)
+@click.option("--note", default="", help="反馈说明")
+def feedback_artifact(work_item_id, artifact_id, decision, note):
+    """记录接受、需修改或拒绝反馈。"""
+
+    app = _build_app()
+    try:
+        feedback = app.submit_artifact_feedback(
+            work_item_id,
+            artifact_id,
+            decision=ArtifactFeedbackDecision(decision),
+            note=note,
+        )
+        click.echo(f"反馈已记录: {feedback.id} [{feedback.decision.value}]")
+    except (KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        app.stop()
+
+
+@artifact_group.command("feedback-history")
+@click.argument("work_item_id")
+@click.option("--artifact-id", help="只看指定 Artifact")
+@click.option("--json-output", is_flag=True, help="输出 JSON")
+def artifact_feedback_history(work_item_id, artifact_id, json_output):
+    """查看交付物反馈历史。"""
+
+    app = _build_app()
+    try:
+        feedback = app.get_work_item_detail(work_item_id).artifact_feedback
+        if artifact_id:
+            feedback = [item for item in feedback if item.artifact_id == artifact_id]
+        if json_output:
+            click.echo(_json([item.model_dump(mode="json") for item in feedback]))
+            return
+        if not feedback:
+            click.echo("暂无交付物反馈。")
+            return
+        for item in feedback:
+            click.echo(
+                f"{item.created_at.astimezone():%Y-%m-%d %H:%M}  "
+                f"{item.artifact_id}  {item.decision.value}  {item.note}"
+            )
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
