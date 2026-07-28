@@ -84,6 +84,10 @@ poetry run vermilion-bird task start "调研三个 Agent 框架并形成报告"
 poetry run vermilion-bird task list
 poetry run vermilion-bird task pause <work-item-id>
 poetry run vermilion-bird task resume <work-item-id>
+
+# 数据库版本、完整性检查和手动备份
+poetry run vermilion-bird database status
+poetry run vermilion-bird database backup --label before-upgrade
 ```
 
 GUI 顶栏的“任务”按钮（或 `Ctrl+Shift+T`）打开面向用户目标和交付物的任务中心；

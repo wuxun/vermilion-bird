@@ -4,8 +4,16 @@ import sqlite3
 import json
 import os
 import logging
-from typing import Optional, Dict, Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
+
+from llm_chat.storage.migrations import (
+    MigrationReport,
+    SchemaMigration,
+    SchemaMigrationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
+    CURRENT_SCHEMA_VERSION = 4
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -45,6 +54,10 @@ class StorageCore:
     def __init__(self, db_path: Optional[str] = None):
         if db_path:
             self._db_path = db_path
+        self.last_migration_report = MigrationReport(
+            from_version=self.CURRENT_SCHEMA_VERSION,
+            to_version=self.CURRENT_SCHEMA_VERSION,
+        )
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -82,23 +95,252 @@ class StorageCore:
     # ------------------------------------------------------------------
 
     def _init_db(self):
-        """初始化数据库 schema，使用单个连接确保 :memory: 模式兼容"""
+        """按显式版本初始化或升级数据库，失败时恢复升级前备份。"""
+
         db_dir = os.path.dirname(self._db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
 
+        from_version, has_schema = self._inspect_schema()
+        if from_version > self.CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"database schema {from_version} is newer than supported "
+                f"{self.CURRENT_SCHEMA_VERSION}"
+            )
+        backup_path = None
+        needs_repair = has_schema and self._schema_needs_repair()
+        if has_schema and (
+            from_version < self.CURRENT_SCHEMA_VERSION or needs_repair
+        ):
+            backup_path = self._create_upgrade_backup(from_version)
+
+        report = MigrationReport(
+            from_version=from_version,
+            to_version=from_version,
+            backup_path=backup_path,
+        )
+        active_migration: Optional[SchemaMigration] = None
+        try:
+            with self._get_connection() as conn:
+                self._create_schema_history_in(conn)
+                for migration in self._schema_migrations():
+                    if migration.version <= from_version:
+                        continue
+                    active_migration = migration
+                    migration.apply(conn)
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO schema_migrations(
+                            version, name, applied_at
+                        ) VALUES (?, ?, ?)
+                        """,
+                        (
+                            migration.version,
+                            migration.name,
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                    conn.execute(f"PRAGMA user_version={migration.version}")
+                    report.applied.append(migration.version)
+                    report.to_version = migration.version
+                self._validate_current_schema_in(conn)
+                self._apply_pragmas_in(conn)
+        except Exception as exc:
+            if backup_path:
+                self._restore_upgrade_backup(backup_path)
+            self._write_migration_failure(active_migration, exc, backup_path)
+            if active_migration is None:
+                raise
+            raise SchemaMigrationError(
+                version=active_migration.version,
+                name=active_migration.name,
+                cause=exc,
+                backup_path=backup_path,
+            ) from exc
+        self.last_migration_report = report
+
+    def _schema_migrations(self) -> List[SchemaMigration]:
+        return [
+            SchemaMigration(1, "base_schema", self._migrate_base_schema),
+            SchemaMigration(2, "durable_runtime", self._create_runtime_tables_in),
+            SchemaMigration(3, "work_items_and_artifacts", self._create_work_tables_in),
+            SchemaMigration(4, "cooperative_run_control", self._migrate_run_control),
+        ]
+
+    def _migrate_base_schema(self, conn) -> None:
+        self._create_conversations_table_in(conn)
+        self._create_messages_table_in(conn)
+        self._create_fts_index_in(conn)
+        self._create_tasks_tables_in(conn)
+        self._create_feishu_table_in(conn)
+        self._create_context_cache_table_in(conn)
+        self._create_decision_log_table_in(conn)
+        self._create_digest_tables_in(conn)
+
+    @staticmethod
+    def _migrate_run_control(conn) -> None:
+        # Run/WorkItem status 使用 TEXT，无需重建表；版本用于声明语义边界。
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runs_work_item_status "
+            "ON runs(work_item_id, status, created_at DESC)"
+        )
+
+    @staticmethod
+    def _create_schema_history_in(conn) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+
+    def _inspect_schema(self) -> tuple[int, bool]:
+        if self._db_path == ":memory:":
+            return 0, False
+        path = Path(self._db_path)
+        if not path.exists() or path.stat().st_size == 0:
+            return 0, False
+        with sqlite3.connect(self._db_path) as conn:
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            has_schema = (
+                conn.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name NOT LIKE 'sqlite_%'
+                    LIMIT 1
+                    """
+                ).fetchone()
+                is not None
+            )
+        return version, has_schema
+
+    def _schema_needs_repair(self) -> bool:
+        required = {
+            "messages": {"execution_key"},
+            "runs": {
+                "work_item_id",
+                "checkpoint_json",
+                "lease_owner",
+                "lease_expires_at",
+            },
+            "action_proposals": {"execution_run_id"},
+            "artifacts": {"content", "idempotency_key"},
+        }
+        with sqlite3.connect(self._db_path) as conn:
+            for table, columns in required.items():
+                existing = {
+                    row[1]
+                    for row in conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+                if not existing or not columns <= existing:
+                    return True
+        return False
+
+    def _validate_current_schema_in(self, conn) -> None:
+        """幂等修复历史版本曾支持的列漂移，并重建关键索引。"""
+
+        self._create_conversations_table_in(conn)
+        self._create_messages_table_in(conn)
+        self._create_tasks_tables_in(conn)
+        self._create_decision_log_table_in(conn)
+        self._create_runtime_tables_in(conn)
+        self._create_work_tables_in(conn)
+        self._migrate_run_control(conn)
+
+    def _create_upgrade_backup(self, from_version: int) -> str:
+        return self.create_backup(label=f"v{from_version}")
+
+    def create_backup(self, *, label: str = "manual") -> str:
+        """使用 SQLite backup API 创建 WAL 一致的可恢复副本。"""
+
+        if self._db_path == ":memory:":
+            raise ValueError("in-memory database cannot be backed up")
+        source = Path(self._db_path)
+        backup_dir = source.parent / f"{source.name}.backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        safe_label = "".join(
+            character
+            for character in label
+            if character.isalnum() or character in {"-", "_"}
+        )[:40] or "manual"
+        target = backup_dir / (
+            f"{source.stem}-{safe_label}-{timestamp}{source.suffix or '.db'}"
+        )
+        with sqlite3.connect(self._db_path) as source_conn:
+            with sqlite3.connect(str(target)) as target_conn:
+                source_conn.backup(target_conn)
+        return str(target)
+
+    def verify_integrity(self) -> Dict[str, Any]:
         with self._get_connection() as conn:
-            self._create_conversations_table_in(conn)
-            self._create_messages_table_in(conn)
-            self._create_fts_index_in(conn)
-            self._apply_pragmas_in(conn)
-            self._create_tasks_tables_in(conn)
-            self._create_feishu_table_in(conn)
-            self._create_context_cache_table_in(conn)
-            self._create_decision_log_table_in(conn)
-            self._create_digest_tables_in(conn)
-            self._create_runtime_tables_in(conn)
-            self._create_work_tables_in(conn)
+            integrity_rows = [
+                row[0] for row in conn.execute("PRAGMA integrity_check").fetchall()
+            ]
+            foreign_key_rows = [
+                tuple(row) for row in conn.execute("PRAGMA foreign_key_check").fetchall()
+            ]
+        return {
+            "ok": integrity_rows == ["ok"] and not foreign_key_rows,
+            "integrity": integrity_rows,
+            "foreign_key_violations": foreign_key_rows,
+        }
+
+    def _restore_upgrade_backup(self, backup_path: str) -> None:
+        with sqlite3.connect(backup_path) as source_conn:
+            with sqlite3.connect(self._db_path) as target_conn:
+                source_conn.backup(target_conn)
+
+    def _write_migration_failure(
+        self,
+        migration: Optional[SchemaMigration],
+        error: Exception,
+        backup_path: Optional[str],
+    ) -> None:
+        if self._db_path == ":memory:":
+            return
+        failure_path = Path(f"{self._db_path}.migration-failure.json")
+        payload = {
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "version": migration.version if migration else None,
+            "name": migration.name if migration else None,
+            "error": str(error),
+            "backup_path": backup_path,
+        }
+        temporary = failure_path.with_suffix(f"{failure_path.suffix}.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(failure_path)
+
+    def get_schema_info(self) -> Dict[str, Any]:
+        with self._get_connection() as conn:
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            rows = conn.execute(
+                """
+                SELECT version, name, applied_at
+                FROM schema_migrations
+                ORDER BY version
+                """
+            ).fetchall()
+        return {
+            "current_version": version,
+            "supported_version": self.CURRENT_SCHEMA_VERSION,
+            "migrations": [dict(row) for row in rows],
+            "last_report": {
+                "from_version": self.last_migration_report.from_version,
+                "to_version": self.last_migration_report.to_version,
+                "applied": list(self.last_migration_report.applied),
+                "backup_path": self.last_migration_report.backup_path,
+            },
+        }
 
     def _create_conversations_table_in(self, conn):
         conn.executescript(

@@ -6,12 +6,14 @@
 - skills:    技能管理命令组
 - schedule:  调度任务管理命令组
 - task:      用户任务与交付物
+- database:  数据库版本、完整性与备份
 """
 
 from llm_chat.cli.memory import memory
 from llm_chat.cli.skills import skills
 from llm_chat.cli.schedule import schedule
 from llm_chat.cli.task import task
+from llm_chat.cli.database import database
 from llm_chat.cli.main import main, cli
 
-__all__ = ["main", "cli", "memory", "skills", "schedule", "task"]
+__all__ = ["main", "cli", "memory", "skills", "schedule", "task", "database"]

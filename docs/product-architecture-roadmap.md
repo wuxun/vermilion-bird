@@ -100,8 +100,9 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] 协作式取消：请求、执行器确认、子 Run 级联、终态收敛
 - [x] Chat 任务协作式暂停：安全点 checkpoint、确认暂停、恢复
 - [ ] 为其他可恢复 Workflow handler 扩展协作式暂停
-- [ ] 正式数据库 schema version 与迁移日志
-- [ ] 升级前备份、失败回滚、诊断包
+- [x] 正式数据库 schema version 与迁移日志
+- [x] 升级前 WAL 一致备份与失败恢复
+- [ ] 一键诊断包（迁移失败 sidecar 已完成）
 - [ ] GUI E2E 与进程崩溃故障注入
 - [ ] macOS Developer ID 签名、公证和自动更新
 - [ ] Windows/Linux 构建验证
