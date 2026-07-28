@@ -8,6 +8,7 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from llm_chat.frontends.gui import GUIFrontend  # noqa: E402
+from llm_chat.frontends.subagent_panel import SubAgentPanel  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -50,3 +51,36 @@ def test_gui_uses_primary_chat_and_task_workspaces(qt_app):
 
     parent.close()
     qt_app.processEvents()
+
+
+def test_chat_workspace_keeps_idle_runtime_details_out_of_view(qt_app):
+    frontend = GUIFrontend()
+    frontend.set_app(_fake_app())
+    parent = QWidget()
+
+    frontend._setup_ui(parent)
+    qt_app.processEvents()
+
+    assert frontend._subagent_panel.isHidden()
+    assert frontend._context_label.isHidden()
+    assert frontend._cost_label.isHidden()
+    assert frontend._send_button.text() == "↑"
+    assert frontend._input_field.maximumHeight() == 72
+
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_subagent_panel_only_appears_when_work_exists(qt_app):
+    registry = MagicMock()
+    panel = SubAgentPanel()
+
+    panel.connect_registry(registry)
+    assert panel.isHidden()
+
+    panel._on_status("agent-1", "running", "检查项目", "", "{}")
+    assert not panel.isHidden()
+
+    panel._remove_entry("agent-1")
+    assert panel.isHidden()
+    panel.close()

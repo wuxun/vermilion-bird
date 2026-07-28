@@ -20,10 +20,7 @@ from llm_chat.frontends.widgets import (
 from llm_chat.frontends.theme import (
     Colors,
     MARKDOWN_CSS,
-    header_button_style,
-    send_button_style,
     stop_button_style,
-    secondary_button_style,
     sidebar_button_style,
     conversation_list_style,
     input_field_style,
@@ -91,6 +88,7 @@ try:
         QComboBox,
         QDialog,
         QStackedWidget,
+        QButtonGroup,
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -121,6 +119,7 @@ except ImportError:
     QComboBox = None
     QDialog = None
     QStackedWidget = None
+    QButtonGroup = None
     Qt = None
     QTimer = None
     QSize = None
@@ -162,6 +161,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_workspace: Optional[QWidget] = None
         self._chat_nav_button: Optional[QPushButton] = None
         self._task_nav_button: Optional[QPushButton] = None
+        self._workspace_nav_group: Optional[QButtonGroup] = None
+        self._conversation_menu_button: Optional[QPushButton] = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
@@ -558,15 +559,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _create_navigation_rail(self) -> QWidget:
         rail = QFrame()
         rail.setObjectName("navigationRail")
-        rail.setFixedWidth(68)
+        rail.setFixedWidth(52)
         layout = QVBoxLayout(rail)
-        layout.setContentsMargins(8, 12, 8, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 10, 6, 10)
+        layout.setSpacing(6)
 
         brand = QLabel("朱")
         brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand.setFixedHeight(36)
-        brand.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {Colors.PRIMARY};")
+        brand.setFixedHeight(32)
+        brand.setStyleSheet(f"font-size: 17px; font-weight: 700; color: {Colors.PRIMARY};")
         layout.addWidget(brand)
 
         nav_style = f"""
@@ -583,29 +584,33 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 color: {Colors.TEXT_PRIMARY};
             }}
             QPushButton:checked {{
-                background: {Colors.CHAT_ACCENT};
+                background: {Colors.SIDEBAR_ACTIVE};
                 color: {Colors.PRIMARY};
                 font-weight: 700;
             }}
         """
         self._chat_nav_button = QPushButton("对话")
         self._chat_nav_button.setCheckable(True)
-        self._chat_nav_button.setFixedHeight(48)
+        self._chat_nav_button.setFixedHeight(42)
         self._chat_nav_button.setStyleSheet(nav_style)
         self._chat_nav_button.clicked.connect(self._on_chat_workspace)
         layout.addWidget(self._chat_nav_button)
 
         self._task_nav_button = QPushButton("任务")
         self._task_nav_button.setCheckable(True)
-        self._task_nav_button.setFixedHeight(54)
+        self._task_nav_button.setFixedHeight(42)
         self._task_nav_button.setStyleSheet(nav_style)
         self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
         self._task_nav_button.clicked.connect(self._on_task_center)
         layout.addWidget(self._task_nav_button)
+        self._workspace_nav_group = QButtonGroup(rail)
+        self._workspace_nav_group.setExclusive(True)
+        self._workspace_nav_group.addButton(self._chat_nav_button)
+        self._workspace_nav_group.addButton(self._task_nav_button)
         layout.addStretch()
 
         self._settings_button = QPushButton("设置")
-        self._settings_button.setFixedHeight(44)
+        self._settings_button.setFixedHeight(40)
         self._settings_button.setStyleSheet(nav_style)
         self._settings_button.setToolTip("设置 (Ctrl+,)")
         self._settings_button.clicked.connect(self._show_settings_menu)
@@ -614,12 +619,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _create_sidebar(self) -> QWidget:
         sidebar = QFrame()
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(216)
         sidebar.setObjectName("sidebar")
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         # 顶栏：标题 + 折叠按钮
         top_row = QHBoxLayout()
@@ -639,24 +644,24 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout.addLayout(top_row)
 
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(4)
 
-        self._new_conv_button = QPushButton("+")
-        self._new_conv_button.setFixedSize(30, 30)
-        self._new_conv_button.setToolTip("New Conversation (Ctrl+N)")
+        self._new_conv_button = QPushButton("＋ 新建对话")
+        self._new_conv_button.setFixedHeight(32)
+        self._new_conv_button.setToolTip("新建对话 (Ctrl+N)")
         self._new_conv_button.clicked.connect(self._on_new_conv)
-        button_layout.addWidget(self._new_conv_button)
+        button_layout.addWidget(self._new_conv_button, 1)
 
-        self._rename_conv_button = QPushButton("✎")
-        self._rename_conv_button.setFixedSize(30, 30)
-        self._rename_conv_button.setToolTip("Rename")
-        self._rename_conv_button.clicked.connect(self._on_rename_conv)
-        button_layout.addWidget(self._rename_conv_button)
+        from PyQt6.QtWidgets import QMenu
 
-        self._delete_conv_button = QPushButton("🗑")
-        self._delete_conv_button.setFixedSize(30, 30)
-        self._delete_conv_button.setToolTip("Delete")
-        self._delete_conv_button.clicked.connect(self._on_delete_conv)
-        button_layout.addWidget(self._delete_conv_button)
+        self._conversation_menu_button = QPushButton("···")
+        self._conversation_menu_button.setFixedSize(32, 32)
+        self._conversation_menu_button.setToolTip("会话操作")
+        conversation_menu = QMenu(self._conversation_menu_button)
+        conversation_menu.addAction("重命名", self._on_rename_conv)
+        conversation_menu.addAction("删除", self._on_delete_conv)
+        self._conversation_menu_button.setMenu(conversation_menu)
+        button_layout.addWidget(self._conversation_menu_button)
 
         button_layout.addStretch()
         layout.addLayout(button_layout)
@@ -664,7 +669,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 搜索栏
         search_layout = QHBoxLayout()
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("🔍 搜索历史对话 (Ctrl+K)...")
+        self._search_input.setPlaceholderText("搜索对话…")
         self._search_input.setStyleSheet(search_input_style())
         self._search_input.returnPressed.connect(self._on_search)
         search_layout.addWidget(self._search_input)
@@ -693,6 +698,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 self._new_conv_button,
                 self._rename_conv_button,
                 self._delete_conv_button,
+                self._conversation_menu_button,
                 self._search_input,
                 self._search_clear_button,
                 self._conversation_list,
@@ -709,13 +715,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                             w.hide()
         else:
             # 展开
-            self._sidebar.setFixedWidth(220)
+            self._sidebar.setFixedWidth(216)
             self._collapse_button.setText("◀")
             self._collapse_button.setToolTip("收起侧边栏")
             for w in [
                 self._new_conv_button,
                 self._rename_conv_button,
                 self._delete_conv_button,
+                self._conversation_menu_button,
                 self._search_input,
                 self._conversation_list,
             ]:
@@ -736,48 +743,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout = QVBoxLayout(chat_area)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        # ── 极简顶栏 ──
-        header = QFrame()
-        header.setFixedHeight(44)
-        header.setStyleSheet(
-            f"""
-            QFrame {{
-                background-color: {Colors.CHAT_BG};
-                border-bottom: 1px solid {Colors.CHAT_BORDER};
-            }}
-        """
-        )
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 0, 12, 0)
-        header_layout.setSpacing(8)
-
-        title_label = QLabel("Vermilion Bird")
-        title_label.setFont(QFont("Arial", 13, QFont.Weight.Bold))
-        header_layout.addWidget(title_label)
-
-        header_layout.addStretch()
-
-        # 模型选择器（紧凑）
-        self._model_combo = QComboBox()
-        self._model_combo.setFixedWidth(140)
-        self._model_combo.setStyleSheet(
-            f"""
-            QComboBox {{
-                background: transparent;
-                border: 1px solid {Colors.CHAT_ACCENT};
-                border-radius: 6px;
-                padding: 2px 8px;
-                color: {Colors.TEXT_PRIMARY};
-                font-size: 11px;
-            }}
-            QComboBox::drop-down {{ border: none; }}
-        """
-        )
-        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
-        header_layout.addWidget(self._model_combo)
-
-        layout.addWidget(header)
 
         # ── 对话区域（居中 768px 列） ──
         self._chat_scroll_area = QScrollArea()
@@ -804,7 +769,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         )
         self._chat_container.setStyleSheet(f"background-color: {Colors.CHAT_BG};")
         self._chat_layout = QVBoxLayout(self._chat_container)
-        self._chat_layout.setContentsMargins(40, 20, 40, 20)
+        self._chat_layout.setContentsMargins(36, 20, 36, 20)
         self._chat_layout.setSpacing(12)
         self._chat_layout.addStretch()
 
@@ -813,7 +778,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_scroll_area.setWidget(scroll_content)
         layout.addWidget(self._chat_scroll_area, stretch=1)
 
-        # Sub Agent 面板
+        # 子 Agent 仅在有实际运行时出现。
         self._subagent_panel = SubAgentPanel()
         self._subagent_panel.hide()
         layout.addWidget(self._subagent_panel)
@@ -835,19 +800,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._reasoning_combo.setCurrentIndex(0)
         self._reasoning_combo.currentIndexChanged.connect(self._on_reasoning_changed)
 
-        # ── 底部固定区域：输入框 + 状态栏 ──
+        # ── 底部固定区域：输入框 + 按需状态 ──
         bottom_frame = QFrame()
-        bottom_frame.setStyleSheet(
-            f"""
-            QFrame {{
-                background-color: {Colors.CHAT_BG};
-                border-top: 1px solid {Colors.CHAT_BORDER};
-            }}
-        """
-        )
+        bottom_frame.setStyleSheet(f"QFrame {{ background-color: {Colors.CHAT_BG}; }}")
         bottom_layout = QVBoxLayout(bottom_frame)
-        bottom_layout.setContentsMargins(16, 8, 16, 8)
-        bottom_layout.setSpacing(6)
+        bottom_layout.setContentsMargins(20, 8, 20, 10)
+        bottom_layout.setSpacing(4)
 
         # 输入行
         input_row = QHBoxLayout()
@@ -855,33 +813,50 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._input_field = InputTextEdit()
         self._input_field.setFont(QFont("Arial", 11))
-        self._input_field.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行)")
+        self._input_field.setPlaceholderText("输入消息…")
+        self._input_field.setMinimumHeight(52)
+        self._input_field.setMaximumHeight(72)
         self._input_field.setStyleSheet(
             f"""
             QTextEdit {{
-                border: 1px solid {Colors.CHAT_ACCENT};
-                border-radius: 12px;
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 14px;
                 padding: 10px 14px;
-                background-color: {Colors.CHAT_BG_ALT};
+                background-color: white;
                 color: {Colors.TEXT_PRIMARY};
             }}
             QTextEdit:focus {{
-                border: 1.5px solid {Colors.PRIMARY};
+                border: 1px solid {Colors.CHAT_ACCENT};
             }}
         """
         )
         self._input_field.send_requested.connect(self._on_send)
         input_row.addWidget(self._input_field, stretch=1)
 
-        self._send_button = QPushButton("Send")
-        self._send_button.setFixedSize(72, 36)
+        self._send_button = QPushButton("↑")
+        self._send_button.setFixedSize(44, 44)
+        self._send_button.setToolTip("发送 (Enter)")
         self._send_button.clicked.connect(self._on_send)
         self._send_button.setDefault(True)
-        self._send_button.setStyleSheet(send_button_style())
+        self._send_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: white;
+                border: none;
+                border-radius: 22px;
+                font-size: 20px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}
+            QPushButton:disabled {{ background-color: {Colors.SIDEBAR_ACTIVE}; }}
+            """
+        )
         input_row.addWidget(self._send_button)
 
-        self._stop_button = QPushButton("⏹ Stop")
-        self._stop_button.setFixedSize(72, 36)
+        self._stop_button = QPushButton("■")
+        self._stop_button.setFixedSize(44, 44)
+        self._stop_button.setToolTip("停止生成")
         self._stop_button.clicked.connect(self._on_stop_generation)
         self._stop_button.setVisible(False)
         self._stop_button.setStyleSheet(stop_button_style())
@@ -889,23 +864,41 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         bottom_layout.addLayout(input_row)
 
-        # 状态栏（输入框下方，极简）
+        # 状态栏：模型常驻，其余诊断信息通过 tooltip 按需查看。
         status_row = QHBoxLayout()
-        status_row.setContentsMargins(4, 0, 4, 0)
+        status_row.setContentsMargins(8, 0, 8, 0)
+
+        self._model_combo = QComboBox()
+        self._model_combo.setFixedWidth(152)
+        self._model_combo.setStyleSheet(
+            f"""
+            QComboBox {{
+                background: transparent;
+                border: none;
+                padding: 2px 4px;
+                color: {Colors.TEXT_MUTED};
+                font-size: 10px;
+            }}
+            QComboBox:hover {{ color: {Colors.TEXT_PRIMARY}; }}
+            QComboBox::drop-down {{ border: none; }}
+            """
+        )
+        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
+        status_row.addWidget(self._model_combo)
 
         self._context_label = QLabel(
             self._format_context_text(0, self._get_current_context_limit())
         )
         self._context_label.setFont(QFont("Arial", 9))
         self._context_label.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
-        status_row.addWidget(self._context_label)
+        self._context_label.hide()
 
         status_row.addStretch()
 
         self._cost_label = QLabel("💲 —")
         self._cost_label.setFont(QFont("Arial", 9))
         self._cost_label.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
-        status_row.addWidget(self._cost_label)
+        self._cost_label.hide()
 
         bottom_layout.addLayout(status_row)
 
@@ -935,7 +928,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._conversation_list.setStyleSheet(conversation_list_style())
 
-        for btn in [self._new_conv_button, self._rename_conv_button, self._delete_conv_button]:
+        for btn in [
+            self._new_conv_button,
+            self._rename_conv_button,
+            self._delete_conv_button,
+            self._conversation_menu_button,
+        ]:
             if btn:
                 btn.setStyleSheet(sidebar_button_style())
 
@@ -1570,83 +1568,76 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_layout.addWidget(widget)
 
     def _show_welcome_state(self):
-        """空态：Logo + 快捷操作卡片网格。"""
+        """空态：只呈现一个目标和少量可选起点。"""
         if self._chat_layout is None:
             return
 
-        # Logo + 标题
         logo = QLabel("🐦‍🔥")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet("font-size: 48px; background: transparent; margin-top: 40px;")
+        logo.setStyleSheet("font-size: 34px; background: transparent; margin-top: 56px;")
         self._add_widget_to_chat(logo)
 
-        title = QLabel("Vermilion Bird")
+        title = QLabel("想做什么？")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(
             f"""
-            font-size: 22px; font-weight: bold;
+            font-size: 21px; font-weight: 700;
             color: {Colors.TEXT_PRIMARY};
             background: transparent;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         """
         )
         self._add_widget_to_chat(title)
 
-        subtitle = QLabel("有什么可以帮你的？")
+        subtitle = QLabel("直接描述目标，能力会在需要时出现。")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet(
             f"""
-            font-size: 13px;
+            font-size: 12px;
             color: {Colors.TEXT_MUTED};
             background: transparent;
-            margin-bottom: 24px;
+            margin-bottom: 18px;
         """
         )
         self._add_widget_to_chat(subtitle)
 
-        # 快捷操作卡片网格
+        # 仅保留三个轻量起点，避免把能力目录铺在主工作区。
         shortcuts = [
-            ("💬", "日常对话", "你好，帮我写一段自我介绍"),
-            ("💻", "代码助手", "帮我用 Python 写一个快速排序"),
-            ("🔍", "搜索信息", "搜索最新的 AI 新闻"),
-            ("📝", "文件操作", "读取当前目录的 README 文件"),
-            ("⚡", "任务委托", "帮我分析这个项目的代码结构"),
-            ("📊", "定时任务", "创建一个每天早上 9 点的提醒"),
+            ("检查项目", "检查当前项目，给出架构、功能和实现上的优化建议"),
+            ("处理文件", "读取当前目录的文件并按我的目标进行修改"),
+            ("创建任务", "把下面的目标拆成一个可持续执行的任务："),
         ]
 
-        grid_widget = QWidget()
-        grid_widget.setStyleSheet("background: transparent;")
-        from PyQt6.QtWidgets import QGridLayout as GridLayout
+        shortcut_row = QWidget()
+        shortcut_row.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(shortcut_row)
+        row.setSpacing(8)
+        row.setContentsMargins(56, 0, 56, 0)
 
-        grid = GridLayout(grid_widget)
-        grid.setSpacing(10)
-        grid.setContentsMargins(40, 0, 40, 0)
-
-        for i, (icon, label, prompt) in enumerate(shortcuts):
-            card = QPushButton(f"{icon}  {label}")
-            card.setFixedHeight(48)
+        for label, prompt in shortcuts:
+            card = QPushButton(label)
+            card.setFixedHeight(34)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             card.setStyleSheet(
                 f"""
                 QPushButton {{
-                    background-color: {Colors.CHAT_BG};
-                    border: 1px solid {Colors.CHAT_ACCENT};
-                    border-radius: 10px;
-                    padding: 8px 16px;
-                    font-size: 13px;
+                    background-color: transparent;
+                    border: 1px solid {Colors.CHAT_BORDER};
+                    border-radius: 17px;
+                    padding: 5px 13px;
+                    font-size: 11px;
                     color: {Colors.TEXT_PRIMARY};
-                    text-align: left;
                 }}
                 QPushButton:hover {{
-                    background-color: {Colors.PARAMS_BG};
-                    border-color: {Colors.PRIMARY};
+                    background-color: {Colors.SIDEBAR_BG};
+                    border-color: {Colors.CHAT_ACCENT};
                 }}
             """
             )
             card.clicked.connect(lambda checked, p=prompt: self._fill_prompt(p))
-            grid.addWidget(card, i // 3, i % 3)
+            row.addWidget(card)
 
-        self._add_widget_to_chat(grid_widget)
+        self._add_widget_to_chat(shortcut_row)
         self._scroll_to_bottom(force_layout=True)
 
     def _fill_prompt(self, text: str):
@@ -1983,6 +1974,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def display_info(self, info: str):
         if self._chat_layout is None:
+            return
+        if info == "服务就绪":
+            if self._model_combo is not None:
+                self._model_combo.setToolTip("服务已就绪")
             return
 
         info_label = QLabel(f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>")

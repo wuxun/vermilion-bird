@@ -131,6 +131,26 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     qt_app.processEvents()
 
 
+def test_empty_task_center_only_shows_the_next_step(qt_app):
+    service = MagicMock()
+    service.subscribe.return_value = lambda: None
+    app = SimpleNamespace(
+        work_items=service,
+        list_work_items=lambda **_kwargs: [],
+    )
+
+    dialog = TaskCenterDialog(app)
+    qt_app.processEvents()
+
+    assert not dialog._empty_state.isHidden()
+    assert dialog._splitter.isHidden()
+    assert dialog._filters_bar.isHidden()
+    assert dialog._empty_action.text() == "新建第一个任务"
+
+    dialog.close()
+    qt_app.processEvents()
+
+
 def test_failed_task_enables_retry(qt_app):
     detail = _detail(WorkItemStatus.FAILED)
     app = _fake_app(detail)
@@ -259,6 +279,9 @@ def test_task_center_can_be_embedded_as_main_workspace(qt_app):
 
 def test_new_task_dialog_collects_execution_context(qt_app):
     dialog = NewTaskDialog()
+    assert dialog._optional_fields.isHidden()
+    dialog._more_options_button.setChecked(True)
+    assert not dialog._optional_fields.isHidden()
     dialog.objective_input.setPlainText("审查项目并输出报告")
     dialog.title_input.setText("项目审查")
     dialog.workspace_input.setText("/workspace/project")

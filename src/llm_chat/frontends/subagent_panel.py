@@ -550,7 +550,7 @@ class SubAgentPanel(QFrame):
         self._collapse_btn.setText("▸")
         self._collapsed = True
         self._scroll.hide()
-        self.show()
+        self.hide()
         logger.info("SubAgentPanel connected to registry")
 
     def disconnect_registry(self):
@@ -581,6 +581,7 @@ class SubAgentPanel(QFrame):
             extra = {}
 
         if agent_id not in self._entries:
+            self.show()
             entry = AgentEntryWidget(agent_id, task, self)
             entry.cancelled.connect(self._on_cancel_agent)
             entry.detail_requested.connect(self._on_detail_requested)
@@ -620,6 +621,7 @@ class SubAgentPanel(QFrame):
             self._collapsed = True
             self._scroll.hide()
             self._collapse_btn.setText("▸")
+            self.hide()
 
     def _on_cancel_agent(self, agent_id: str):
         if self._registry:

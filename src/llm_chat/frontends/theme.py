@@ -19,13 +19,13 @@ class Colors:
     SECONDARY = "#D4652F"      # 橙褐（顶栏按钮）
     SECONDARY_HOVER = "#C84B31"
 
-    # 侧边栏
-    SIDEBAR_BG = "#4A2C2A"     # 深棕
-    SIDEBAR_HOVER = "#6B4D4A"  # 中棕
-    SIDEBAR_ACTIVE = "#5C3D3A" # 选中棕
-    SIDEBAR_BORDER = "#3D2422"
-    SIDEBAR_TEXT = "#F5E6D3"   # 暖白
-    SIDEBAR_TEXT_DIM = "#BFA89A"
+    # 侧边栏：以中性色承载结构，只让朱红承担动作和状态强调。
+    SIDEBAR_BG = "#F3EFE9"
+    SIDEBAR_HOVER = "#E9E2DA"
+    SIDEBAR_ACTIVE = "#E3DAD0"
+    SIDEBAR_BORDER = "#DDD5CC"
+    SIDEBAR_TEXT = "#3D2C2E"
+    SIDEBAR_TEXT_DIM = "#8B7355"
 
     # 聊天区
     CHAT_BG = "#FFFBF5"        # 暖白
@@ -152,14 +152,14 @@ def sidebar_button_style() -> str:
     """侧边栏操作按钮样式（+、✎、🗑）。"""
     return f"""
         QPushButton {{
-            background-color: {Colors.SIDEBAR_ACTIVE};
-            border: 1px solid #7A5A56;
-            border-radius: 5px;
+            background-color: transparent;
+            border: none;
+            border-radius: 6px;
             font-size: 14px;
             color: {Colors.SIDEBAR_TEXT};
         }}
         QPushButton:hover {{
-            background-color: #7A5A56;
+            background-color: {Colors.SIDEBAR_HOVER};
         }}
     """
 
@@ -169,20 +169,20 @@ def conversation_list_style() -> str:
     return f"""
         QListWidget {{
             border: none;
-            border-radius: 8px;
-            background-color: {Colors.SIDEBAR_ACTIVE};
+            border-radius: 6px;
+            background-color: transparent;
             color: {Colors.SIDEBAR_TEXT};
             font-size: 12px;
             outline: none;
         }}
         QListWidget::item {{
-            padding: 12px 8px;
-            border-bottom: 1px solid {Colors.SIDEBAR_BG};
+            padding: 9px 8px;
+            border-radius: 6px;
             color: {Colors.SIDEBAR_TEXT};
         }}
         QListWidget::item:selected {{
-            background-color: {Colors.PRIMARY};
-            color: white;
+            background-color: {Colors.SIDEBAR_ACTIVE};
+            color: {Colors.TEXT_PRIMARY};
         }}
         QListWidget::item:hover:!selected {{
             background-color: {Colors.SIDEBAR_HOVER};

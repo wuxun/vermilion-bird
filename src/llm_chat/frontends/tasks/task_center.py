@@ -125,22 +125,22 @@ _FEEDBACK_LABELS = {
 
 
 class NewTaskDialog(QDialog):
-    """一次性展示任务目标、工作区、交付预期和启动方式。"""
+    """以目标为主，按需展开命名和交付细节。"""
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("新建任务")
-        self.resize(560, 450)
-        self.setMinimumWidth(500)
+        self.resize(560, 360)
+        self.setMinimumWidth(520)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(14)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(10)
 
-        title = QLabel("创建持久任务")
-        title.setStyleSheet("font-size: 19px; font-weight: 700;")
+        title = QLabel("新建任务")
+        title.setStyleSheet("font-size: 18px; font-weight: 700;")
         root.addWidget(title)
-        subtitle = QLabel("执行前确认目标、工作范围和预期交付物。")
+        subtitle = QLabel("描述最终目标，任务会持续运行并保留进展。")
         subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         root.addWidget(subtitle)
 
@@ -148,35 +148,45 @@ class NewTaskDialog(QDialog):
         form.setSpacing(10)
         self.objective_input = QTextEdit()
         self.objective_input.setPlaceholderText("描述希望完成的目标、必要约束和验收标准")
-        self.objective_input.setMinimumHeight(120)
+        self.objective_input.setMinimumHeight(126)
         form.addRow("目标 *", self.objective_input)
-
-        self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("可留空，将根据目标自动生成")
-        form.addRow("标题", self.title_input)
 
         workspace_row = QHBoxLayout()
         self.workspace_input = QLineEdit()
-        self.workspace_input.setPlaceholderText("可选：限制任务工作的目录")
+        self.workspace_input.setPlaceholderText("可选：选择任务工作目录")
         workspace_row.addWidget(self.workspace_input, 1)
         browse = QPushButton("选择…")
         browse.clicked.connect(self._choose_workspace)
         workspace_row.addWidget(browse)
         form.addRow("工作目录", workspace_row)
+        root.addLayout(form)
 
+        self._more_options_button = QToolButton()
+        self._more_options_button.setText("更多选项  ›")
+        self._more_options_button.setCheckable(True)
+        self._more_options_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self._more_options_button.toggled.connect(self._toggle_more_options)
+        root.addWidget(self._more_options_button, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._optional_fields = QFrame()
+        optional_form = QFormLayout(self._optional_fields)
+        optional_form.setContentsMargins(0, 0, 0, 0)
+        optional_form.setSpacing(10)
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("可留空，将根据目标自动生成")
+        optional_form.addRow("标题", self.title_input)
         self.deliverable_input = QLineEdit()
         self.deliverable_input.setPlaceholderText("例如：Markdown 报告、代码变更、数据表")
-        form.addRow("预期交付", self.deliverable_input)
+        optional_form.addRow("预期交付", self.deliverable_input)
+        self._optional_fields.hide()
+        root.addWidget(self._optional_fields)
 
         self.start_immediately = QCheckBox("创建后立即开始执行")
         self.start_immediately.setChecked(True)
-        form.addRow("启动方式", self.start_immediately)
-        root.addLayout(form)
-
-        hint = QLabel("高风险文件、网络和外部消息操作仍会在执行过程中请求审批。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 12px;")
-        root.addWidget(hint)
+        self.start_immediately.setToolTip("高风险操作仍会在执行过程中请求审批")
+        root.addWidget(self.start_immediately)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
@@ -185,6 +195,11 @@ class NewTaskDialog(QDialog):
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+
+    def _toggle_more_options(self, expanded: bool) -> None:
+        self._optional_fields.setVisible(expanded)
+        self._more_options_button.setText("更多选项  ⌄" if expanded else "更多选项  ›")
+        QTimer.singleShot(0, self.adjustSize)
 
     def _choose_workspace(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -270,50 +285,87 @@ class TaskCenterDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
 
         header = QHBoxLayout()
         heading = QVBoxLayout()
-        title = QLabel("任务中心")
+        title = QLabel("任务" if self._embedded else "任务中心")
         title.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {Colors.TEXT_PRIMARY};")
-        subtitle = QLabel("围绕目标查看执行、审批和最终交付物。")
-        subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         heading.addWidget(title)
-        heading.addWidget(subtitle)
+        if not self._embedded:
+            subtitle = QLabel("围绕目标查看执行、审批和最终交付物。")
+            subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
+            heading.addWidget(subtitle)
         header.addLayout(heading)
         header.addStretch()
 
         self._new_button = QPushButton("＋ 新建任务")
         self._new_button.clicked.connect(self._new_task)
         header.addWidget(self._new_button)
-        self._advanced_button = QPushButton("高级执行记录")
-        self._advanced_button.clicked.connect(self._open_execution_center)
-        header.addWidget(self._advanced_button)
+        self._header_menu_button = QToolButton()
+        self._header_menu_button.setText("⋯")
+        self._header_menu_button.setFixedSize(32, 32)
+        self._header_menu_button.setToolTip("更多")
+        self._header_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._header_menu_button.setStyleSheet(
+            "QToolButton { border: none; border-radius: 6px; font-size: 18px; }"
+            "QToolButton:hover { background: #E9E2DA; }"
+            "QToolButton::menu-indicator { image: none; }"
+        )
+        header_menu = QMenu(self._header_menu_button)
+        header_menu.addAction("刷新", self.refresh)
+        header_menu.addAction("高级执行记录", self._open_execution_center)
+        self._header_menu_button.setMenu(header_menu)
+        header.addWidget(self._header_menu_button)
         root.addLayout(header)
 
-        filters = QHBoxLayout()
-        filters.addWidget(QLabel("状态"))
+        self._empty_state = QFrame()
+        self._empty_state.setObjectName("taskEmptyState")
+        empty_layout = QVBoxLayout(self._empty_state)
+        empty_layout.setContentsMargins(24, 24, 24, 24)
+        empty_layout.setSpacing(8)
+        empty_layout.addStretch()
+        empty_icon = QLabel("✓")
+        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_icon.setStyleSheet(
+            f"font-size: 28px; color: {Colors.CHAT_ACCENT}; background: transparent;"
+        )
+        empty_layout.addWidget(empty_icon)
+        self._empty_title = QLabel("还没有任务")
+        self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_title.setStyleSheet("font-size: 18px; font-weight: 700;")
+        empty_layout.addWidget(self._empty_title)
+        self._empty_description = QLabel("把一个需要持续推进的目标交给这里。")
+        self._empty_description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_description.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
+        empty_layout.addWidget(self._empty_description)
+        self._empty_action = QPushButton("新建第一个任务")
+        self._empty_action.clicked.connect(self._on_empty_action)
+        empty_layout.addWidget(self._empty_action, alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch()
+        root.addWidget(self._empty_state, 1)
+
+        self._filters_bar = QWidget()
+        filters = QHBoxLayout(self._filters_bar)
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.setSpacing(8)
         self._status_filter = QComboBox()
-        self._status_filter.addItem("全部", None)
+        self._status_filter.addItem("全部状态", None)
         for status, label in _STATUS_LABELS.items():
             self._status_filter.addItem(label, status)
         self._status_filter.currentIndexChanged.connect(self.refresh)
         filters.addWidget(self._status_filter)
-        filters.addWidget(QLabel("类型"))
         self._kind_filter = QComboBox()
-        self._kind_filter.addItem("全部", None)
+        self._kind_filter.addItem("全部类型", None)
         for kind, label in _KIND_LABELS.items():
             self._kind_filter.addItem(label, kind)
         self._kind_filter.currentIndexChanged.connect(self.refresh)
         filters.addWidget(self._kind_filter)
         filters.addStretch()
-        refresh_button = QPushButton("刷新")
-        refresh_button.clicked.connect(self.refresh)
-        filters.addWidget(refresh_button)
-        root.addLayout(filters)
+        root.addWidget(self._filters_bar)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["状态", "任务", "类型", "更新时间"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -332,7 +384,7 @@ class TaskCenterDialog(QDialog):
             3, QHeaderView.ResizeMode.ResizeToContents
         )
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        splitter.addWidget(self._table)
+        self._splitter.addWidget(self._table)
 
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
@@ -528,9 +580,9 @@ class TaskCenterDialog(QDialog):
         self._tabs.addTab(details_panel, "详细信息")
         detail_layout.addWidget(self._tabs, 1)
 
-        follow_up = QFrame()
-        follow_up.setObjectName("taskComposer")
-        follow_up_layout = QHBoxLayout(follow_up)
+        self._follow_up_panel = QFrame()
+        self._follow_up_panel.setObjectName("taskComposer")
+        follow_up_layout = QHBoxLayout(self._follow_up_panel)
         follow_up_layout.setContentsMargins(8, 8, 8, 8)
         self._follow_up_input = QTextEdit()
         self._follow_up_input.setPlaceholderText("补充要求、提出修改意见，或让任务基于当前结果继续…")
@@ -540,7 +592,7 @@ class TaskCenterDialog(QDialog):
         self._continue_button = QPushButton("继续任务")
         self._continue_button.clicked.connect(self._continue_selected)
         follow_up_layout.addWidget(self._continue_button)
-        detail_layout.addWidget(follow_up)
+        detail_layout.addWidget(self._follow_up_panel)
 
         actions = QHBoxLayout()
         self._more_button = QToolButton()
@@ -575,11 +627,11 @@ class TaskCenterDialog(QDialog):
         )
         actions.addWidget(self._primary_button)
         detail_layout.addLayout(actions)
-        splitter.addWidget(detail_panel)
-        splitter.setSizes([360, 840])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        root.addWidget(splitter, 1)
+        self._splitter.addWidget(detail_panel)
+        self._splitter.setSizes([340, 860])
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        root.addWidget(self._splitter, 1)
 
         self.setStyleSheet(
             f"""
@@ -602,6 +654,10 @@ class TaskCenterDialog(QDialog):
                 border: 1px solid {Colors.CHAT_BORDER};
                 border-radius: 9px;
                 background: white;
+            }}
+            QFrame#taskEmptyState {{
+                border: none;
+                background: transparent;
             }}
             QHeaderView::section {{
                 background: {Colors.PARAMS_BG};
@@ -626,6 +682,33 @@ class TaskCenterDialog(QDialog):
         if service is not None and hasattr(service, "subscribe"):
             self._unsubscribe = service.subscribe(lambda _item: self._signals.changed.emit())
 
+    def _on_empty_action(self) -> None:
+        if self._status_filter.currentData() is not None or self._kind_filter.currentData() is not None:
+            self._status_filter.setCurrentIndex(0)
+            self._kind_filter.setCurrentIndex(0)
+            return
+        self._new_task()
+
+    def _update_content_state(self, has_items: bool) -> None:
+        filtered = bool(
+            self._status_filter.currentData() is not None
+            or self._kind_filter.currentData() is not None
+        )
+        self._empty_state.setVisible(not has_items)
+        self._filters_bar.setVisible(has_items or filtered)
+        self._splitter.setVisible(has_items)
+        self._new_button.setVisible(has_items or filtered)
+        if has_items:
+            return
+        if filtered:
+            self._empty_title.setText("没有匹配的任务")
+            self._empty_description.setText("调整筛选条件后再试。")
+            self._empty_action.setText("清除筛选")
+        else:
+            self._empty_title.setText("还没有任务")
+            self._empty_description.setText("把一个需要持续推进的目标交给这里。")
+            self._empty_action.setText("新建第一个任务")
+
     def refresh(self) -> None:
         status = self._status_filter.currentData()
         kind = self._kind_filter.currentData()
@@ -635,6 +718,7 @@ class TaskCenterDialog(QDialog):
             QMessageBox.warning(self, "刷新失败", str(exc))
             return
         self._items_by_id = {item.id: item for item in items}
+        self._update_content_state(bool(items))
         self._table.setRowCount(len(items))
         selected_row = None
         for row, item in enumerate(items):
@@ -1482,6 +1566,7 @@ class TaskCenterDialog(QDialog):
         can_continue = bool(
             item and item.status.terminal and not busy and hasattr(self._app, "continue_work_item")
         )
+        self._follow_up_panel.setVisible(can_continue)
         self._follow_up_input.setEnabled(can_continue)
         self._continue_button.setEnabled(
             can_continue and bool(self._follow_up_input.toPlainText().strip())
