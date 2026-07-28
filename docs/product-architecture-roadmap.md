@@ -119,6 +119,13 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 5. Artifact 反馈、导出和 WorkflowDefinition；
 6. Application Service、状态投影和 Ember 边界收敛。
 
+当前进度：
+
+- [x] WorkItem、Workflow、ResourceGrant 形成独立 Application Service
+- [x] WorkItem 状态统一从 Run 事实投影
+- [x] Ember 依赖方向加入可执行架构边界测试
+- [x] LangGraph 保持在应用运行时，不进入 Ember 公共 API
+
 ### v0.4：任务复用与自动化
 
 - [x] Artifact 原子导出、反馈历史与采纳率指标
