@@ -1,0 +1,29 @@
+version: 1
+scenarios:
+  - id: research_report
+    name: 调研并形成报告
+    category: research
+    objective: 调研三个主流 Agent 工作流框架，比较定位、优缺点和适用场景，并形成报告。
+    accepted_artifact_kinds: [text, report]
+    minimum_artifacts: 1
+    maximum_duration_seconds: 600
+    tags: [core, network, report]
+
+  - id: workspace_analysis
+    name: 本地工作区分析
+    category: workspace
+    objective: 分析指定工作区的代码结构，指出三个最高优先级风险并形成可交付报告。
+    accepted_artifact_kinds: [text, report, file]
+    minimum_artifacts: 1
+    requires_approval: false
+    maximum_duration_seconds: 600
+    tags: [core, workspace, report]
+
+  - id: recurring_digest
+    name: 周期信息摘要
+    category: automation
+    objective: 根据给定主题生成结构化信息摘要，包含来源、结论和后续关注项。
+    accepted_artifact_kinds: [text, report, message]
+    minimum_artifacts: 1
+    maximum_duration_seconds: 600
+    tags: [core, automation, report]

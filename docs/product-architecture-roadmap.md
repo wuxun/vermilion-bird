@@ -103,7 +103,8 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] 正式数据库 schema version 与迁移日志
 - [x] 升级前 WAL 一致备份与失败恢复
 - [ ] 一键诊断包（迁移失败 sidecar 已完成）
-- [ ] GUI E2E 与进程崩溃故障注入
+- [ ] GUI E2E
+- [x] 进程崩溃故障注入：提交后崩溃、控制请求恢复、副作用禁止重放
 - [ ] macOS Developer ID 签名、公证和自动更新
 - [ ] Windows/Linux 构建验证
 
@@ -128,7 +129,7 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 
 ### v0.5：质量评测与记忆治理
 
-- [ ] 建立真实场景 Eval 数据集与基线
+- [x] 建立版本化核心场景 Eval 数据集与确定性评分基线
 - [ ] 评估完成率、工具成功率、延迟、成本和产物采纳率
 - [ ] Prompt、模型路由和 Context 策略变更进入 CI 回归
 - [ ] 记忆来源、作用域、置信度、过期、纠正、删除和导出

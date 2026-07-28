@@ -88,6 +88,11 @@ poetry run vermilion-bird task resume <work-item-id>
 # 数据库版本、完整性检查和手动备份
 poetry run vermilion-bird database status
 poetry run vermilion-bird database backup --label before-upgrade
+
+# 核心任务质量评测（score 不调用模型；run 会真实执行）
+poetry run vermilion-bird eval list
+poetry run vermilion-bird eval score research_report <work-item-id>
+poetry run vermilion-bird eval run research_report
 ```
 
 GUI 顶栏的“任务”按钮（或 `Ctrl+Shift+T`）打开面向用户目标和交付物的任务中心；
@@ -102,6 +107,9 @@ GUI 顶栏的“任务”按钮（或 `Ctrl+Shift+T`）打开面向用户目标�
 Chat 与普通可恢复工作流可从 SQLite checkpoint 重试、恢复或重放；Scheduler、
 Webhook 和 Proactive 任务也通过同一 Run Dispatcher 管理。Chat 消息写入带执行幂等键，
 恢复节点时不会重复保存同一轮消息。
+
+核心任务评测说明见 [docs/evaluation.md](docs/evaluation.md)。确定性评分可作为 CI
+门禁；真实执行评测需要显式调用，避免默认产生模型费用或外部副作用。
 
 ### 打包独立应用
 
