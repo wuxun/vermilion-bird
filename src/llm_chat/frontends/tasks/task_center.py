@@ -70,9 +70,16 @@ class TaskCenterSignals(QObject):
 class TaskCenterDialog(QDialog):
     """面向用户的任务聚合视图；Run 细节保留在高级执行中心。"""
 
-    def __init__(self, app: Any, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        app: Any,
+        parent: Optional[QWidget] = None,
+        *,
+        embedded: bool = False,
+    ):
         super().__init__(parent)
         self._app = app
+        self._embedded = embedded
         self._signals = TaskCenterSignals()
         self._items_by_id: Dict[str, Any] = {}
         self._artifacts_by_id: Dict[str, Any] = {}
@@ -85,10 +92,13 @@ class TaskCenterDialog(QDialog):
         self._unsubscribe = None
         self._execution_dialog = None
 
-        self.setWindowTitle("任务中心")
-        self.resize(1120, 740)
-        self.setMinimumSize(900, 580)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
+        else:
+            self.setWindowTitle("任务中心")
+            self.resize(1120, 740)
+            self.setMinimumSize(900, 580)
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._build_ui()
         self._connect_service()
         self._signals.changed.connect(self.refresh)

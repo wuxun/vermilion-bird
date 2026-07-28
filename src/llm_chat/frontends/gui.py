@@ -90,6 +90,7 @@ try:
         QSlider,
         QComboBox,
         QDialog,
+        QStackedWidget,
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -119,6 +120,7 @@ except ImportError:
     QSlider = None
     QComboBox = None
     QDialog = None
+    QStackedWidget = None
     Qt = None
     QTimer = None
     QSize = None
@@ -155,6 +157,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._execution_center_timer = None
         self._task_center_button: Optional[QPushButton] = None
         self._task_center_dialog = None
+        self._task_workspace = None
+        self._workspace_stack: Optional[QStackedWidget] = None
+        self._chat_workspace: Optional[QWidget] = None
+        self._chat_nav_button: Optional[QPushButton] = None
+        self._task_nav_button: Optional[QPushButton] = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._stream_signals: Optional[StreamSignals] = None
@@ -305,8 +312,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         menu.addAction("🤖 模型设置", self._on_models_config)
         menu.addAction("⏰ Scheduler", self._on_scheduler_config)
         menu.addAction("📊 Dashboard", self._on_dashboard)
-        menu.addAction("✅ 任务中心", self._on_task_center)
-        menu.addAction("🧭 执行与审批中心", self._on_execution_center)
+        menu.addAction("🧭 高级执行中心", self._on_execution_center)
         menu.addSeparator()
         menu.addAction("⌨️ 快捷键", self._show_shortcuts_help)
 
@@ -353,10 +359,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._execution_center_dialog = None
 
     def _on_task_center(self):
-        """打开以用户目标和交付物为中心的任务视图。"""
+        """切换到以用户目标和交付物为中心的任务工作区。"""
 
         if self._app_instance is None:
             QMessageBox.warning(self._main_window, "暂不可用", "应用服务尚未初始化。")
+            return
+        if self._workspace_stack is not None and self._task_workspace is not None:
+            self._task_workspace.refresh()
+            self._workspace_stack.setCurrentWidget(self._task_workspace)
+            self._update_workspace_navigation()
             return
         if self._task_center_dialog is not None and self._task_center_dialog.isVisible():
             self._task_center_dialog.raise_()
@@ -373,10 +384,27 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def _on_task_center_destroyed(self):
         self._task_center_dialog = None
 
+    def _on_chat_workspace(self):
+        """切换回对话工作区。"""
+
+        if self._workspace_stack is None or self._chat_workspace is None:
+            return
+        self._workspace_stack.setCurrentWidget(self._chat_workspace)
+        self._update_workspace_navigation()
+        if self._input_field is not None:
+            self._input_field.setFocus()
+
+    def _update_workspace_navigation(self):
+        current = self._workspace_stack.currentWidget() if self._workspace_stack else None
+        if self._chat_nav_button is not None:
+            self._chat_nav_button.setChecked(current is self._chat_workspace)
+        if self._task_nav_button is not None:
+            self._task_nav_button.setChecked(current is self._task_workspace)
+
     def _update_execution_center_indicator(self):
         """在顶栏展示待审批数量，避免审批请求被聊天内容淹没。"""
 
-        if self._execution_center_button is None or self._app_instance is None:
+        if self._task_nav_button is None or self._app_instance is None:
             return
         try:
             from llm_chat.runtime import ActionStatus
@@ -390,10 +418,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         except Exception:
             logger.debug("Failed to refresh pending action indicator", exc_info=True)
             return
-        self._execution_center_button.setText(f"🧭 {pending_count}" if pending_count else "🧭")
-        self._execution_center_button.setFixedWidth(48 if pending_count else 32)
-        self._execution_center_button.setToolTip(
-            (f"执行与审批中心：{pending_count} 项待审批" if pending_count else "执行与审批中心 (Ctrl+Shift+R)")
+        self._task_nav_button.setText(f"任务\n{pending_count} 待办" if pending_count else "任务")
+        self._task_nav_button.setToolTip(
+            f"任务工作区：{pending_count} 项待处理" if pending_count else "任务工作区 (Ctrl+Shift+T)"
         )
 
     def set_conversation_callbacks(
@@ -500,11 +527,89 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self._sidebar = self._create_sidebar()
-        main_layout.addWidget(self._sidebar)
+        main_layout.addWidget(self._create_navigation_rail())
 
+        self._workspace_stack = QStackedWidget()
+        self._chat_workspace = QWidget()
+        chat_layout = QHBoxLayout(self._chat_workspace)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(0)
+        self._sidebar = self._create_sidebar()
+        chat_layout.addWidget(self._sidebar)
         chat_area = self._create_chat_area()
-        main_layout.addWidget(chat_area, stretch=1)
+        chat_layout.addWidget(chat_area, stretch=1)
+        self._workspace_stack.addWidget(self._chat_workspace)
+
+        if self._app_instance is not None:
+            from llm_chat.frontends.tasks import TaskCenterDialog
+
+            self._task_workspace = TaskCenterDialog(
+                self._app_instance,
+                self._workspace_stack,
+                embedded=True,
+            )
+            self._workspace_stack.addWidget(self._task_workspace)
+
+        self._workspace_stack.setCurrentWidget(self._chat_workspace)
+        main_layout.addWidget(self._workspace_stack, stretch=1)
+        self._update_workspace_navigation()
+
+    def _create_navigation_rail(self) -> QWidget:
+        rail = QFrame()
+        rail.setObjectName("navigationRail")
+        rail.setFixedWidth(68)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(8)
+
+        brand = QLabel("朱")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand.setFixedHeight(36)
+        brand.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {Colors.PRIMARY};")
+        layout.addWidget(brand)
+
+        nav_style = f"""
+            QPushButton {{
+                border: none;
+                border-radius: 9px;
+                padding: 7px 4px;
+                color: {Colors.TEXT_SECONDARY};
+                background: transparent;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {Colors.PARAMS_BG};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QPushButton:checked {{
+                background: {Colors.CHAT_ACCENT};
+                color: {Colors.PRIMARY};
+                font-weight: 700;
+            }}
+        """
+        self._chat_nav_button = QPushButton("对话")
+        self._chat_nav_button.setCheckable(True)
+        self._chat_nav_button.setFixedHeight(48)
+        self._chat_nav_button.setStyleSheet(nav_style)
+        self._chat_nav_button.clicked.connect(self._on_chat_workspace)
+        layout.addWidget(self._chat_nav_button)
+
+        self._task_nav_button = QPushButton("任务")
+        self._task_nav_button.setCheckable(True)
+        self._task_nav_button.setFixedHeight(54)
+        self._task_nav_button.setStyleSheet(nav_style)
+        self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
+        self._task_nav_button.clicked.connect(self._on_task_center)
+        layout.addWidget(self._task_nav_button)
+        layout.addStretch()
+
+        self._settings_button = QPushButton("设置")
+        self._settings_button.setFixedHeight(44)
+        self._settings_button.setStyleSheet(nav_style)
+        self._settings_button.setToolTip("设置 (Ctrl+,)")
+        self._settings_button.clicked.connect(self._show_settings_menu)
+        layout.addWidget(self._settings_button)
+        return rail
 
     def _create_sidebar(self) -> QWidget:
         sidebar = QFrame()
@@ -671,57 +776,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         header_layout.addWidget(self._model_combo)
 
-        self._task_center_button = QPushButton("任务")
-        self._task_center_button.setFixedSize(52, 32)
-        self._task_center_button.setToolTip("任务中心 (Ctrl+Shift+T)")
-        self._task_center_button.setStyleSheet(
-            """
-            QPushButton {
-                background: transparent;
-                border: 1px solid rgba(0,0,0,0.08);
-                border-radius: 6px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: rgba(0,0,0,0.05); }
-            """
-        )
-        self._task_center_button.clicked.connect(self._on_task_center)
-        header_layout.addWidget(self._task_center_button)
-
-        self._execution_center_button = QPushButton("🧭")
-        self._execution_center_button.setFixedSize(32, 32)
-        self._execution_center_button.setToolTip("执行与审批中心 (Ctrl+Shift+R)")
-        self._execution_center_button.setStyleSheet(
-            """
-            QPushButton {
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-                font-size: 15px;
-            }
-            QPushButton:hover { background-color: rgba(0,0,0,0.05); }
-            """
-        )
-        self._execution_center_button.clicked.connect(self._on_execution_center)
-        header_layout.addWidget(self._execution_center_button)
-
-        self._settings_button = QPushButton("⚙️")
-        self._settings_button.setFixedSize(32, 32)
-        self._settings_button.setToolTip("设置 (Ctrl+,)")
-        self._settings_button.setStyleSheet(
-            """
-            QPushButton {
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: rgba(0,0,0,0.05); }
-        """
-        )
-        self._settings_button.clicked.connect(self._show_settings_menu)
-        header_layout.addWidget(self._settings_button)
-
         layout.addWidget(header)
 
         # ── 对话区域（居中 768px 列） ──
@@ -863,6 +917,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._main_window.setStyleSheet(
             f"""
             QFrame#sidebar {{
+                background-color: {Colors.SIDEBAR_BG};
+                border-right: 1px solid {Colors.SIDEBAR_BORDER};
+            }}
+            QFrame#navigationRail {{
                 background-color: {Colors.SIDEBAR_BG};
                 border-right: 1px solid {Colors.SIDEBAR_BORDER};
             }}
