@@ -361,6 +361,7 @@ def _execute_tools_node(
     ]
     policy = runtime.context.capability_policy
     proposals = runtime.context.action_proposals
+    grant_authorizer = runtime.context.grant_authorizer
     run_manager = runtime.context.run_manager
     run_id = runtime.context.run_id
 
@@ -374,6 +375,21 @@ def _execute_tools_node(
         decision, capabilities = (
             policy.evaluate(tc.name, declared) if policy else (PolicyDecision.ALLOW, set())
         )
+        if (
+            decision == PolicyDecision.REQUIRE_APPROVAL
+            and grant_authorizer
+            and grant_authorizer(run_id, tc.name, args, capabilities)
+        ):
+            decision = PolicyDecision.ALLOW
+            if run_manager:
+                run_manager.emit(
+                    run_id,
+                    "action.authorized_by_grant",
+                    {
+                        "tool": tc.name,
+                        "capabilities": sorted(capability.value for capability in capabilities),
+                    },
+                )
 
         if decision == PolicyDecision.REQUIRE_APPROVAL and proposals:
             proposal = proposals.propose(
@@ -672,6 +688,7 @@ class ChatCoreGraph:
         run_manager: Optional[RunManager] = None,
         capability_policy: Optional[CapabilityPolicy] = None,
         action_proposals: Optional[ActionProposalManager] = None,
+        grant_authorizer: Optional[Callable[..., bool]] = None,
         action_prepare: Optional[Callable[[Any], Any]] = None,
         action_approve: Optional[Callable[..., Any]] = None,
         action_reject: Optional[Callable[..., Any]] = None,
@@ -684,6 +701,7 @@ class ChatCoreGraph:
         self.run_manager = run_manager or RunManager()
         self.capability_policy = capability_policy or CapabilityPolicy()
         self.action_proposals = action_proposals or ActionProposalManager()
+        self.grant_authorizer = grant_authorizer
         self.action_prepare = action_prepare
         self.action_approve = action_approve
         self.action_reject = action_reject
@@ -1128,6 +1146,7 @@ class ChatCoreGraph:
             run_manager=self.run_manager,
             capability_policy=self.capability_policy,
             action_proposals=self.action_proposals,
+            grant_authorizer=self.grant_authorizer,
             context_hub=self.context_hub,
             tool_registry=get_tool_registry(),
             run_id=run_id,

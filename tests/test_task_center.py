@@ -20,6 +20,12 @@ from llm_chat.runtime import (  # noqa: E402
 from llm_chat.work import (  # noqa: E402
     Artifact,
     ArtifactKind,
+    GrantStatus,
+    PlanRevision,
+    PlanStatus,
+    PlanStep,
+    ResourceGrant,
+    ResourceType,
     WorkItem,
     WorkItemDetail,
     WorkItemStatus,
@@ -88,6 +94,9 @@ def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
         can_pause_work_item=lambda _work_item_id: False,
         approve_action=MagicMock(),
         reject_action=MagicMock(),
+        approve_work_item_plan=MagicMock(),
+        create_resource_grant=MagicMock(),
+        revoke_resource_grant=MagicMock(),
         run_manager=MagicMock(),
         action_proposals=MagicMock(),
     )
@@ -170,6 +179,47 @@ def test_paused_task_enables_resume_when_handler_supports_it(qt_app):
 
     assert dialog._resume_button.isEnabled()
     assert not dialog._retry_button.isEnabled()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_task_center_renders_plan_and_resource_grants(qt_app):
+    detail = _detail(WorkItemStatus.RUNNING)
+    detail.plan = PlanRevision(
+        id="plan_gui",
+        work_item_id=detail.work_item.id,
+        version=2,
+        summary="先分析再交付",
+        status=PlanStatus.DRAFT,
+        steps=[
+            PlanStep(
+                id="step_gui",
+                plan_revision_id="plan_gui",
+                position=1,
+                title="分析代码",
+            )
+        ],
+    )
+    detail.grants = [
+        ResourceGrant(
+            id="grant_gui",
+            work_item_id=detail.work_item.id,
+            capability=Capability.WORKSPACE_WRITE.value,
+            resource_type=ResourceType.DIRECTORY,
+            resource="/workspace/reports",
+            status=GrantStatus.ACTIVE,
+        )
+    ]
+    dialog = TaskCenterDialog(_fake_app(detail))
+    qt_app.processEvents()
+
+    assert dialog._tabs.tabText(4) == "计划 (v2)"
+    assert dialog._plan_table.rowCount() == 1
+    assert dialog._approve_plan_button.isEnabled()
+    assert dialog._tabs.tabText(5) == "授权 (1)"
+    assert dialog._grants_table.rowCount() == 1
+    assert dialog._revoke_grant_button.isEnabled()
 
     dialog.close()
     qt_app.processEvents()

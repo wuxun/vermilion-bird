@@ -36,7 +36,16 @@ from llm_chat.runtime import (
     RunStatus,
     RunType,
 )
-from llm_chat.work import ArtifactKind, WorkItemKind, WorkItemService, WorkItemStatus
+from llm_chat.work import (
+    ArtifactKind,
+    GrantScope,
+    PlanStepStatus,
+    ResourceGrantService,
+    ResourceType,
+    WorkItemKind,
+    WorkItemService,
+    WorkItemStatus,
+)
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -101,6 +110,7 @@ class App:
             repository=self.storage,
             runs=self.run_manager,
         )
+        self.resource_grants = ResourceGrantService(self.storage)
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
         self.effect_outbox = EffectOutbox(self.storage)
@@ -233,6 +243,76 @@ class App:
     def get_work_item_detail(self, work_item_id: str):
         return self.work_items.detail(work_item_id)
 
+    def create_work_item_plan(
+        self,
+        work_item_id: str,
+        *,
+        summary: str,
+        steps: List[Dict[str, Any]],
+        change_summary: str = "",
+        approve: bool = False,
+    ):
+        return self.work_items.create_plan_revision(
+            work_item_id,
+            summary=summary,
+            steps=steps,
+            change_summary=change_summary,
+            approve=approve,
+        )
+
+    def approve_work_item_plan(self, work_item_id: str, plan_id: str):
+        return self.work_items.approve_plan_revision(work_item_id, plan_id)
+
+    def update_work_item_plan_step(
+        self,
+        work_item_id: str,
+        step_id: str,
+        status: PlanStepStatus,
+    ):
+        return self.work_items.update_plan_step(work_item_id, step_id, status)
+
+    def list_work_item_plans(self, work_item_id: str, *, limit: int = 50):
+        return self.work_items.list_plan_revisions(work_item_id, limit=limit)
+
+    def create_resource_grant(
+        self,
+        *,
+        work_item_id: str,
+        capability: str,
+        resource_type: ResourceType,
+        resource: str,
+        scope: GrantScope = GrantScope.WORK_ITEM,
+        expires_at=None,
+        reason: str = "",
+    ):
+        item = self.work_items.get(work_item_id)
+        if item is None:
+            raise KeyError(f"Unknown work item: {work_item_id}")
+        return self.resource_grants.create(
+            work_item_id=work_item_id,
+            workflow_id=item.workflow_id,
+            capability=capability,
+            resource_type=resource_type,
+            resource=resource,
+            scope=scope,
+            expires_at=expires_at,
+            reason=reason,
+        )
+
+    def revoke_resource_grant(self, grant_id: str):
+        return self.resource_grants.revoke(grant_id)
+
+    def list_resource_grants(
+        self,
+        *,
+        work_item_id: Optional[str] = None,
+        include_inactive: bool = False,
+    ):
+        return self.resource_grants.list(
+            work_item_id=work_item_id,
+            include_inactive=include_inactive,
+        )
+
     def list_work_item_actions(
         self,
         work_item_id: str,
@@ -265,14 +345,39 @@ class App:
         elif self.storage.get_conversation(conversation_id) is None:
             self.storage.create_conversation(conversation_id, item.title)
 
+        approved_plan = self.storage.get_latest_plan_revision(
+            item.id,
+            approved_only=True,
+        )
+        execution_request = self._work_item_execution_request(
+            item.objective,
+            approved_plan,
+        )
         self.chat_core.send_message(
             conversation_id=conversation_id,
-            message=item.objective,
+            message=execution_request,
             work_item_id=item.id,
             run_type=RunType.WORKFLOW,
         )
         self.work_items.reconcile()
         return self._materialize_work_item_result(item.id)
+
+    @staticmethod
+    def _work_item_execution_request(objective: str, approved_plan) -> str:
+        if approved_plan is None:
+            return objective
+        steps = "\n".join(
+            f"{step.position}. {step.title}" + (f"：{step.description}" if step.description else "")
+            for step in approved_plan.steps
+        )
+        return (
+            f"{objective}\n\n"
+            f"已批准执行计划 v{approved_plan.version}（"
+            f"{approved_plan.id}）：{approved_plan.summary}\n"
+            f"{steps}\n\n"
+            "按计划顺序执行；若事实变化导致计划不再适用，停止高风险动作并说明"
+            "需要修订的步骤，不得自行扩大资源权限。"
+        )
 
     def _materialize_work_item_result(self, work_item_id: str):
         detail = self.work_items.detail(work_item_id)
@@ -370,11 +475,7 @@ class App:
 
     def can_retry_work_item(self, work_item_id: str) -> bool:
         item = self.work_items.get(work_item_id)
-        return bool(
-            item
-            and item.latest_run_id
-            and self.can_retry_run(item.latest_run_id)
-        )
+        return bool(item and item.latest_run_id and self.can_retry_run(item.latest_run_id))
 
     def retry_work_item(self, work_item_id: str):
         detail = self.work_items.detail(work_item_id)
@@ -642,6 +743,7 @@ class App:
             run_manager=self.run_manager,
             capability_policy=self.capability_policy,
             action_proposals=self.action_proposals,
+            grant_authorizer=self._authorize_tool_with_grant,
             action_prepare=self.prepare_action,
             action_approve=self.approve_action,
             action_reject=self.reject_action,
@@ -649,6 +751,28 @@ class App:
         )
         logger.info("ChatCore initialized")
         return chat_core
+
+    def _authorize_tool_with_grant(
+        self,
+        run_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        capabilities,
+    ) -> bool:
+        run = self.run_manager.get(run_id)
+        if run is None or not run.work_item_id:
+            return False
+        item = self.work_items.get(run.work_item_id)
+        if item is None:
+            return False
+        return self.resource_grants.authorizes_tool(
+            work_item_id=item.id,
+            workflow_id=item.workflow_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            capabilities=capabilities,
+            workspace=item.workspace,
+        )
 
     def _init_service_manager(self):
         return ServiceManager()

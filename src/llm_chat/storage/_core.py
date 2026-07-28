@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 4
+    CURRENT_SCHEMA_VERSION = 5
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -109,9 +109,7 @@ class StorageCore:
             )
         backup_path = None
         needs_repair = has_schema and self._schema_needs_repair()
-        if has_schema and (
-            from_version < self.CURRENT_SCHEMA_VERSION or needs_repair
-        ):
+        if has_schema and (from_version < self.CURRENT_SCHEMA_VERSION or needs_repair):
             backup_path = self._create_upgrade_backup(from_version)
 
         report = MigrationReport(
@@ -165,6 +163,7 @@ class StorageCore:
             SchemaMigration(2, "durable_runtime", self._create_runtime_tables_in),
             SchemaMigration(3, "work_items_and_artifacts", self._create_work_tables_in),
             SchemaMigration(4, "cooperative_run_control", self._migrate_run_control),
+            SchemaMigration(5, "plans_and_resource_grants", self._create_planning_tables_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -229,14 +228,20 @@ class StorageCore:
             },
             "action_proposals": {"execution_run_id"},
             "artifacts": {"content", "idempotency_key"},
+            "plan_revisions": {"work_item_id", "version", "status"},
+            "plan_steps": {"plan_revision_id", "position", "depends_on_json"},
+            "resource_grants": {
+                "capability",
+                "resource_type",
+                "resource",
+                "scope",
+                "status",
+            },
         }
         with sqlite3.connect(self._db_path) as conn:
             for table, columns in required.items():
                 existing = {
-                    row[1]
-                    for row in conn.execute(
-                        f"PRAGMA table_info({table})"
-                    ).fetchall()
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
                 }
                 if not existing or not columns <= existing:
                     return True
@@ -251,6 +256,7 @@ class StorageCore:
         self._create_decision_log_table_in(conn)
         self._create_runtime_tables_in(conn)
         self._create_work_tables_in(conn)
+        self._create_planning_tables_in(conn)
         self._migrate_run_control(conn)
 
     def _create_upgrade_backup(self, from_version: int) -> str:
@@ -265,14 +271,13 @@ class StorageCore:
         backup_dir = source.parent / f"{source.name}.backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        safe_label = "".join(
-            character
-            for character in label
-            if character.isalnum() or character in {"-", "_"}
-        )[:40] or "manual"
-        target = backup_dir / (
-            f"{source.stem}-{safe_label}-{timestamp}{source.suffix or '.db'}"
+        safe_label = (
+            "".join(
+                character for character in label if character.isalnum() or character in {"-", "_"}
+            )[:40]
+            or "manual"
         )
+        target = backup_dir / (f"{source.stem}-{safe_label}-{timestamp}{source.suffix or '.db'}")
         with sqlite3.connect(self._db_path) as source_conn:
             with sqlite3.connect(str(target)) as target_conn:
                 source_conn.backup(target_conn)
@@ -280,9 +285,7 @@ class StorageCore:
 
     def verify_integrity(self) -> Dict[str, Any]:
         with self._get_connection() as conn:
-            integrity_rows = [
-                row[0] for row in conn.execute("PRAGMA integrity_check").fetchall()
-            ]
+            integrity_rows = [row[0] for row in conn.execute("PRAGMA integrity_check").fetchall()]
             foreign_key_rows = [
                 tuple(row) for row in conn.execute("PRAGMA foreign_key_check").fetchall()
             ]
@@ -849,5 +852,83 @@ class StorageCore:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_idempotency
             ON artifacts(idempotency_key)
             WHERE idempotency_key IS NOT NULL
+            """
+        )
+
+    @staticmethod
+    def _create_planning_tables_in(conn):
+        """创建版本化计划与资源级授权表。"""
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS plan_revisions (
+                id TEXT PRIMARY KEY,
+                work_item_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                status TEXT NOT NULL,
+                change_summary TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                approved_at TEXT,
+                UNIQUE(work_item_id, version),
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_plan_revisions_work_version
+                ON plan_revisions(work_item_id, version DESC);
+            CREATE INDEX IF NOT EXISTS idx_plan_revisions_status
+                ON plan_revisions(status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS plan_steps (
+                id TEXT PRIMARY KEY,
+                plan_revision_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                depends_on_json TEXT NOT NULL DEFAULT '[]',
+                expected_artifact_kind TEXT,
+                required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                UNIQUE(plan_revision_id, position),
+                FOREIGN KEY (plan_revision_id)
+                    REFERENCES plan_revisions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_plan_steps_revision
+                ON plan_steps(plan_revision_id, position);
+
+            CREATE TABLE IF NOT EXISTS resource_grants (
+                id TEXT PRIMARY KEY,
+                work_item_id TEXT,
+                workflow_id TEXT,
+                capability TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked_at TEXT,
+                last_used_at TEXT,
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_resource_grants_work_item
+                ON resource_grants(work_item_id, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_resource_grants_workflow
+                ON resource_grants(workflow_id, status, created_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_grants_active_boundary
+                ON resource_grants(
+                    IFNULL(work_item_id, ''),
+                    IFNULL(workflow_id, ''),
+                    capability,
+                    resource_type,
+                    resource,
+                    scope
+                )
+                WHERE status = 'active';
             """
         )

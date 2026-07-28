@@ -190,6 +190,7 @@ class ChatRuntimeContext:
     run_manager: Any
     capability_policy: Any
     action_proposals: Any
+    grant_authorizer: Any
     context_hub: Any
     tool_registry: Any
     run_id: str
@@ -224,6 +225,7 @@ class ChatRuntimeContext:
             run_manager=extra.get("run_manager"),
             capability_policy=extra.get("capability_policy"),
             action_proposals=extra.get("action_proposals"),
+            grant_authorizer=extra.get("grant_authorizer"),
             context_hub=extra.get("context_hub"),
             tool_registry=extra.get("tool_registry"),
             run_id=extra.get("run_id", ""),

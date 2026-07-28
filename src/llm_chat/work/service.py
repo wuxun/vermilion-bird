@@ -11,6 +11,11 @@ from llm_chat.runtime import RecoveryPolicy, Run, RunEvent, RunManager, RunStatu
 from .models import (
     Artifact,
     ArtifactKind,
+    PlanRevision,
+    PlanStatus,
+    PlanStep,
+    PlanStepStatus,
+    ResourceGrant,
     WorkItem,
     WorkItemDetail,
     WorkItemKind,
@@ -66,6 +71,49 @@ class WorkItemRepository(Protocol):
         *,
         limit: int = 200,
     ) -> List[Artifact]:
+        ...
+
+    def create_plan_revision(self, plan: PlanRevision) -> bool:
+        ...
+
+    def get_plan_revision(self, plan_id: str) -> Optional[PlanRevision]:
+        ...
+
+    def get_latest_plan_revision(
+        self,
+        work_item_id: str,
+        *,
+        approved_only: bool = False,
+    ) -> Optional[PlanRevision]:
+        ...
+
+    def list_plan_revisions(
+        self,
+        work_item_id: str,
+        *,
+        limit: int = 50,
+    ) -> List[PlanRevision]:
+        ...
+
+    def approve_plan_revision(self, plan_id: str, *, approved_at) -> bool:
+        ...
+
+    def update_plan_step_status(
+        self,
+        plan_id: str,
+        step_id: str,
+        status: PlanStepStatus,
+    ) -> bool:
+        ...
+
+    def list_resource_grants(
+        self,
+        *,
+        work_item_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status=None,
+        limit: int = 200,
+    ) -> List[ResourceGrant]:
         ...
 
 
@@ -154,9 +202,7 @@ class WorkItemService:
             max_attempts=max_attempts,
         )
         if run.work_item_id != item.id:
-            raise ValueError(
-                f"Idempotent run {run.id} belongs to work item {run.work_item_id}"
-            )
+            raise ValueError(f"Idempotent run {run.id} belongs to work item {run.work_item_id}")
         with self._lock:
             item = self._require(work_item_id)
             item.root_run_id = item.root_run_id or run.id
@@ -267,7 +313,100 @@ class WorkItemService:
             work_item=item,
             runs=self.runs.list(limit=1000, work_item_id=work_item_id),
             artifacts=self.repository.list_artifacts(work_item_id),
+            plan=self.repository.get_latest_plan_revision(work_item_id),
+            grants=self.repository.list_resource_grants(
+                work_item_id=work_item_id,
+                workflow_id=item.workflow_id,
+                limit=200,
+            ),
         )
+
+    def create_plan_revision(
+        self,
+        work_item_id: str,
+        *,
+        summary: str,
+        steps: List[Dict[str, Any]],
+        change_summary: str = "",
+        created_by: str = "local-user",
+        approve: bool = False,
+    ) -> PlanRevision:
+        """创建不可覆盖的计划版本，并可在同一用例中显式批准。"""
+
+        self._require(work_item_id)
+        summary = summary.strip()
+        if not summary:
+            raise ValueError("plan summary cannot be empty")
+        if not steps:
+            raise ValueError("plan must contain at least one step")
+        latest = self.repository.get_latest_plan_revision(work_item_id)
+        plan = PlanRevision(
+            work_item_id=work_item_id,
+            version=(latest.version + 1) if latest else 1,
+            summary=summary,
+            change_summary=change_summary.strip(),
+            created_by=created_by.strip() or "local-user",
+        )
+        plan.steps = self._build_plan_steps(plan.id, steps)
+        if not self.repository.create_plan_revision(plan):
+            raise ValueError(f"plan version {plan.version} already exists for {work_item_id}")
+        if approve:
+            return self.approve_plan_revision(work_item_id, plan.id)
+        return plan.model_copy(deep=True)
+
+    def approve_plan_revision(
+        self,
+        work_item_id: str,
+        plan_id: str,
+    ) -> PlanRevision:
+        self._require(work_item_id)
+        plan = self.repository.get_plan_revision(plan_id)
+        if plan is None or plan.work_item_id != work_item_id:
+            raise KeyError(f"Unknown plan revision: {plan_id}")
+        latest = self.repository.get_latest_plan_revision(work_item_id)
+        if latest is None or latest.id != plan.id:
+            raise ValueError("only the latest plan revision can be approved")
+        if plan.status == PlanStatus.APPROVED:
+            return plan
+        approved_at = utc_now()
+        if not self.repository.approve_plan_revision(
+            plan.id,
+            approved_at=approved_at,
+        ):
+            raise ValueError(f"plan revision cannot be approved: {plan.id}")
+        approved = self.repository.get_plan_revision(plan.id)
+        assert approved is not None
+        return approved
+
+    def update_plan_step(
+        self,
+        work_item_id: str,
+        step_id: str,
+        status: PlanStepStatus,
+    ) -> PlanRevision:
+        self._require(work_item_id)
+        plan = self.repository.get_latest_plan_revision(
+            work_item_id,
+            approved_only=True,
+        )
+        if plan is None:
+            raise ValueError("work item has no approved plan")
+        if not isinstance(status, PlanStepStatus):
+            status = PlanStepStatus(status)
+        if not self.repository.update_plan_step_status(plan.id, step_id, status):
+            raise KeyError(f"Unknown plan step: {step_id}")
+        updated = self.repository.get_plan_revision(plan.id)
+        assert updated is not None
+        return updated
+
+    def list_plan_revisions(
+        self,
+        work_item_id: str,
+        *,
+        limit: int = 50,
+    ) -> List[PlanRevision]:
+        self._require(work_item_id)
+        return self.repository.list_plan_revisions(work_item_id, limit=limit)
 
     def list(
         self,
@@ -285,6 +424,60 @@ class WorkItemService:
             kind=kind,
             conversation_id=conversation_id,
         )
+
+    @staticmethod
+    def _build_plan_steps(
+        plan_id: str,
+        definitions: List[Dict[str, Any]],
+    ) -> List[PlanStep]:
+        steps = []
+        aliases: Dict[str, str] = {}
+        for position, definition in enumerate(definitions, start=1):
+            title = str(definition.get("title", "")).strip()
+            if not title:
+                raise ValueError(f"plan step {position} title cannot be empty")
+            step = PlanStep(
+                plan_revision_id=plan_id,
+                position=position,
+                title=title,
+                description=str(definition.get("description", "")).strip(),
+                expected_artifact_kind=definition.get("expected_artifact_kind"),
+                required_capabilities=list(definition.get("required_capabilities", [])),
+                metadata=dict(definition.get("metadata", {})),
+            )
+            alias = str(definition.get("id", position))
+            if alias in aliases:
+                raise ValueError(f"duplicate plan step id: {alias}")
+            aliases[alias] = step.id
+            steps.append(step)
+        for step, definition in zip(steps, definitions):
+            dependencies = []
+            for dependency in definition.get("depends_on", []):
+                key = str(dependency)
+                if key not in aliases:
+                    raise ValueError(f"unknown dependency {key} for plan step {step.position}")
+                dependencies.append(aliases[key])
+            if step.id in dependencies:
+                raise ValueError("plan step cannot depend on itself")
+            step.depends_on = dependencies
+        dependencies_by_id = {step.id: set(step.depends_on) for step in steps}
+        visiting = set()
+        visited = set()
+
+        def visit(step_id: str) -> None:
+            if step_id in visiting:
+                raise ValueError("plan step dependencies contain a cycle")
+            if step_id in visited:
+                return
+            visiting.add(step_id)
+            for dependency in dependencies_by_id[step_id]:
+                visit(dependency)
+            visiting.remove(step_id)
+            visited.add(step_id)
+
+        for step in steps:
+            visit(step.id)
+        return steps
 
     def reconcile(self, *, limit: int = 1000) -> List[WorkItem]:
         """启动时用主 Run 与阻塞型子 Run 修复任务状态投影。"""
@@ -404,23 +597,17 @@ class WorkItemService:
             for run in linked_runs
         )
         paused_children = any(
-            run.id != primary.id
-            and run.status == RunStatus.PAUSED
-            for run in linked_runs
+            run.id != primary.id and run.status == RunStatus.PAUSED for run in linked_runs
         )
 
         self._apply_run_status(item, primary)
         if approval_waiting:
             item.status = WorkItemStatus.WAITING_APPROVAL
             item.completed_at = None
-        elif any(
-            run.status == RunStatus.CANCEL_REQUESTED for run in linked_runs
-        ):
+        elif any(run.status == RunStatus.CANCEL_REQUESTED for run in linked_runs):
             item.status = WorkItemStatus.CANCELLING
             item.completed_at = None
-        elif any(
-            run.status == RunStatus.PAUSE_REQUESTED for run in linked_runs
-        ):
+        elif any(run.status == RunStatus.PAUSE_REQUESTED for run in linked_runs):
             item.status = WorkItemStatus.PAUSING
             item.completed_at = None
         elif primary.status.terminal and active_children:

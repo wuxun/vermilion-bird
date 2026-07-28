@@ -4,10 +4,14 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from llm_chat.cli import cli
-from llm_chat.runtime import Run, RunStatus, RunType
+from llm_chat.runtime import Capability, Run, RunStatus, RunType
 from llm_chat.work import (
     Artifact,
     ArtifactKind,
+    PlanRevision,
+    PlanStep,
+    ResourceGrant,
+    ResourceType,
     WorkItem,
     WorkItemDetail,
     WorkItemStatus,
@@ -31,11 +35,7 @@ def _detail(*, status=WorkItemStatus.COMPLETED, content="任务完成"):
         id="run_test",
         work_item_id=item.id,
         type=RunType.WORKFLOW,
-        status=(
-            RunStatus.COMPLETED
-            if status == WorkItemStatus.COMPLETED
-            else RunStatus.RUNNING
-        ),
+        status=(RunStatus.COMPLETED if status == WorkItemStatus.COMPLETED else RunStatus.RUNNING),
         result=content,
         created_at=now,
     )
@@ -149,4 +149,84 @@ def test_task_pause_requests_safe_checkpoint():
     assert result.exit_code == 0
     assert "pausing" in result.output
     app.pause_work_item.assert_called_once_with("work_test")
+    app.stop.assert_called_once()
+
+
+def test_task_plan_create_builds_versioned_steps():
+    app = MagicMock()
+    app.create_work_item_plan.return_value = PlanRevision(
+        id="plan_test",
+        work_item_id="work_test",
+        version=1,
+        summary="先分析再交付",
+        steps=[
+            PlanStep(
+                id="step_test",
+                plan_revision_id="plan_test",
+                position=1,
+                title="分析",
+            )
+        ],
+    )
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "task",
+                "plan",
+                "create",
+                "work_test",
+                "--summary",
+                "先分析再交付",
+                "--step",
+                "分析",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "plan_test" in result.output
+    app.create_work_item_plan.assert_called_once_with(
+        "work_test",
+        summary="先分析再交付",
+        steps=[{"title": "分析"}],
+        change_summary="",
+        approve=False,
+    )
+    app.stop.assert_called_once()
+
+
+def test_task_grant_add_uses_explicit_resource_boundary():
+    app = MagicMock()
+    app.create_resource_grant.return_value = ResourceGrant(
+        id="grant_test",
+        work_item_id="work_test",
+        capability=Capability.WORKSPACE_WRITE.value,
+        resource_type=ResourceType.DIRECTORY,
+        resource="/workspace/reports",
+    )
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "task",
+                "grant",
+                "add",
+                "work_test",
+                "--capability",
+                "workspace_write",
+                "--resource-type",
+                "directory",
+                "--resource",
+                "/workspace/reports",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "grant_test" in result.output
+    _, kwargs = app.create_resource_grant.call_args
+    assert kwargs["work_item_id"] == "work_test"
+    assert kwargs["resource_type"] == ResourceType.DIRECTORY
+    assert kwargs["resource"] == "/workspace/reports"
     app.stop.assert_called_once()

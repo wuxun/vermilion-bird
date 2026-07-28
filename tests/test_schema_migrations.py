@@ -25,9 +25,11 @@ def test_fresh_database_records_all_schema_versions(tmp_path):
     info = storage.get_schema_info()
 
     assert info["current_version"] == Storage.CURRENT_SCHEMA_VERSION
-    assert [item["version"] for item in info["migrations"]] == [1, 2, 3, 4]
+    assert [item["version"] for item in info["migrations"]] == list(
+        range(1, Storage.CURRENT_SCHEMA_VERSION + 1)
+    )
     assert info["last_report"]["from_version"] == 0
-    assert info["last_report"]["applied"] == [1, 2, 3, 4]
+    assert info["last_report"]["applied"] == list(range(1, Storage.CURRENT_SCHEMA_VERSION + 1))
     assert info["last_report"]["backup_path"] is None
     assert storage.verify_integrity()["ok"] is True
 
@@ -40,9 +42,7 @@ def test_legacy_database_is_backed_up_and_upgraded_without_data_loss(tmp_path):
             "id TEXT PRIMARY KEY, title TEXT, created_at TEXT, "
             "updated_at TEXT, metadata TEXT)"
         )
-        conn.execute(
-            "INSERT INTO conversations(id, title) VALUES ('legacy', '保留数据')"
-        )
+        conn.execute("INSERT INTO conversations(id, title) VALUES ('legacy', '保留数据')")
 
     storage = Storage(str(db_path))
     report = storage.last_migration_report
@@ -52,10 +52,11 @@ def test_legacy_database_is_backed_up_and_upgraded_without_data_loss(tmp_path):
     assert report.backup_path is not None
     assert Path(report.backup_path).exists()
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            "SELECT title FROM conversations WHERE id = 'legacy'"
-        ).fetchone()[0] == "保留数据"
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert (
+            conn.execute("SELECT title FROM conversations WHERE id = 'legacy'").fetchone()[0]
+            == "保留数据"
+        )
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Storage.CURRENT_SCHEMA_VERSION
 
 
 def test_failed_migration_restores_upgrade_backup_and_writes_diagnostic(
@@ -87,9 +88,10 @@ def test_failed_migration_restores_upgrade_backup_and_writes_diagnostic(
 
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT value FROM sentinel").fetchone()[0] == "original"
-        assert conn.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'partial_change'"
-        ).fetchone() is None
+        assert (
+            conn.execute("SELECT name FROM sqlite_master WHERE name = 'partial_change'").fetchone()
+            is None
+        )
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
     diagnostic = Path(f"{db_path}.migration-failure.json")
     assert diagnostic.exists()
@@ -122,6 +124,6 @@ def test_database_cli_reports_version_and_creates_backup(tmp_path):
         )
 
     assert status.exit_code == 0
-    assert '"current_version": 4' in status.output
+    assert f'"current_version": {Storage.CURRENT_SCHEMA_VERSION}' in status.output
     assert backup.exit_code == 0
     assert Path(backup.output.strip()).exists()

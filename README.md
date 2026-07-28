@@ -85,6 +85,14 @@ poetry run vermilion-bird task list
 poetry run vermilion-bird task pause <work-item-id>
 poetry run vermilion-bird task resume <work-item-id>
 
+# 版本化计划与资源级授权
+poetry run vermilion-bird task plan create <work-item-id> \
+  --summary "先分析再交付" --step "分析" --step "生成报告"
+poetry run vermilion-bird task plan approve <work-item-id> <plan-id>
+poetry run vermilion-bird task grant add <work-item-id> \
+  --capability workspace_write --resource-type directory \
+  --resource /workspace/project --scope work_item
+
 # 数据库版本、完整性检查和手动备份
 poetry run vermilion-bird database status
 poetry run vermilion-bird database backup --label before-upgrade
@@ -110,6 +118,8 @@ Webhook 和 Proactive 任务也通过同一 Run Dispatcher 管理。Chat 消息�
 
 核心任务评测说明见 [docs/evaluation.md](docs/evaluation.md)。确定性评分可作为 CI
 门禁；真实执行评测需要显式调用，避免默认产生模型费用或外部副作用。
+计划版本和资源授权的边界与命令见
+[docs/plans-and-resource-grants.md](docs/plans-and-resource-grants.md)。
 
 ### 打包独立应用
 
