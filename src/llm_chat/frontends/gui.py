@@ -1677,6 +1677,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._app.quit()
 
     def _on_close_event(self, event):
+        if self._task_workspace is not None:
+            self._task_workspace.close()
         if self._task_center_dialog is not None:
             self._task_center_dialog.close()
         if self._execution_center_dialog is not None:
@@ -1706,6 +1708,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # Cancel all running sub-agents before quitting
         if self._subagent_panel:
             self._subagent_panel.disconnect_registry()
+        if self._task_workspace is not None:
+            self._task_workspace.close()
         if self._task_center_dialog is not None:
             self._task_center_dialog.close()
         if self._execution_center_dialog is not None:

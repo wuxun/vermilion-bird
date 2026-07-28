@@ -472,6 +472,41 @@ class App:
         self.work_items.reconcile()
         return self._materialize_work_item_result(item.id)
 
+    def continue_work_item(self, work_item_id: str, instruction: str):
+        """在同一任务和会话中启动一次带上下文的后续执行。"""
+
+        instruction = instruction.strip()
+        if not instruction:
+            raise ValueError("follow-up instruction cannot be empty")
+        item = self.work_items.get(work_item_id)
+        if item is None:
+            raise KeyError(f"Unknown work item: {work_item_id}")
+        if not item.status.terminal:
+            raise ValueError("当前任务仍在运行，请先等待完成、暂停或取消")
+
+        conversation_id = item.conversation_id
+        if not conversation_id:
+            conversation = self.conversation_manager.create_conversation(title=item.title)
+            conversation_id = conversation.conversation_id
+            item = self.work_items.bind_conversation(item.id, conversation_id)
+        elif self.storage.get_conversation(conversation_id) is None:
+            self.storage.create_conversation(conversation_id, item.title)
+
+        follow_up = (
+            f"这是任务「{item.title}」的后续要求。\n"
+            f"原始目标：{item.objective}\n\n"
+            f"用户追加要求：{instruction}\n\n"
+            "继续在同一任务范围和已授权资源边界内工作，并生成新的可验收交付物。"
+        )
+        self.chat_core.send_message(
+            conversation_id=conversation_id,
+            message=follow_up,
+            work_item_id=item.id,
+            run_type=RunType.WORKFLOW,
+        )
+        self.work_items.reconcile()
+        return self._materialize_work_item_result(item.id)
+
     @staticmethod
     def _work_item_execution_request(objective: str, approved_plan) -> str:
         if approved_plan is None:

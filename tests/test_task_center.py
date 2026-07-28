@@ -6,9 +6,10 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from llm_chat.frontends.tasks import TaskCenterDialog  # noqa: E402
+from llm_chat.frontends.tasks.task_center import NewTaskDialog  # noqa: E402
 from llm_chat.runtime import (  # noqa: E402
     ActionProposal,
     ActionStatus,
@@ -86,6 +87,7 @@ def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
         list_work_item_actions=lambda _work_item_id: list(actions or []),
         create_work_item=MagicMock(),
         execute_work_item=MagicMock(),
+        continue_work_item=MagicMock(),
         cancel_work_item=MagicMock(),
         retry_work_item=MagicMock(),
         resume_work_item=MagicMock(),
@@ -113,11 +115,17 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     assert dialog._table.item(0, 1).text() == "生成产品规划"
     assert dialog._runs_table.rowCount() == 1
     assert dialog._artifacts_table.rowCount() == 1
-    assert dialog._tabs.tabText(3) == "产物 (1)"
+    assert dialog._tabs.count() == 3
+    assert dialog._tabs.tabText(1) == "交付物 (1)"
+    assert "生成一份完整的产品规划文档" in dialog._timeline.toPlainText()
     assert "生成一份完整的产品规划文档" in dialog._overview.toPlainText()
-    assert not dialog._cancel_button.isEnabled()
-    assert not dialog._retry_button.isEnabled()
+    assert not dialog._cancel_action.isEnabled()
+    assert not dialog._retry_action.isEnabled()
+    assert dialog._primary_button.text() == "查看交付物"
     assert dialog._open_artifact_button.isEnabled()
+    assert dialog._follow_up_input.isEnabled()
+    dialog._follow_up_input.setPlainText("增加一份风险清单")
+    assert dialog._continue_button.isEnabled()
 
     dialog.close()
     qt_app.processEvents()
@@ -129,8 +137,9 @@ def test_failed_task_enables_retry(qt_app):
     dialog = TaskCenterDialog(app)
     qt_app.processEvents()
 
-    assert dialog._retry_button.isEnabled()
-    assert not dialog._cancel_button.isEnabled()
+    assert dialog._retry_action.isEnabled()
+    assert not dialog._cancel_action.isEnabled()
+    assert dialog._primary_button.text() == "重试任务"
 
     dialog.close()
     qt_app.processEvents()
@@ -142,8 +151,9 @@ def test_running_task_enables_cancel(qt_app):
     dialog = TaskCenterDialog(app)
     qt_app.processEvents()
 
-    assert dialog._cancel_button.isEnabled()
-    assert not dialog._retry_button.isEnabled()
+    assert dialog._cancel_action.isEnabled()
+    assert not dialog._retry_action.isEnabled()
+    assert dialog._primary_button.text() == "执行中"
 
     dialog.close()
     qt_app.processEvents()
@@ -165,9 +175,11 @@ def test_task_center_shows_inline_pending_approval(qt_app):
     qt_app.processEvents()
 
     assert dialog._approvals_table.rowCount() == 1
-    assert dialog._tabs.tabText(2) == "审批 (1 待处理)"
+    assert dialog._tabs.tabText(0) == "进展 · 待处理"
     assert dialog._approve_button.isEnabled()
     assert dialog._reject_button.isEnabled()
+    assert dialog._primary_button.text() == "处理审批"
+    assert "写入 report.md" in dialog._timeline.toPlainText()
     assert "report.md" in dialog._action_detail_text(proposal)
 
     dialog.close()
@@ -179,8 +191,9 @@ def test_paused_task_enables_resume_when_handler_supports_it(qt_app):
     dialog = TaskCenterDialog(_fake_app(detail, can_resume=True))
     qt_app.processEvents()
 
-    assert dialog._resume_button.isEnabled()
-    assert not dialog._retry_button.isEnabled()
+    assert dialog._resume_action.isEnabled()
+    assert not dialog._retry_action.isEnabled()
+    assert dialog._primary_button.text() == "继续执行"
 
     dialog.close()
     qt_app.processEvents()
@@ -216,12 +229,46 @@ def test_task_center_renders_plan_and_resource_grants(qt_app):
     dialog = TaskCenterDialog(_fake_app(detail))
     qt_app.processEvents()
 
-    assert dialog._tabs.tabText(4) == "计划 (v2)"
+    assert dialog._detail_tabs.tabText(1) == "计划 (v2)"
     assert dialog._plan_table.rowCount() == 1
     assert dialog._approve_plan_button.isEnabled()
-    assert dialog._tabs.tabText(5) == "授权 (1)"
+    assert dialog._detail_tabs.tabText(2) == "权限 (1)"
     assert dialog._grants_table.rowCount() == 1
     assert dialog._revoke_grant_button.isEnabled()
+    assert dialog._primary_button.text() == "确认执行计划"
+    assert "分析代码" in dialog._timeline.toPlainText()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_task_center_can_be_embedded_as_main_workspace(qt_app):
+    detail = _detail()
+    parent = QWidget()
+    workspace = TaskCenterDialog(_fake_app(detail), parent, embedded=True)
+    qt_app.processEvents()
+
+    assert not workspace.isWindow()
+    assert workspace._tabs.tabText(0) == "进展"
+    assert workspace._tabs.tabText(2) == "详细信息"
+
+    workspace.close()
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_new_task_dialog_collects_execution_context(qt_app):
+    dialog = NewTaskDialog()
+    dialog.objective_input.setPlainText("审查项目并输出报告")
+    dialog.title_input.setText("项目审查")
+    dialog.workspace_input.setText("/workspace/project")
+    dialog.deliverable_input.setText("Markdown 报告")
+
+    assert dialog.objective == "审查项目并输出报告"
+    assert dialog.title == "项目审查"
+    assert dialog.workspace == "/workspace/project"
+    assert dialog.expected_deliverable == "Markdown 报告"
+    assert dialog.start_immediately.isChecked()
 
     dialog.close()
     qt_app.processEvents()

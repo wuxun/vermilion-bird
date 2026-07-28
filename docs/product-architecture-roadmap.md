@@ -125,6 +125,9 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] WorkItem 状态统一从 Run 事实投影
 - [x] Ember 依赖方向加入可执行架构边界测试
 - [x] LangGraph 保持在应用运行时，不进入 Ember 公共 API
+- [x] Codex 式对话/任务一级工作区与任务时间线
+- [x] 状态主操作、统一创建表单和终态任务 follow-up
+- [x] 任务内计划确认、审批与交付验收渐进展示
 
 ### v0.4：任务复用与自动化
 

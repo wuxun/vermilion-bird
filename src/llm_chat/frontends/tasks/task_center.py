@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import threading
 from datetime import datetime
@@ -11,13 +12,20 @@ from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -25,6 +33,8 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextBrowser,
+    QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -61,6 +71,153 @@ _KIND_LABELS: Dict[WorkItemKind, str] = {
     WorkItemKind.AUTOMATION: "自动化",
 }
 
+_RUN_STATUS_LABELS = {
+    "pending": "待执行",
+    "running": "执行中",
+    "cancel_requested": "正在取消",
+    "pause_requested": "正在暂停",
+    "waiting_approval": "待审批",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+}
+
+_RUN_TYPE_LABELS = {
+    "chat": "对话",
+    "tool": "工具",
+    "workflow": "任务执行",
+    "scheduled": "定时任务",
+    "webhook": "事件任务",
+    "proactive": "主动任务",
+}
+
+_PLAN_STATUS_LABELS = {
+    "draft": "待确认",
+    "approved": "已批准",
+    "superseded": "已取代",
+}
+
+_STEP_STATUS_LABELS = {
+    "pending": "待执行",
+    "running": "执行中",
+    "blocked": "受阻",
+    "completed": "已完成",
+    "failed": "失败",
+    "skipped": "已跳过",
+}
+
+_ARTIFACT_KIND_LABELS = {
+    "text": "文本",
+    "file": "文件",
+    "report": "报告",
+    "code": "代码",
+    "link": "链接",
+    "message": "消息",
+    "other": "其他",
+}
+
+_FEEDBACK_LABELS = {
+    "accepted": "已接受",
+    "needs_revision": "需修改",
+    "rejected": "已拒绝",
+}
+
+
+class NewTaskDialog(QDialog):
+    """一次性展示任务目标、工作区、交付预期和启动方式。"""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("新建任务")
+        self.resize(560, 450)
+        self.setMinimumWidth(500)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(14)
+
+        title = QLabel("创建持久任务")
+        title.setStyleSheet("font-size: 19px; font-weight: 700;")
+        root.addWidget(title)
+        subtitle = QLabel("执行前确认目标、工作范围和预期交付物。")
+        subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
+        root.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        self.objective_input = QTextEdit()
+        self.objective_input.setPlaceholderText("描述希望完成的目标、必要约束和验收标准")
+        self.objective_input.setMinimumHeight(120)
+        form.addRow("目标 *", self.objective_input)
+
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("可留空，将根据目标自动生成")
+        form.addRow("标题", self.title_input)
+
+        workspace_row = QHBoxLayout()
+        self.workspace_input = QLineEdit()
+        self.workspace_input.setPlaceholderText("可选：限制任务工作的目录")
+        workspace_row.addWidget(self.workspace_input, 1)
+        browse = QPushButton("选择…")
+        browse.clicked.connect(self._choose_workspace)
+        workspace_row.addWidget(browse)
+        form.addRow("工作目录", workspace_row)
+
+        self.deliverable_input = QLineEdit()
+        self.deliverable_input.setPlaceholderText("例如：Markdown 报告、代码变更、数据表")
+        form.addRow("预期交付", self.deliverable_input)
+
+        self.start_immediately = QCheckBox("创建后立即开始执行")
+        self.start_immediately.setChecked(True)
+        form.addRow("启动方式", self.start_immediately)
+        root.addLayout(form)
+
+        hint = QLabel("高风险文件、网络和外部消息操作仍会在执行过程中请求审批。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 12px;")
+        root.addWidget(hint)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("创建并继续")
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _choose_workspace(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "选择任务工作目录",
+            self.workspace_input.text().strip(),
+        )
+        if selected:
+            self.workspace_input.setText(selected)
+
+    def _accept_if_valid(self) -> None:
+        if not self.objective:
+            QMessageBox.warning(self, "目标不能为空", "请描述希望完成的任务目标。")
+            self.objective_input.setFocus()
+            return
+        self.accept()
+
+    @property
+    def objective(self) -> str:
+        return self.objective_input.toPlainText().strip()
+
+    @property
+    def title(self) -> str:
+        return self.title_input.text().strip()
+
+    @property
+    def workspace(self) -> str:
+        return self.workspace_input.text().strip()
+
+    @property
+    def expected_deliverable(self) -> str:
+        return self.deliverable_input.text().strip()
+
 
 class TaskCenterSignals(QObject):
     changed = pyqtSignal()
@@ -87,6 +244,8 @@ class TaskCenterDialog(QDialog):
         self._actions_by_id: Dict[str, Any] = {}
         self._grants_by_id: Dict[str, Any] = {}
         self._current_plan = None
+        self._current_detail = None
+        self._primary_action: Optional[str] = None
         self._selected_work_item_id: Optional[str] = None
         self._busy_work_item_id: Optional[str] = None
         self._unsubscribe = None
@@ -183,9 +342,12 @@ class TaskCenterDialog(QDialog):
         detail_layout.addWidget(self._detail_title)
 
         self._tabs = QTabWidget()
+        self._timeline = QTextBrowser()
+        self._timeline.setOpenExternalLinks(False)
+        self._timeline.setPlaceholderText("选择任务后，这里会显示目标、计划、执行进度和交付结果。")
         self._overview = QTextBrowser()
         self._runs_table = QTableWidget(0, 4)
-        self._runs_table.setHorizontalHeaderLabels(["执行", "类型", "状态", "尝试"])
+        self._runs_table.setHorizontalHeaderLabels(["开始时间", "类型", "状态", "尝试"])
         self._runs_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._runs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._runs_table.verticalHeader().setVisible(False)
@@ -240,23 +402,33 @@ class TaskCenterDialog(QDialog):
         )
         self._approvals_table.itemSelectionChanged.connect(self._update_approval_actions)
         self._approvals_table.itemDoubleClicked.connect(self._show_action_detail)
-        self._tabs.addTab(self._overview, "概览")
-        self._tabs.addTab(self._runs_table, "执行")
-        approvals_panel = QWidget()
-        approvals_layout = QVBoxLayout(approvals_panel)
-        approvals_layout.setContentsMargins(0, 0, 0, 0)
-        approvals_layout.addWidget(self._approvals_table, 1)
+
+        progress_panel = QWidget()
+        progress_layout = QVBoxLayout(progress_panel)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(10)
+        progress_layout.addWidget(self._timeline, 1)
+
+        self._attention_panel = QGroupBox("待你处理")
+        attention_layout = QVBoxLayout(self._attention_panel)
+        self._attention_summary = QLabel()
+        self._attention_summary.setWordWrap(True)
+        attention_layout.addWidget(self._attention_summary)
+        attention_layout.addWidget(self._approvals_table)
         approval_actions = QHBoxLayout()
-        self._approve_button = QPushButton("批准并执行")
-        self._approve_button.clicked.connect(self._approve_selected_action)
         self._reject_button = QPushButton("拒绝")
         self._reject_button.clicked.connect(self._reject_selected_action)
-        approval_actions.addWidget(self._approve_button)
+        self._approve_button = QPushButton("仅允许此次")
+        self._approve_button.clicked.connect(self._approve_selected_action)
         approval_actions.addWidget(self._reject_button)
+        approval_actions.addWidget(self._approve_button)
+        self._approve_plan_button = QPushButton("批准当前计划")
+        self._approve_plan_button.clicked.connect(self._approve_current_plan)
+        approval_actions.addWidget(self._approve_plan_button)
         approval_actions.addStretch()
-        approvals_layout.addLayout(approval_actions)
-        self._tabs.addTab(approvals_panel, "审批")
-        self._tabs.addTab(self._artifacts_table, "产物")
+        attention_layout.addLayout(approval_actions)
+        progress_layout.addWidget(self._attention_panel)
+        self._tabs.addTab(progress_panel, "进展")
 
         plan_panel = QWidget()
         plan_layout = QVBoxLayout(plan_panel)
@@ -280,13 +452,6 @@ class TaskCenterDialog(QDialog):
             3, QHeaderView.ResizeMode.ResizeToContents
         )
         plan_layout.addWidget(self._plan_table, 1)
-        plan_actions = QHBoxLayout()
-        self._approve_plan_button = QPushButton("批准当前计划")
-        self._approve_plan_button.clicked.connect(self._approve_current_plan)
-        plan_actions.addWidget(self._approve_plan_button)
-        plan_actions.addStretch()
-        plan_layout.addLayout(plan_actions)
-        self._tabs.addTab(plan_panel, "计划")
 
         grants_panel = QWidget()
         grants_layout = QVBoxLayout(grants_panel)
@@ -320,19 +485,13 @@ class TaskCenterDialog(QDialog):
         grant_actions.addWidget(self._revoke_grant_button)
         grant_actions.addStretch()
         grants_layout.addLayout(grant_actions)
-        self._tabs.addTab(grants_panel, "授权")
-        detail_layout.addWidget(self._tabs, 1)
 
-        actions = QHBoxLayout()
-        self._cancel_button = QPushButton("取消任务")
-        self._cancel_button.clicked.connect(self._cancel_selected)
-        self._pause_button = QPushButton("暂停")
-        self._pause_button.clicked.connect(self._pause_selected)
-        self._retry_button = QPushButton("重试")
-        self._retry_button.clicked.connect(self._retry_selected)
-        self._resume_button = QPushButton("恢复")
-        self._resume_button.clicked.connect(self._resume_selected)
-        self._open_artifact_button = QPushButton("打开产物")
+        artifacts_panel = QWidget()
+        artifacts_layout = QVBoxLayout(artifacts_panel)
+        artifacts_layout.setContentsMargins(0, 0, 0, 0)
+        artifacts_layout.addWidget(self._artifacts_table, 1)
+        artifact_actions = QHBoxLayout()
+        self._open_artifact_button = QPushButton("打开")
         self._open_artifact_button.clicked.connect(self._open_selected_artifact)
         self._export_artifact_button = QPushButton("导出")
         self._export_artifact_button.clicked.connect(self._export_selected_artifact)
@@ -344,18 +503,82 @@ class TaskCenterDialog(QDialog):
         self._revise_artifact_button.clicked.connect(
             lambda: self._feedback_selected_artifact(ArtifactFeedbackDecision.NEEDS_REVISION)
         )
-        actions.addWidget(self._cancel_button)
-        actions.addWidget(self._pause_button)
-        actions.addWidget(self._retry_button)
-        actions.addWidget(self._resume_button)
+        self._reject_artifact_button = QPushButton("拒绝")
+        self._reject_artifact_button.clicked.connect(
+            lambda: self._feedback_selected_artifact(ArtifactFeedbackDecision.REJECTED)
+        )
+        artifact_actions.addWidget(self._open_artifact_button)
+        artifact_actions.addWidget(self._export_artifact_button)
+        artifact_actions.addStretch()
+        artifact_actions.addWidget(self._reject_artifact_button)
+        artifact_actions.addWidget(self._revise_artifact_button)
+        artifact_actions.addWidget(self._accept_artifact_button)
+        artifacts_layout.addLayout(artifact_actions)
+        self._tabs.addTab(artifacts_panel, "交付物")
+
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        self._detail_tabs = QTabWidget()
+        self._detail_tabs.addTab(self._overview, "上下文")
+        self._detail_tabs.addTab(plan_panel, "计划")
+        self._detail_tabs.addTab(grants_panel, "权限")
+        self._detail_tabs.addTab(self._runs_table, "运行记录")
+        details_layout.addWidget(self._detail_tabs)
+        self._tabs.addTab(details_panel, "详细信息")
+        detail_layout.addWidget(self._tabs, 1)
+
+        follow_up = QFrame()
+        follow_up.setObjectName("taskComposer")
+        follow_up_layout = QHBoxLayout(follow_up)
+        follow_up_layout.setContentsMargins(8, 8, 8, 8)
+        self._follow_up_input = QTextEdit()
+        self._follow_up_input.setPlaceholderText("补充要求、提出修改意见，或让任务基于当前结果继续…")
+        self._follow_up_input.setMaximumHeight(72)
+        self._follow_up_input.textChanged.connect(self._update_continue_action)
+        follow_up_layout.addWidget(self._follow_up_input, 1)
+        self._continue_button = QPushButton("继续任务")
+        self._continue_button.clicked.connect(self._continue_selected)
+        follow_up_layout.addWidget(self._continue_button)
+        detail_layout.addWidget(follow_up)
+
+        actions = QHBoxLayout()
+        self._more_button = QToolButton()
+        self._more_button.setText("更多")
+        self._more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more_menu = QMenu(self._more_button)
+        self._pause_action = more_menu.addAction("暂停", self._pause_selected)
+        self._resume_action = more_menu.addAction("恢复", self._resume_selected)
+        self._retry_action = more_menu.addAction("重试", self._retry_selected)
+        self._cancel_action = more_menu.addAction("取消任务", self._cancel_selected)
+        more_menu.addSeparator()
+        more_menu.addAction("高级执行记录", self._open_execution_center)
+        self._more_button.setMenu(more_menu)
+        actions.addWidget(self._more_button)
         actions.addStretch()
-        actions.addWidget(self._open_artifact_button)
-        actions.addWidget(self._export_artifact_button)
-        actions.addWidget(self._accept_artifact_button)
-        actions.addWidget(self._revise_artifact_button)
+        self._primary_button = QPushButton("选择一个任务")
+        self._primary_button.clicked.connect(self._run_primary_action)
+        self._primary_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {Colors.PRIMARY};
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                font-weight: 700;
+            }}
+            QPushButton:disabled {{
+                background: {Colors.CHAT_ACCENT};
+                color: {Colors.TEXT_MUTED};
+            }}
+            """
+        )
+        actions.addWidget(self._primary_button)
         detail_layout.addLayout(actions)
         splitter.addWidget(detail_panel)
-        splitter.setSizes([470, 630])
+        splitter.setSizes([360, 840])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, 1)
 
         self.setStyleSheet(
@@ -374,6 +597,11 @@ class TaskCenterDialog(QDialog):
             QTableWidget::item:selected {{
                 background: {Colors.CHAT_ACCENT};
                 color: {Colors.TEXT_PRIMARY};
+            }}
+            QFrame#taskComposer {{
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 9px;
+                background: white;
             }}
             QHeaderView::section {{
                 background: {Colors.PARAMS_BG};
@@ -442,6 +670,7 @@ class TaskCenterDialog(QDialog):
             self._overview.setPlainText(str(exc))
             return
         item = detail.work_item
+        self._current_detail = detail
         self._detail_title.setText(item.title)
         lines = [
             f"状态：{_STATUS_LABELS[item.status]}",
@@ -472,15 +701,29 @@ class TaskCenterDialog(QDialog):
 
         self._runs_table.setRowCount(len(detail.runs))
         for row, run in enumerate(detail.runs):
-            self._runs_table.setItem(row, 0, QTableWidgetItem(run.id))
-            self._runs_table.setItem(row, 1, QTableWidgetItem(run.type.value))
-            self._runs_table.setItem(row, 2, QTableWidgetItem(run.status.value))
+            self._runs_table.setItem(
+                row,
+                0,
+                QTableWidgetItem(self._format_time(run.created_at)),
+            )
+            self._runs_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(_RUN_TYPE_LABELS.get(run.type.value, run.type.value)),
+            )
+            self._runs_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(_RUN_STATUS_LABELS.get(run.status.value, run.status.value)),
+            )
             self._runs_table.setItem(row, 3, QTableWidgetItem(str(run.attempt)))
 
         self._actions_by_id = {proposal.id: proposal for proposal in proposals}
-        self._approvals_table.setRowCount(len(proposals))
-        pending_count = 0
-        for row, proposal in enumerate(proposals):
+        pending_proposals = [
+            proposal for proposal in proposals if proposal.status == ActionStatus.PENDING
+        ]
+        self._approvals_table.setRowCount(len(pending_proposals))
+        for row, proposal in enumerate(pending_proposals):
             status_item = QTableWidgetItem(proposal.status.value)
             status_item.setData(Qt.ItemDataRole.UserRole, proposal.id)
             self._approvals_table.setItem(row, 0, status_item)
@@ -492,11 +735,8 @@ class TaskCenterDialog(QDialog):
                 4,
                 QTableWidgetItem(self._format_time(proposal.created_at)),
             )
-            if proposal.status == ActionStatus.PENDING:
-                pending_count += 1
-        approval_label = f"审批 ({pending_count} 待处理)" if pending_count else "审批"
-        self._tabs.setTabText(2, approval_label)
-        if proposals:
+        pending_count = len(pending_proposals)
+        if pending_proposals:
             self._approvals_table.selectRow(0)
         else:
             self._update_approval_actions()
@@ -510,40 +750,66 @@ class TaskCenterDialog(QDialog):
             name_item = QTableWidgetItem(artifact.name)
             name_item.setData(Qt.ItemDataRole.UserRole, artifact.id)
             self._artifacts_table.setItem(row, 0, name_item)
-            self._artifacts_table.setItem(row, 1, QTableWidgetItem(artifact.kind.value))
+            self._artifacts_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(
+                    _ARTIFACT_KIND_LABELS.get(artifact.kind.value, artifact.kind.value)
+                ),
+            )
             feedback = self._artifact_feedback_by_id.get(artifact.id)
+            feedback_label = (
+                _FEEDBACK_LABELS.get(feedback.decision.value, feedback.decision.value)
+                if feedback
+                else "未反馈"
+            )
             self._artifacts_table.setItem(
                 row,
                 2,
-                QTableWidgetItem(feedback.decision.value if feedback else "未反馈"),
+                QTableWidgetItem(feedback_label),
             )
             location = artifact.uri or ("内嵌内容" if artifact.content else "")
             self._artifacts_table.setItem(row, 3, QTableWidgetItem(location))
-        self._tabs.setTabText(3, f"产物 ({len(detail.artifacts)})")
+        self._tabs.setTabText(1, f"交付物 ({len(detail.artifacts)})")
         self._load_plan(detail.plan)
         self._load_grants(detail.grants)
+        self._update_attention(proposals, pending_count)
+        self._render_timeline(detail, proposals)
         self._update_actions(item)
 
     def _load_plan(self, plan) -> None:
         self._current_plan = plan
         if plan is None:
-            self._plan_summary.setText("暂无结构化计划。可通过 CLI 创建计划修订。")
+            self._plan_summary.setText("暂无结构化计划。")
             self._plan_table.setRowCount(0)
-            self._tabs.setTabText(4, "计划")
+            self._detail_tabs.setTabText(1, "计划")
             self._approve_plan_button.setEnabled(False)
             return
         change = f"\n变更：{plan.change_summary}" if plan.change_summary else ""
         self._plan_summary.setText(
-            f"v{plan.version} · {plan.status.value} · {plan.summary}{change}"
+            f"v{plan.version} · "
+            f"{_PLAN_STATUS_LABELS.get(plan.status.value, plan.status.value)} · "
+            f"{plan.summary}{change}"
         )
         self._plan_table.setRowCount(len(plan.steps))
         for row, step in enumerate(plan.steps):
             self._plan_table.setItem(row, 0, QTableWidgetItem(str(step.position)))
             self._plan_table.setItem(row, 1, QTableWidgetItem(step.title))
-            self._plan_table.setItem(row, 2, QTableWidgetItem(step.status.value))
-            expected = step.expected_artifact_kind.value if step.expected_artifact_kind else ""
+            self._plan_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(_STEP_STATUS_LABELS.get(step.status.value, step.status.value)),
+            )
+            expected = (
+                _ARTIFACT_KIND_LABELS.get(
+                    step.expected_artifact_kind.value,
+                    step.expected_artifact_kind.value,
+                )
+                if step.expected_artifact_kind
+                else ""
+            )
             self._plan_table.setItem(row, 3, QTableWidgetItem(expected))
-        self._tabs.setTabText(4, f"计划 (v{plan.version})")
+        self._detail_tabs.setTabText(1, f"计划 (v{plan.version})")
         self._approve_plan_button.setEnabled(
             plan.status == PlanStatus.DRAFT and self._busy_work_item_id is None
         )
@@ -565,43 +831,197 @@ class TaskCenterDialog(QDialog):
             self._grants_table.setItem(row, 3, QTableWidgetItem(grant.resource))
             if grant.status == GrantStatus.ACTIVE:
                 active_count += 1
-        self._tabs.setTabText(5, f"授权 ({active_count})")
+        self._detail_tabs.setTabText(2, f"权限 ({active_count})")
         if grants:
             self._grants_table.selectRow(0)
         else:
             self._update_grant_actions()
 
+    def _update_attention(self, proposals, pending_count: int) -> None:
+        draft_plan = bool(
+            self._current_plan is not None and self._current_plan.status == PlanStatus.DRAFT
+        )
+        parts = []
+        if pending_count:
+            parts.append(f"{pending_count} 个动作等待审批")
+        if draft_plan:
+            parts.append(f"计划 v{self._current_plan.version} 等待确认")
+        self._attention_summary.setText(" · ".join(parts))
+        self._approvals_table.setVisible(bool(pending_count))
+        self._approve_button.setVisible(bool(pending_count))
+        self._reject_button.setVisible(bool(pending_count))
+        self._approve_plan_button.setVisible(draft_plan)
+        self._attention_panel.setVisible(bool(parts))
+        self._tabs.setTabText(0, "进展 · 待处理" if parts else "进展")
+
+    def _render_timeline(self, detail, proposals) -> None:
+        item = detail.work_item
+
+        def esc(value: Any) -> str:
+            return html.escape(str(value or ""))
+
+        def card(title: str, body: str, accent: str = Colors.CHAT_ACCENT) -> str:
+            return (
+                f'<div style="margin:0 0 12px 0;padding:13px 15px;'
+                f'border:1px solid {accent};border-radius:9px;background:#ffffff;">'
+                f'<div style="font-size:14px;font-weight:700;margin-bottom:7px;">'
+                f"{esc(title)}</div>{body}</div>"
+            )
+
+        cards = [
+            card(
+                "目标",
+                f'<div style="line-height:1.55;">{esc(item.objective)}</div>',
+                Colors.PRIMARY,
+            )
+        ]
+        expected = item.metadata.get("expected_deliverable") if item.metadata else None
+        if expected:
+            cards.append(
+                card(
+                    "预期交付",
+                    f'<div style="line-height:1.55;">{esc(expected)}</div>',
+                )
+            )
+
+        plan = detail.plan
+        if plan is not None:
+            step_icons = {
+                "pending": "○",
+                "running": "◉",
+                "blocked": "!",
+                "completed": "✓",
+                "failed": "×",
+                "skipped": "–",
+            }
+            step_lines = []
+            for step in plan.steps:
+                icon = step_icons.get(step.status.value, "○")
+                expected_kind = (
+                    f" · 产物 "
+                    f"{esc(_ARTIFACT_KIND_LABELS.get(step.expected_artifact_kind.value, step.expected_artifact_kind.value))}"
+                    if step.expected_artifact_kind
+                    else ""
+                )
+                step_lines.append(
+                    f'<div style="margin:5px 0;"><b>{icon}</b>&nbsp; '
+                    f"{esc(step.title)}"
+                    f'<span style="color:{Colors.TEXT_MUTED};">'
+                    f" · {esc(_STEP_STATUS_LABELS.get(step.status.value, step.status.value))}"
+                    f"{expected_kind}</span></div>"
+                )
+            plan_body = (
+                f'<div style="color:{Colors.TEXT_MUTED};margin-bottom:6px;">'
+                f"v{plan.version} · "
+                f"{esc(_PLAN_STATUS_LABELS.get(plan.status.value, plan.status.value))}"
+                f" · {esc(plan.summary)}</div>" + "".join(step_lines)
+            )
+            cards.append(card("执行计划", plan_body))
+
+        pending = [proposal for proposal in proposals if proposal.status == ActionStatus.PENDING]
+        if pending:
+            lines = "".join(
+                f'<div style="margin:5px 0;"><b>{esc(proposal.tool_name)}</b>'
+                f" · {esc(proposal.impact or proposal.reason)}</div>"
+                for proposal in pending
+            )
+            cards.append(card("等待你的批准", lines, "#d59b28"))
+
+        if detail.runs:
+            run_lines = []
+            for run in detail.runs[:6]:
+                run_lines.append(
+                    f'<div style="margin:5px 0;"><b>'
+                    f"{esc(_RUN_STATUS_LABELS.get(run.status.value, run.status.value))}</b>"
+                    f" · {esc(_RUN_TYPE_LABELS.get(run.type.value, run.type.value))}"
+                    f" · {esc(self._format_time(run.created_at))}</div>"
+                )
+            cards.append(card("执行活动", "".join(run_lines)))
+
+        if detail.artifacts:
+            artifact_lines = []
+            for artifact in detail.artifacts:
+                feedback = self._artifact_feedback_by_id.get(artifact.id)
+                decision = (
+                    _FEEDBACK_LABELS.get(feedback.decision.value, feedback.decision.value)
+                    if feedback
+                    else "待验收"
+                )
+                artifact_lines.append(
+                    f'<div style="margin:5px 0;"><b>{esc(artifact.name)}</b>'
+                    f" · "
+                    f"{esc(_ARTIFACT_KIND_LABELS.get(artifact.kind.value, artifact.kind.value))}"
+                    f'<span style="color:{Colors.TEXT_MUTED};"> · {esc(decision)}</span></div>'
+                )
+            cards.append(card("交付结果", "".join(artifact_lines), "#5e9f72"))
+        elif item.status == WorkItemStatus.COMPLETED:
+            cards.append(card("交付结果", "任务已完成，但没有登记可交付产物。", "#d59b28"))
+
+        self._timeline.setHtml(
+            f"""
+            <html><body style="font-family:-apple-system, BlinkMacSystemFont, sans-serif;
+            color:{Colors.TEXT_PRIMARY}; background:{Colors.CHAT_BG_ALT};">
+            {''.join(cards)}
+            </body></html>
+            """
+        )
+
     def _new_task(self) -> None:
-        objective, ok = QInputDialog.getMultiLineText(
-            self,
-            "新建任务",
-            "描述希望完成的目标：",
-        )
-        objective = objective.strip()
-        if not ok or not objective:
+        dialog = NewTaskDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        title, ok = QInputDialog.getText(
-            self,
-            "任务标题",
-            "标题（可留空自动生成）：",
-        )
-        if not ok:
-            return
+        metadata = {"source": "gui"}
+        if dialog.expected_deliverable:
+            metadata["expected_deliverable"] = dialog.expected_deliverable
         try:
             item = self._app.create_work_item(
-                objective,
-                title=title.strip() or None,
+                dialog.objective,
+                title=dialog.title or None,
                 kind=WorkItemKind.TASK,
-                metadata={"source": "gui"},
+                workspace=dialog.workspace or None,
+                metadata=metadata,
             )
         except Exception as exc:
             QMessageBox.critical(self, "创建失败", str(exc))
             return
         self._selected_work_item_id = item.id
         self.refresh()
+        if dialog.start_immediately.isChecked():
+            self._run_background(
+                item.id,
+                lambda: self._app.execute_work_item(item.id),
+            )
+
+    def _start_selected(self) -> None:
+        work_item_id = self._selected_work_item_id
+        if not work_item_id:
+            return
         self._run_background(
-            item.id,
-            lambda: self._app.execute_work_item(item.id),
+            work_item_id,
+            lambda: self._app.execute_work_item(work_item_id),
+        )
+
+    def _continue_selected(self) -> None:
+        work_item_id = self._selected_work_item_id
+        instruction = self._follow_up_input.toPlainText().strip()
+        if not work_item_id or not instruction:
+            return
+        self._follow_up_input.clear()
+        self._run_background(
+            work_item_id,
+            lambda: self._app.continue_work_item(work_item_id, instruction),
+        )
+
+    def _update_continue_action(self) -> None:
+        item = self._items_by_id.get(self._selected_work_item_id)
+        can_continue = bool(
+            item
+            and item.status.terminal
+            and self._busy_work_item_id is None
+            and hasattr(self._app, "continue_work_item")
+        )
+        self._continue_button.setEnabled(
+            can_continue and bool(self._follow_up_input.toPlainText().strip())
         )
 
     def _cancel_selected(self) -> None:
@@ -967,11 +1387,18 @@ class TaskCenterDialog(QDialog):
         if artifact is None or work_item_id is None:
             return
         note = ""
-        if decision == ArtifactFeedbackDecision.NEEDS_REVISION:
+        if decision in {
+            ArtifactFeedbackDecision.NEEDS_REVISION,
+            ArtifactFeedbackDecision.REJECTED,
+        }:
+            title = "交付物需要修改" if decision == ArtifactFeedbackDecision.NEEDS_REVISION else "拒绝交付物"
+            prompt = (
+                "请说明需要修改的内容：" if decision == ArtifactFeedbackDecision.NEEDS_REVISION else "请说明拒绝原因："
+            )
             note, ok = QInputDialog.getMultiLineText(
                 self,
-                "交付物需要修改",
-                "请说明需要修改的内容：",
+                title,
+                prompt,
             )
             if not ok:
                 return
@@ -997,6 +1424,28 @@ class TaskCenterDialog(QDialog):
         self._execution_dialog = ExecutionCenterDialog(self._app, self)
         self._execution_dialog.show()
 
+    def _run_primary_action(self) -> None:
+        action = self._primary_action
+        if action == "start":
+            self._start_selected()
+        elif action == "retry":
+            self._retry_selected()
+        elif action == "resume":
+            self._resume_selected()
+        elif action == "approval":
+            self._tabs.setCurrentIndex(0)
+            if self._approvals_table.rowCount():
+                self._approvals_table.selectRow(0)
+                self._approvals_table.setFocus()
+        elif action == "plan":
+            self._tabs.setCurrentIndex(0)
+            self._approve_plan_button.setFocus()
+        elif action == "artifacts":
+            self._tabs.setCurrentIndex(1)
+            if self._artifacts_table.rowCount():
+                self._artifacts_table.selectRow(0)
+                self._artifacts_table.setFocus()
+
     def _update_actions(self, item: Optional[Any]) -> None:
         busy = self._busy_work_item_id is not None
         self._new_button.setEnabled(not busy)
@@ -1007,9 +1456,6 @@ class TaskCenterDialog(QDialog):
                 WorkItemStatus.CANCELLING,
                 WorkItemStatus.PAUSING,
             }
-        )
-        self._cancel_button.setEnabled(
-            bool(item and not item.status.terminal and not busy and not control_pending)
         )
         can_retry = False
         can_resume = False
@@ -1023,23 +1469,92 @@ class TaskCenterDialog(QDialog):
                 can_retry = False
                 can_resume = False
                 can_pause = False
-        self._retry_button.setEnabled(can_retry)
-        self._resume_button.setEnabled(can_resume)
-        self._pause_button.setEnabled(can_pause)
+
+        self._retry_action.setEnabled(can_retry)
+        self._resume_action.setEnabled(can_resume)
+        self._pause_action.setEnabled(can_pause)
+        self._cancel_action.setEnabled(
+            bool(item and not item.status.terminal and not busy and not control_pending)
+        )
+        self._more_button.setEnabled(bool(item))
+
         has_artifacts = bool(self._artifacts_by_id)
+        can_continue = bool(
+            item and item.status.terminal and not busy and hasattr(self._app, "continue_work_item")
+        )
+        self._follow_up_input.setEnabled(can_continue)
+        self._continue_button.setEnabled(
+            can_continue and bool(self._follow_up_input.toPlainText().strip())
+        )
+        if can_continue:
+            self._follow_up_input.setPlaceholderText("补充要求、提出修改意见，或让任务基于当前结果继续…")
+        else:
+            self._follow_up_input.setPlaceholderText("任务结束后可在这里继续提出要求")
         self._open_artifact_button.setEnabled(has_artifacts)
         self._export_artifact_button.setEnabled(has_artifacts and not busy)
         self._accept_artifact_button.setEnabled(has_artifacts and not busy)
         self._revise_artifact_button.setEnabled(has_artifacts and not busy)
+        self._reject_artifact_button.setEnabled(has_artifacts and not busy)
         self._add_grant_button.setEnabled(bool(item and not busy))
         self._approve_plan_button.setEnabled(
             bool(self._current_plan and self._current_plan.status == PlanStatus.DRAFT and not busy)
         )
+
+        self._primary_action = None
+        primary_text = "选择一个任务"
+        primary_enabled = False
+        if item is not None:
+            pending_approval = any(
+                proposal.status == ActionStatus.PENDING for proposal in self._actions_by_id.values()
+            )
+            draft_plan = bool(
+                self._current_plan is not None and self._current_plan.status == PlanStatus.DRAFT
+            )
+            if busy:
+                primary_text = "正在处理…"
+            elif pending_approval:
+                primary_text = "处理审批"
+                self._primary_action = "approval"
+                primary_enabled = True
+            elif draft_plan:
+                primary_text = "确认执行计划"
+                self._primary_action = "plan"
+                primary_enabled = True
+            elif item.status in {WorkItemStatus.DRAFT, WorkItemStatus.READY}:
+                primary_text = "开始执行"
+                self._primary_action = "start"
+                primary_enabled = True
+            elif can_resume:
+                primary_text = "继续执行"
+                self._primary_action = "resume"
+                primary_enabled = True
+            elif can_retry:
+                primary_text = "重试任务"
+                self._primary_action = "retry"
+                primary_enabled = True
+            elif item.status == WorkItemStatus.COMPLETED and has_artifacts:
+                primary_text = "查看交付物"
+                self._primary_action = "artifacts"
+                primary_enabled = True
+            elif item.status == WorkItemStatus.COMPLETED:
+                primary_text = "任务已完成"
+            elif item.status == WorkItemStatus.RUNNING:
+                primary_text = "执行中"
+            elif item.status == WorkItemStatus.PAUSING:
+                primary_text = "正在暂停…"
+            elif item.status == WorkItemStatus.CANCELLING:
+                primary_text = "正在取消…"
+            else:
+                primary_text = _STATUS_LABELS[item.status]
+        self._primary_button.setText(primary_text)
+        self._primary_button.setEnabled(primary_enabled)
         self._update_grant_actions()
         self._update_approval_actions()
 
     def _clear_detail(self) -> None:
         self._detail_title.setText("选择一个任务")
+        self._timeline.clear()
+        self._follow_up_input.clear()
         self._overview.clear()
         self._runs_table.setRowCount(0)
         self._approvals_table.setRowCount(0)
@@ -1052,6 +1567,10 @@ class TaskCenterDialog(QDialog):
         self._artifact_feedback_by_id = {}
         self._grants_by_id = {}
         self._current_plan = None
+        self._current_detail = None
+        self._attention_panel.hide()
+        self._tabs.setTabText(0, "进展")
+        self._tabs.setTabText(1, "交付物")
         self._update_actions(None)
 
     @staticmethod
