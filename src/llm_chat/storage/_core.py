@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 6
+    CURRENT_SCHEMA_VERSION = 7
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -165,6 +165,7 @@ class StorageCore:
             SchemaMigration(4, "cooperative_run_control", self._migrate_run_control),
             SchemaMigration(5, "plans_and_resource_grants", self._create_planning_tables_in),
             SchemaMigration(6, "artifact_feedback", self._create_artifact_feedback_table_in),
+            SchemaMigration(7, "workflow_definitions", self._create_workflow_tables_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -239,6 +240,8 @@ class StorageCore:
                 "status",
             },
             "artifact_feedback": {"artifact_id", "work_item_id", "decision"},
+            "workflow_definitions": {"latest_version", "status"},
+            "workflow_versions": {"workflow_id", "version", "objective_template"},
         }
         with sqlite3.connect(self._db_path) as conn:
             for table, columns in required.items():
@@ -260,6 +263,7 @@ class StorageCore:
         self._create_work_tables_in(conn)
         self._create_planning_tables_in(conn)
         self._create_artifact_feedback_table_in(conn)
+        self._create_workflow_tables_in(conn)
         self._migrate_run_control(conn)
 
     def _create_upgrade_backup(self, from_version: int) -> str:
@@ -957,5 +961,47 @@ class StorageCore:
                 ON artifact_feedback(work_item_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_artifact_feedback_artifact
                 ON artifact_feedback(artifact_id, created_at DESC);
+            """
+        )
+
+    @staticmethod
+    def _create_workflow_tables_in(conn):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_definitions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                latest_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_definitions_status
+                ON workflow_definitions(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS workflow_versions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                objective_template TEXT NOT NULL,
+                parameters_json TEXT NOT NULL DEFAULT '[]',
+                plan_steps_json TEXT NOT NULL DEFAULT '[]',
+                expected_artifact_kinds_json TEXT NOT NULL DEFAULT '[]',
+                required_resources_json TEXT NOT NULL DEFAULT '[]',
+                budget_json TEXT NOT NULL DEFAULT '{}',
+                approval_policy_json TEXT NOT NULL DEFAULT '{}',
+                failure_policy_json TEXT NOT NULL DEFAULT '{}',
+                source_work_item_id TEXT,
+                change_summary TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE(workflow_id, version),
+                FOREIGN KEY (workflow_id)
+                    REFERENCES workflow_definitions(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_work_item_id)
+                    REFERENCES work_items(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_versions_definition
+                ON workflow_versions(workflow_id, version DESC);
             """
         )

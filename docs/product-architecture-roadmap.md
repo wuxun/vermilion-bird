@@ -122,10 +122,11 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 ### v0.4：任务复用与自动化
 
 - [x] Artifact 原子导出、反馈历史与采纳率指标
-- [ ] 从成功任务生成 WorkflowDefinition
-- [ ] Workflow 不可变版本与变更摘要
-- [ ] 输入参数、产物定义、预算、审批和失败策略
-- [ ] GUI、CLI、Scheduler 运行同一 Workflow 版本
+- [x] 从成功任务生成 WorkflowDefinition
+- [x] Workflow 不可变版本与变更摘要
+- [x] 输入参数、产物定义、预算、审批和失败策略模型
+- [x] CLI 固定版本执行并记录版本来源
+- [ ] GUI、Scheduler 选择并运行同一 Workflow 版本
 - [x] 资源级权限：目录、域名、消息目标和授权期限
 
 进入下一阶段的门槛：核心任务成功率不低于 85%，成功任务能够稳定产出 Artifact。

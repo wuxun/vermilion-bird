@@ -8,7 +8,15 @@ from llm_chat.config import Config
 from llm_chat.app import App
 from llm_chat.frontends import get_frontend
 from llm_chat.scheduler.models import Task, TaskType
-from llm_chat.cli import database, eval_group, memory, skills, schedule, task
+from llm_chat.cli import (
+    database,
+    eval_group,
+    memory,
+    schedule,
+    skills,
+    task,
+    workflow_group,
+)
 from llm_chat.cli.ghost_cli import ghost_group
 import signal
 import threading
@@ -268,6 +276,7 @@ cli.add_command(schedule)
 cli.add_command(task)
 cli.add_command(database)
 cli.add_command(eval_group)
+cli.add_command(workflow_group)
 cli.add_command(ghost_group)
 
 

@@ -47,6 +47,7 @@ from llm_chat.work import (
     WorkItemService,
     WorkItemStatus,
 )
+from llm_chat.workflows import WorkflowParameter, WorkflowService
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -112,6 +113,10 @@ class App:
             runs=self.run_manager,
         )
         self.resource_grants = ResourceGrantService(self.storage)
+        self.workflows = WorkflowService(
+            repository=self.storage,
+            work_items=self.work_items,
+        )
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
         self.effect_outbox = EffectOutbox(self.storage)
@@ -313,6 +318,82 @@ class App:
             work_item_id=work_item_id,
             include_inactive=include_inactive,
         )
+
+    def create_workflow_from_work_item(
+        self,
+        work_item_id: str,
+        *,
+        name: Optional[str] = None,
+        description: str = "",
+        objective_template: Optional[str] = None,
+        parameters: Optional[List[WorkflowParameter]] = None,
+    ):
+        return self.workflows.create_from_work_item(
+            work_item_id,
+            name=name,
+            description=description,
+            objective_template=objective_template,
+            parameters=parameters,
+        )
+
+    def list_workflows(self, *, limit: int = 100):
+        return self.workflows.list(limit=limit)
+
+    def get_workflow(self, workflow_id: str, *, version: Optional[int] = None):
+        return self.workflows.get(workflow_id, version=version)
+
+    def revise_workflow(
+        self,
+        workflow_id: str,
+        *,
+        change_summary: str,
+        objective_template: Optional[str] = None,
+        parameters: Optional[List[WorkflowParameter]] = None,
+    ):
+        return self.workflows.revise(
+            workflow_id,
+            change_summary=change_summary,
+            objective_template=objective_template,
+            parameters=parameters,
+        )
+
+    def run_workflow(
+        self,
+        workflow_id: str,
+        *,
+        version: Optional[int] = None,
+        inputs: Optional[Dict[str, str]] = None,
+        workspace: Optional[str] = None,
+    ):
+        workflow_version, objective = self.workflows.render(
+            workflow_id,
+            version=version,
+            inputs=inputs,
+        )
+        definition = self.storage.get_workflow(workflow_id)
+        item = self.work_items.create(
+            objective=objective,
+            title=definition.name if definition else objective[:80],
+            workflow_id=workflow_id,
+            workspace=workspace,
+            metadata={
+                "source": "workflow",
+                "workflow_version_id": workflow_version.id,
+                "workflow_version": workflow_version.version,
+                "expected_artifact_kinds": [
+                    kind.value for kind in workflow_version.expected_artifact_kinds
+                ],
+            },
+        )
+        if workflow_version.plan_steps:
+            self.work_items.create_plan_revision(
+                item.id,
+                summary=f"Workflow {workflow_id} v{workflow_version.version}",
+                steps=workflow_version.plan_steps,
+                approve=True,
+                created_by="workflow",
+            )
+        return self.execute_work_item(item.id)
 
     def list_work_item_actions(
         self,

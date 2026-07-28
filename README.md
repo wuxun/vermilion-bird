@@ -98,6 +98,15 @@ poetry run vermilion-bird task artifact export <artifact-id> ./delivery.md
 poetry run vermilion-bird task artifact feedback \
   <work-item-id> <artifact-id> accepted
 
+# 从成功任务创建、修订并运行固定版本工作流
+poetry run vermilion-bird workflow create-from-task <work-item-id> \
+  --name "主题调研" --template "调研 {topic} 并形成报告" \
+  --parameter topic
+poetry run vermilion-bird workflow revise <workflow-id> \
+  --change-summary "调整交付要求"
+poetry run vermilion-bird workflow run <workflow-id> \
+  --version 1 --input topic=LangGraph
+
 # 数据库版本、完整性检查和手动备份
 poetry run vermilion-bird database status
 poetry run vermilion-bird database backup --label before-upgrade

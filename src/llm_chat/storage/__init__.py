@@ -16,6 +16,7 @@ from llm_chat.storage._digest import StorageDigestMixin
 from llm_chat.storage._feishu import StorageFeishuMixin
 from llm_chat.storage._runtime import StorageRuntimeMixin
 from llm_chat.storage._work import StorageWorkMixin
+from llm_chat.storage._workflow import StorageWorkflowMixin
 
 
 class Storage(
@@ -25,6 +26,7 @@ class Storage(
     StorageFeishuMixin,
     StorageRuntimeMixin,
     StorageWorkMixin,
+    StorageWorkflowMixin,
     StorageCore,
 ):
     """SQLite 持久化存储 (单例)

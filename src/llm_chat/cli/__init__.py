@@ -16,6 +16,7 @@ from llm_chat.cli.schedule import schedule
 from llm_chat.cli.task import task
 from llm_chat.cli.database import database
 from llm_chat.cli.eval import eval_group
+from llm_chat.cli.workflow import workflow_group
 from llm_chat.cli.main import main, cli
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "task",
     "database",
     "eval_group",
+    "workflow_group",
 ]
