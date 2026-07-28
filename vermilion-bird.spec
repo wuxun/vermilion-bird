@@ -15,6 +15,7 @@ a = Analysis(
     ],
     binaries=[],
     datas=[
+        ('vermilion_bird_small.png', '.'),
         *collect_data_files('llm_chat'),
     ],
     hiddenimports=[

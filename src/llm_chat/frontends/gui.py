@@ -499,6 +499,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         import os
 
         icon_paths = [
+            os.path.join(getattr(sys, "_MEIPASS", ""), "vermilion_bird_small.png"),
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "vermilion_bird_small.png"),
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
