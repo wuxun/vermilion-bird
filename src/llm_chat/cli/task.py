@@ -27,6 +27,8 @@ def _status_label(status: WorkItemStatus) -> str:
         WorkItemStatus.DRAFT: "○",
         WorkItemStatus.READY: "○",
         WorkItemStatus.RUNNING: "▶",
+        WorkItemStatus.CANCELLING: "…",
+        WorkItemStatus.PAUSING: "…",
         WorkItemStatus.WAITING_APPROVAL: "!",
         WorkItemStatus.PAUSED: "Ⅱ",
         WorkItemStatus.COMPLETED: "✓",
@@ -205,12 +207,12 @@ def list_artifacts(work_item_id, json_output):
 @task.command("cancel")
 @click.argument("work_item_id")
 def cancel_task(work_item_id):
-    """取消任务的当前主执行。"""
+    """请求协作式取消当前任务。"""
 
     app = _build_app()
     try:
         detail = app.cancel_work_item(work_item_id)
-        click.echo(f"任务已取消: {detail.work_item.id}")
+        click.echo(f"取消请求已提交: {detail.work_item.id}")
     except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
@@ -245,6 +247,21 @@ def resume_task(work_item_id):
         click.echo(f"任务状态: {_status_label(detail.work_item.status)}")
         if detail.artifacts:
             click.echo(detail.artifacts[0].content or detail.artifacts[0].content_preview or "")
+    except (KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        app.stop()
+
+
+@task.command("pause")
+@click.argument("work_item_id")
+def pause_task(work_item_id):
+    """请求任务在下一个安全 checkpoint 暂停。"""
+
+    app = _build_app()
+    try:
+        detail = app.pause_work_item(work_item_id)
+        click.echo(f"任务状态: {_status_label(detail.work_item.status)}")
     except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:

@@ -307,29 +307,66 @@ class App:
                 proposal.id,
                 conversation_id=proposal.conversation_id,
             )
-        for run in detail.runs:
-            current = self.run_manager.get(run.id)
-            if current is not None and not current.status.terminal:
-                self.run_manager.cancel(current.id)
+        current = self.run_manager.get(latest_run_id)
+        if current is not None and not current.status.terminal:
+            self.run_manager.request_cancel(
+                current.id,
+                reason=f"work_item:{work_item_id}",
+                cascade=True,
+            )
         self.work_items.reconcile()
         return self.work_items.detail(work_item_id)
 
+    def _resumable_work_item_run(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        for run in detail.runs:
+            if run.metadata.get("approval_kind"):
+                continue
+            if run.status == RunStatus.PAUSED and self.can_resume_run(run.id):
+                return run
+        return None
+
     def can_resume_work_item(self, work_item_id: str) -> bool:
-        item = self.work_items.get(work_item_id)
-        return bool(
-            item
-            and item.latest_run_id
-            and self.can_resume_run(item.latest_run_id)
-        )
+        return self._resumable_work_item_run(work_item_id) is not None
 
     def resume_work_item(self, work_item_id: str):
-        detail = self.work_items.detail(work_item_id)
-        latest_run_id = detail.work_item.latest_run_id
-        if not latest_run_id:
-            raise ValueError(f"Work item {work_item_id} has no run to resume")
-        self.resume_run(latest_run_id, True)
+        run = self._resumable_work_item_run(work_item_id)
+        if run is None:
+            raise ValueError(f"Work item {work_item_id} has no resumable run")
+        self.resume_run(run.id, True)
         self.work_items.reconcile()
         return self._materialize_work_item_result(work_item_id)
+
+    def _pausable_work_item_run(self, work_item_id: str):
+        detail = self.work_items.detail(work_item_id)
+        latest_run_id = detail.work_item.latest_run_id
+        run = next(
+            (candidate for candidate in detail.runs if candidate.id == latest_run_id),
+            None,
+        )
+        if (
+            run is not None
+            and run.status == RunStatus.RUNNING
+            and run.checkpoint is not None
+            and run.metadata.get("run_handler") == "chat"
+        ):
+            return run
+        return None
+
+    def can_pause_work_item(self, work_item_id: str) -> bool:
+        return self._pausable_work_item_run(work_item_id) is not None
+
+    def pause_work_item(self, work_item_id: str):
+        run = self._pausable_work_item_run(work_item_id)
+        if run is None:
+            raise ValueError(f"Work item {work_item_id} has no pausable run")
+        self.run_manager.request_pause(
+            run.id,
+            reason=f"work_item:{work_item_id}",
+            cascade=True,
+        )
+        self.work_items.reconcile()
+        return self.work_items.detail(work_item_id)
 
     def can_retry_work_item(self, work_item_id: str) -> bool:
         item = self.work_items.get(work_item_id)

@@ -26,6 +26,8 @@ class RunType(str, Enum):
 class RunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCEL_REQUESTED = "cancel_requested"
+    PAUSE_REQUESTED = "pause_requested"
     WAITING_APPROVAL = "waiting_approval"
     PAUSED = "paused"
     COMPLETED = "completed"

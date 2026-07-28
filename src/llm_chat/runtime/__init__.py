@@ -42,6 +42,12 @@ from .actions import (
     CapabilityPolicy,
     PolicyDecision,
 )
+from .control import (
+    ExecutionCancelRequested,
+    ExecutionControlRequested,
+    ExecutionPauseRequested,
+    check_control,
+)
 
 __all__ = [
     "ActionProposal",
@@ -55,6 +61,9 @@ __all__ = [
     "EffectReconciliationService",
     "EffectResolution",
     "EffectStatus",
+    "ExecutionCancelRequested",
+    "ExecutionControlRequested",
+    "ExecutionPauseRequested",
     "GraphExecutionResult",
     "GraphExecutionService",
     "GraphInterrupt",
@@ -77,4 +86,5 @@ __all__ = [
     "RunManager",
     "UncertainEffectError",
     "build_tool_approval_graph",
+    "check_control",
 ]

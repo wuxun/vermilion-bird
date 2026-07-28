@@ -1,5 +1,7 @@
 """Chat graph SQLite checkpoint and recovery regressions."""
 
+import threading
+
 from llm_chat.chat_core_graph import ChatCoreGraph
 from llm_chat.config import Config
 from llm_chat.runtime import (
@@ -26,6 +28,18 @@ class RecoveringClient:
         if self.fail:
             raise RuntimeError("transient")
         return "recovered"
+
+
+class BlockingClient(RecoveringClient):
+    def __init__(self):
+        super().__init__(fail=False)
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def chat(self, *_args, **_kwargs):
+        self.started.set()
+        assert self.release.wait(timeout=5)
+        return "controlled response"
 
 
 class EmptyConversation:
@@ -133,5 +147,71 @@ def test_chat_run_keeps_product_work_item_identity(tmp_path):
     assert run.work_item_id == "work_product_task"
     assert run.type == RunType.WORKFLOW
 
+    runtime.close()
+    Storage.set_instance(None)
+
+
+def test_running_chat_acknowledges_cancel_at_next_graph_boundary(tmp_path):
+    db_path = tmp_path / "chat-cancel.db"
+    Storage.set_instance(None)
+    storage = Storage(str(db_path))
+    client = BlockingClient()
+    runs, runtime, core = _build_core(db_path, storage, client)
+    result_holder = {}
+
+    worker = threading.Thread(
+        target=lambda: result_holder.setdefault(
+            "value",
+            core.send_message("conv", "cancel me"),
+        )
+    )
+    worker.start()
+    assert client.started.wait(timeout=5)
+    run = runs.list()[0]
+
+    requested = runs.request_cancel(run.id)
+    assert requested.status == RunStatus.CANCEL_REQUESTED
+    client.release.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert result_holder["value"] == "任务已取消。"
+    assert runs.get(run.id).status == RunStatus.CANCELLED
+    runtime.close()
+    Storage.set_instance(None)
+
+
+def test_running_chat_checkpoints_and_acknowledges_pause(tmp_path):
+    db_path = tmp_path / "chat-pause.db"
+    Storage.set_instance(None)
+    storage = Storage(str(db_path))
+    client = BlockingClient()
+    runs, runtime, core = _build_core(db_path, storage, client)
+    result_holder = {}
+
+    worker = threading.Thread(
+        target=lambda: result_holder.setdefault(
+            "value",
+            core.send_message("conv", "pause me"),
+        )
+    )
+    worker.start()
+    assert client.started.wait(timeout=5)
+    run = runs.list()[0]
+
+    requested = runs.request_pause(run.id)
+    assert requested.status == RunStatus.PAUSE_REQUESTED
+    client.release.set()
+    worker.join(timeout=5)
+
+    paused = runs.get(run.id)
+    assert not worker.is_alive()
+    assert "安全检查点暂停" in result_holder["value"]
+    assert paused.status == RunStatus.PAUSED
+    assert paused.checkpoint is not None
+
+    completed = core.resume(run.id)
+    assert completed.status == RunStatus.COMPLETED
+    assert completed.result == "controlled response"
     runtime.close()
     Storage.set_instance(None)

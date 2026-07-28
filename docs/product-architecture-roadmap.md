@@ -84,7 +84,7 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] 将执行与审批中心保留为高级审计入口
 - [x] 增加 Qt 关键路径自动化测试
 
-#### Phase 4：首次使用
+#### Phase 4：首次使用（暂缓）
 
 - [ ] 模型连接向导与连接测试
 - [ ] 默认工作目录和授权等级
@@ -92,13 +92,28 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [ ] API Key 默认写入系统 Keychain
 - [ ] 新用户十分钟内完成首个有效任务
 
-#### Phase 5：发布可靠性
+> 2026-07-28 决策：当前阶段暂缓首次使用改造，优先消除执行控制、数据迁移和质量评测
+> 风险。首次使用在核心执行闭环达到发布门槛后恢复。
 
+#### Phase 5：执行与发布可靠性
+
+- [x] 协作式取消：请求、执行器确认、子 Run 级联、终态收敛
+- [x] Chat 任务协作式暂停：安全点 checkpoint、确认暂停、恢复
+- [ ] 为其他可恢复 Workflow handler 扩展协作式暂停
 - [ ] 正式数据库 schema version 与迁移日志
 - [ ] 升级前备份、失败回滚、诊断包
 - [ ] GUI E2E 与进程崩溃故障注入
 - [ ] macOS Developer ID 签名、公证和自动更新
 - [ ] Windows/Linux 构建验证
+
+实施顺序：
+
+1. 协作式取消和暂停；
+2. schema version、升级备份与失败恢复；
+3. 故障注入与核心场景 Eval；
+4. 结构化计划和资源级授权；
+5. Artifact 反馈、导出和 WorkflowDefinition；
+6. Application Service、状态投影和 Ember 边界收敛。
 
 ### v0.4：任务复用与自动化
 

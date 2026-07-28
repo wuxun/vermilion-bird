@@ -42,6 +42,8 @@ from llm_chat.runtime import (
 _RUN_STATUS_LABELS: Dict[RunStatus, str] = {
     RunStatus.PENDING: "等待",
     RunStatus.RUNNING: "执行中",
+    RunStatus.CANCEL_REQUESTED: "正在取消",
+    RunStatus.PAUSE_REQUESTED: "正在暂停",
     RunStatus.WAITING_APPROVAL: "待审批",
     RunStatus.PAUSED: "已暂停",
     RunStatus.COMPLETED: "已完成",

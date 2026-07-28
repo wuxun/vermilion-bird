@@ -370,6 +370,8 @@ class WorkItemService:
         mapping = {
             RunStatus.PENDING: WorkItemStatus.READY,
             RunStatus.RUNNING: WorkItemStatus.RUNNING,
+            RunStatus.CANCEL_REQUESTED: WorkItemStatus.CANCELLING,
+            RunStatus.PAUSE_REQUESTED: WorkItemStatus.PAUSING,
             RunStatus.WAITING_APPROVAL: WorkItemStatus.WAITING_APPROVAL,
             RunStatus.PAUSED: WorkItemStatus.PAUSED,
             RunStatus.COMPLETED: WorkItemStatus.COMPLETED,
@@ -392,7 +394,13 @@ class WorkItemService:
         )
         active_children = any(
             run.id != primary.id
-            and run.status in {RunStatus.PENDING, RunStatus.RUNNING}
+            and run.status
+            in {
+                RunStatus.PENDING,
+                RunStatus.RUNNING,
+                RunStatus.CANCEL_REQUESTED,
+                RunStatus.PAUSE_REQUESTED,
+            }
             for run in linked_runs
         )
         paused_children = any(
@@ -404,6 +412,16 @@ class WorkItemService:
         self._apply_run_status(item, primary)
         if approval_waiting:
             item.status = WorkItemStatus.WAITING_APPROVAL
+            item.completed_at = None
+        elif any(
+            run.status == RunStatus.CANCEL_REQUESTED for run in linked_runs
+        ):
+            item.status = WorkItemStatus.CANCELLING
+            item.completed_at = None
+        elif any(
+            run.status == RunStatus.PAUSE_REQUESTED for run in linked_runs
+        ):
+            item.status = WorkItemStatus.PAUSING
             item.completed_at = None
         elif primary.status.terminal and active_children:
             item.status = WorkItemStatus.RUNNING

@@ -82,6 +82,7 @@ poetry run vermilion-bird feishu
 # 创建并执行持久化任务
 poetry run vermilion-bird task start "调研三个 Agent 框架并形成报告"
 poetry run vermilion-bird task list
+poetry run vermilion-bird task pause <work-item-id>
 poetry run vermilion-bird task resume <work-item-id>
 ```
 

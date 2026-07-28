@@ -48,6 +48,8 @@ from llm_chat.runtime import (
     ActionProposalManager,
     ActionStatus,
     CapabilityPolicy,
+    ExecutionCancelRequested,
+    ExecutionPauseRequested,
     PolicyDecision,
     RecoveryPolicy,
     RunLeaseHeartbeat,
@@ -84,16 +86,28 @@ def _pipeline_context(
     state: ChatGraphState,
     runtime: Runtime[ChatRuntimeContext],
 ) -> PipelineContext:
+    runtime.context.check_control()
     return state.to_pipeline_context(runtime.context)
 
 
 def _run_stage(stage, ctx: PipelineContext) -> Dict[str, Any]:
+    from llm_chat.runtime import check_control
+
+    check_control(
+        cancel_event=ctx.cancel_event,
+        pause_event=getattr(ctx, "pause_event", None),
+    )
+
     async def execute() -> None:
         await stage.setup(ctx)
         await stage.process(ctx)
         await stage.teardown(ctx)
 
     asyncio.run(execute())
+    check_control(
+        cancel_event=ctx.cancel_event,
+        pause_event=getattr(ctx, "pause_event", None),
+    )
     return ChatGraphState.pipeline_update(ctx)
 
 
@@ -676,6 +690,9 @@ class ChatCoreGraph:
         self.context_hub = context_hub or build_default_context_hub(conversation_manager)
         self.graph_runtime = graph_runtime
         self._cancel_event: Optional[threading.Event] = None
+        self._pause_event: Optional[threading.Event] = None
+        self._active_run_id: Optional[str] = None
+        self._control_lock = threading.RLock()
         self._prompt_skills_holder = MutableStrHolder("")
         self._style_holder = MutableStrHolder("default")
 
@@ -739,6 +756,13 @@ class ChatCoreGraph:
             return action_response
 
         # Initialize decision card context for submit_decision_card tool
+        cancel_event = threading.Event()
+        pause_event = threading.Event()
+        unregister_control = self._attach_control(
+            run.id,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+        )
         init_card_context()
 
         state = ChatGraphState.from_request(
@@ -749,8 +773,11 @@ class ChatCoreGraph:
         runtime_context = self._build_runtime_context(
             run.id,
             on_card=on_card,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
         )
 
+        control_response: Optional[str] = None
         try:
             self._prepare_durable_run(run.id)
             with RunLeaseHeartbeat(self.run_manager, run.id, lease_seconds=120):
@@ -761,6 +788,14 @@ class ChatCoreGraph:
                 )
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run.id)
+        except ExecutionCancelRequested:
+            self._sync_graph_checkpoint(run.id)
+            self.run_manager.acknowledge_cancel(run.id)
+            control_response = "任务已取消。"
+        except ExecutionPauseRequested:
+            self._sync_graph_checkpoint(run.id)
+            self.run_manager.acknowledge_pause(run.id)
+            control_response = "任务已在安全检查点暂停，可稍后恢复。"
         except Exception as e:
             logger.error(f"send_message graph failed: {e}", exc_info=True)
             self._sync_graph_checkpoint(run.id)
@@ -769,11 +804,13 @@ class ChatCoreGraph:
         finally:
             card = get_pending_card()
             clear_card_context()
+            unregister_control()
+            self._clear_active_control(run.id)
 
-        if runtime_context.cancel_event and runtime_context.cancel_event.is_set():
-            self.run_manager.cancel(run.id)
-        else:
-            self.run_manager.complete(run.id, final_state.response)
+        if control_response is not None:
+            return control_response
+
+        self.run_manager.complete(run.id, final_state.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
@@ -818,7 +855,13 @@ class ChatCoreGraph:
             self.run_manager.complete(run.id, action_response)
             return action_response
 
-        self._cancel_event = threading.Event()
+        cancel_event = threading.Event()
+        pause_event = threading.Event()
+        unregister_control = self._attach_control(
+            run.id,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+        )
         init_card_context()
 
         state = ChatGraphState.from_request(
@@ -833,9 +876,11 @@ class ChatCoreGraph:
             on_tool_end=on_tool_end,
             on_context_update=on_context_update,
             on_card=on_card,
-            cancel_event=self._cancel_event,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
         )
 
+        control_response: Optional[str] = None
         try:
             self._prepare_durable_run(run.id)
             with RunLeaseHeartbeat(self.run_manager, run.id, lease_seconds=120):
@@ -846,6 +891,14 @@ class ChatCoreGraph:
                 )
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run.id)
+        except ExecutionCancelRequested:
+            self._sync_graph_checkpoint(run.id)
+            self.run_manager.acknowledge_cancel(run.id)
+            control_response = "任务已取消。"
+        except ExecutionPauseRequested:
+            self._sync_graph_checkpoint(run.id)
+            self.run_manager.acknowledge_pause(run.id)
+            control_response = "任务已在安全检查点暂停，可稍后恢复。"
         except Exception as e:
             logger.error(f"send_message_stream graph failed: {e}", exc_info=True)
             self._sync_graph_checkpoint(run.id)
@@ -854,11 +907,13 @@ class ChatCoreGraph:
         finally:
             card = get_pending_card()
             clear_card_context()
+            unregister_control()
+            self._clear_active_control(run.id)
 
-        if runtime_context.cancel_event and runtime_context.cancel_event.is_set():
-            self.run_manager.cancel(run.id)
-        else:
-            self.run_manager.complete(run.id, final_state.response)
+        if control_response is not None:
+            return control_response
+
+        self.run_manager.complete(run.id, final_state.response)
         if card and on_card:
             card.conversation_id = conversation_id
             on_card(card)
@@ -925,7 +980,18 @@ class ChatCoreGraph:
         if run is None:
             raise KeyError(f"Unknown run: {run_id}")
         self._prepare_durable_run(run_id, create_checkpoint=False)
-        runtime_context = self._build_runtime_context(run_id)
+        cancel_event = threading.Event()
+        pause_event = threading.Event()
+        unregister_control = self._attach_control(
+            run_id,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+        )
+        runtime_context = self._build_runtime_context(
+            run_id,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+        )
         snapshot = self.graph_runtime.get_state(self.GRAPH_NAME, thread_id=run_id)
         if force_initial or snapshot is None:
             graph_input: Any = self._state_from_run(run)
@@ -947,12 +1013,20 @@ class ChatCoreGraph:
             final_state = ChatGraphState.model_validate(output)
             self._sync_graph_checkpoint(run_id)
             return self.run_manager.complete(run_id, final_state.response)
+        except ExecutionCancelRequested:
+            self._sync_graph_checkpoint(run_id)
+            return self.run_manager.acknowledge_cancel(run_id)
+        except ExecutionPauseRequested:
+            self._sync_graph_checkpoint(run_id)
+            return self.run_manager.acknowledge_pause(run_id)
         except Exception as exc:
             logger.error("Chat run recovery failed: %s", exc, exc_info=True)
             self._sync_graph_checkpoint(run_id)
             return self.run_manager.fail(run_id, str(exc))
         finally:
             clear_card_context()
+            unregister_control()
+            self._clear_active_control(run_id)
 
     def _state_from_run(self, run) -> ChatGraphState:
         return ChatGraphState.from_request(
@@ -1011,6 +1085,8 @@ class ChatCoreGraph:
         if run is None or run.status.terminal:
             return
         snapshot = self.graph_runtime.get_state(self.GRAPH_NAME, thread_id=run_id)
+        if snapshot is None:
+            return
         next_nodes = tuple(snapshot.next_nodes) if snapshot else ()
         self.run_manager.checkpoint(
             run_id,
@@ -1038,6 +1114,7 @@ class ChatCoreGraph:
         on_context_update: Optional[Callable[[int, int], None]] = None,
         on_card: Optional[CardCallback] = None,
         cancel_event: Optional[threading.Event] = None,
+        pause_event: Optional[threading.Event] = None,
     ) -> ChatRuntimeContext:
         from llm_chat.tools import get_tool_registry
 
@@ -1061,12 +1138,49 @@ class ChatCoreGraph:
             on_context_update=on_context_update,
             on_card=on_card,
             cancel_event=cancel_event,
+            pause_event=pause_event,
         )
 
     def cancel_generation(self) -> None:
-        """Cancel ongoing stream generation."""
-        if self._cancel_event:
-            self._cancel_event.set()
+        """请求当前前台生成在安全边界协作式取消。"""
+
+        with self._control_lock:
+            run_id = self._active_run_id
+        if run_id:
+            self.run_manager.request_cancel(run_id, reason="frontend")
+
+    def pause_generation(self) -> None:
+        """请求当前前台生成保存 checkpoint 后暂停。"""
+
+        with self._control_lock:
+            run_id = self._active_run_id
+        if run_id:
+            self.run_manager.request_pause(run_id, reason="frontend")
+
+    def _attach_control(
+        self,
+        run_id: str,
+        *,
+        cancel_event: threading.Event,
+        pause_event: threading.Event,
+    ):
+        unregister = self.run_manager.register_control(
+            run_id,
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+        )
+        with self._control_lock:
+            self._active_run_id = run_id
+            self._cancel_event = cancel_event
+            self._pause_event = pause_event
+        return unregister
+
+    def _clear_active_control(self, run_id: str) -> None:
+        with self._control_lock:
+            if self._active_run_id == run_id:
+                self._active_run_id = None
+                self._cancel_event = None
+                self._pause_event = None
 
     def set_prompt_skills_context(self, context: str) -> None:
         """Inject prompt skills context (called by App after SkillManager init)."""

@@ -137,3 +137,16 @@ def test_task_resume_uses_persistent_checkpoint():
     assert result.exit_code == 0
     app.resume_work_item.assert_called_once_with("work_test")
     app.stop.assert_called_once()
+
+
+def test_task_pause_requests_safe_checkpoint():
+    app = MagicMock()
+    app.pause_work_item.return_value = _detail(status=WorkItemStatus.PAUSING)
+
+    with patch("llm_chat.cli.task._build_app", return_value=app):
+        result = CliRunner().invoke(cli, ["task", "pause", "work_test"])
+
+    assert result.exit_code == 0
+    assert "pausing" in result.output
+    app.pause_work_item.assert_called_once_with("work_test")
+    app.stop.assert_called_once()

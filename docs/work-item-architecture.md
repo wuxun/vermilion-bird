@@ -24,20 +24,24 @@ WorkItem
 
 ## 状态一致性
 
-WorkItem 状态由 `latest_run_id` 对应的主 Run 投影：
+WorkItem 状态以 `latest_run_id` 对应的主 Run 为基线，并聚合会阻塞用户目标完成的子 Run：
 
 | Run | WorkItem |
 |---|---|
 | pending | ready |
 | running | running |
+| cancel_requested | cancelling |
+| pause_requested | pausing |
 | waiting_approval | waiting_approval |
 | paused | paused |
 | completed | completed |
 | failed | failed |
 | cancelled | cancelled |
 
-子 Run 的结束不会直接把整个任务标记为失败；主工作流可以处理子步骤失败。`WorkItemService`
-订阅 RunEvent，只允许当前主 Run 更新任务状态。
+子 Run 的结束不会直接把整个任务标记为失败；主工作流可以处理子步骤失败。但待审批、
+控制请求或仍在运行的阻塞型子 Run 会临时覆盖任务投影，避免出现“主 Run 已完成但外部
+动作仍待审批”的错误产品状态。`WorkItemService` 订阅所有关联 RunEvent 并确定性重算
+聚合状态。
 
 SQLite 无法在一次事务内覆盖内存 RunManager 的状态变化，因此服务采用“持久化关联 +
 幂等启动修复”关闭崩溃窗口：
@@ -81,9 +85,10 @@ WorkItem，从而避免 Tool、Subagent 和 Graph 节点产生孤立执行记录
 下一步：
 
 1. 在任务详情内展示结构化计划；
-2. 增加协作式暂停、导出和“保存为 Workflow”能力；
+2. 将协作式暂停扩展到非 Chat Workflow，并增加导出和“保存为 Workflow”能力；
 3. 为首次启动提供模型连接与安全示例任务。
 
 任务中心已内嵌待审批动作，可查看风险、能力、影响和参数，并直接批准或拒绝。
-已有 checkpoint 的暂停主 Run 可从 GUI 或 `task resume` 恢复；主动暂停会在执行器支持
-安全协作式暂停后开放，避免只修改数据库状态而后台线程仍继续执行。
+已有 checkpoint 的暂停主 Run 可从 GUI 或 `task resume` 恢复。Chat 主任务支持
+`running → pause_requested → paused` 的协作式暂停；其他 handler 只有在实现安全点和
+checkpoint 后才会开放暂停，避免只修改数据库状态而后台线程仍继续执行。

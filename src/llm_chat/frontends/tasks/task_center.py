@@ -37,6 +37,8 @@ _STATUS_LABELS: Dict[WorkItemStatus, str] = {
     WorkItemStatus.DRAFT: "草稿",
     WorkItemStatus.READY: "待执行",
     WorkItemStatus.RUNNING: "执行中",
+    WorkItemStatus.CANCELLING: "正在取消",
+    WorkItemStatus.PAUSING: "正在暂停",
     WorkItemStatus.WAITING_APPROVAL: "待审批",
     WorkItemStatus.PAUSED: "已暂停",
     WorkItemStatus.COMPLETED: "已完成",
@@ -239,6 +241,8 @@ class TaskCenterDialog(QDialog):
         actions = QHBoxLayout()
         self._cancel_button = QPushButton("取消任务")
         self._cancel_button.clicked.connect(self._cancel_selected)
+        self._pause_button = QPushButton("暂停")
+        self._pause_button.clicked.connect(self._pause_selected)
         self._retry_button = QPushButton("重试")
         self._retry_button.clicked.connect(self._retry_selected)
         self._resume_button = QPushButton("恢复")
@@ -246,6 +250,7 @@ class TaskCenterDialog(QDialog):
         self._open_artifact_button = QPushButton("打开产物")
         self._open_artifact_button.clicked.connect(self._open_selected_artifact)
         actions.addWidget(self._cancel_button)
+        actions.addWidget(self._pause_button)
         actions.addWidget(self._retry_button)
         actions.addWidget(self._resume_button)
         actions.addStretch()
@@ -467,6 +472,16 @@ class TaskCenterDialog(QDialog):
             lambda: self._app.retry_work_item(work_item_id),
         )
 
+    def _pause_selected(self) -> None:
+        if not self._selected_work_item_id:
+            return
+        work_item_id = self._selected_work_item_id
+        try:
+            self._app.pause_work_item(work_item_id)
+            self.refresh()
+        except Exception as exc:
+            QMessageBox.critical(self, "暂停失败", str(exc))
+
     def _resume_selected(self) -> None:
         if not self._selected_work_item_id:
             return
@@ -638,18 +653,32 @@ class TaskCenterDialog(QDialog):
     def _update_actions(self, item: Optional[Any]) -> None:
         busy = self._busy_work_item_id is not None
         self._new_button.setEnabled(not busy)
-        self._cancel_button.setEnabled(bool(item and not item.status.terminal and not busy))
+        control_pending = bool(
+            item
+            and item.status
+            in {
+                WorkItemStatus.CANCELLING,
+                WorkItemStatus.PAUSING,
+            }
+        )
+        self._cancel_button.setEnabled(
+            bool(item and not item.status.terminal and not busy and not control_pending)
+        )
         can_retry = False
         can_resume = False
+        can_pause = False
         if item and not busy:
             try:
                 can_retry = self._app.can_retry_work_item(item.id)
                 can_resume = self._app.can_resume_work_item(item.id)
+                can_pause = self._app.can_pause_work_item(item.id)
             except Exception:
                 can_retry = False
                 can_resume = False
+                can_pause = False
         self._retry_button.setEnabled(can_retry)
         self._resume_button.setEnabled(can_resume)
+        self._pause_button.setEnabled(can_pause)
         self._open_artifact_button.setEnabled(bool(self._artifacts_by_id))
         self._update_approval_actions()
 

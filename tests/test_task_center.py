@@ -85,6 +85,7 @@ def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
         resume_work_item=MagicMock(),
         can_retry_work_item=lambda _work_item_id: can_retry,
         can_resume_work_item=lambda _work_item_id: can_resume,
+        can_pause_work_item=lambda _work_item_id: False,
         approve_action=MagicMock(),
         reject_action=MagicMock(),
         run_manager=MagicMock(),

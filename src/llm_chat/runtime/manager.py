@@ -88,6 +88,10 @@ class RunManager:
         self._order: deque[str] = deque()
         self._idempotency: Dict[str, str] = {}
         self._observers: List[RunObserver] = []
+        self._controls: Dict[
+            str,
+            tuple[threading.Event, threading.Event],
+        ] = {}
         self._lock = threading.RLock()
         self._restore(recover_interrupted=recover_interrupted)
 
@@ -187,7 +191,127 @@ class RunManager:
         return self._finish(run_id, RunStatus.FAILED, error=error)
 
     def cancel(self, run_id: str) -> Run:
+        """执行器确认已停止；用户入口应调用 request_cancel。"""
+
         return self._finish(run_id, RunStatus.CANCELLED)
+
+    def register_control(
+        self,
+        run_id: str,
+        *,
+        cancel_event: threading.Event,
+        pause_event: threading.Event,
+    ) -> Callable[[], None]:
+        """把持久化控制请求桥接到当前进程中的执行线程。"""
+
+        with self._lock:
+            run = self._require_locked(run_id)
+            self._controls[run_id] = (cancel_event, pause_event)
+            if run.status == RunStatus.CANCEL_REQUESTED:
+                cancel_event.set()
+            elif run.status == RunStatus.PAUSE_REQUESTED:
+                pause_event.set()
+
+        def unregister() -> None:
+            with self._lock:
+                current = self._controls.get(run_id)
+                if current == (cancel_event, pause_event):
+                    self._controls.pop(run_id, None)
+
+        return unregister
+
+    def request_cancel(
+        self,
+        run_id: str,
+        *,
+        reason: str = "manual",
+        cascade: bool = True,
+    ) -> Run:
+        """持久化取消意图；终态由执行器到达安全边界后确认。"""
+
+        with self._lock:
+            run = self._require_locked(run_id)
+            if run.status.terminal or run.status == RunStatus.CANCEL_REQUESTED:
+                return run.model_copy(deep=True)
+            # 没有活动执行器时，持久化请求后可在当前线程直接确认。
+            immediate = run.status in {RunStatus.PENDING, RunStatus.PAUSED}
+            run.status = RunStatus.CANCEL_REQUESTED
+            run.metadata["cancel_reason"] = reason
+            run.metadata["cancel_requested_at"] = utc_now().isoformat()
+            run.lease_expires_at = None
+            self._persist_run_locked(run)
+            control = self._controls.get(run_id)
+            if control:
+                control[0].set()
+        self.emit(run_id, "run.cancel_requested", {"reason": reason})
+        if cascade:
+            for child in self.children(run_id):
+                if not child.status.terminal:
+                    self.request_cancel(child.id, reason=f"parent:{run_id}", cascade=True)
+        if immediate:
+            return self.acknowledge_cancel(run_id)
+        restored = self.get(run_id)
+        assert restored is not None
+        return restored
+
+    def request_pause(
+        self,
+        run_id: str,
+        *,
+        reason: str = "manual",
+        cascade: bool = True,
+    ) -> Run:
+        """持久化暂停意图；执行器保存 checkpoint 后再确认 paused。"""
+
+        with self._lock:
+            run = self._require_locked(run_id)
+            if run.status.terminal or run.status == RunStatus.PAUSED:
+                return run.model_copy(deep=True)
+            if run.status == RunStatus.CANCEL_REQUESTED:
+                raise ValueError(f"Run {run_id} is cancelling")
+            if run.status == RunStatus.PAUSE_REQUESTED:
+                return run.model_copy(deep=True)
+            run.status = RunStatus.PAUSE_REQUESTED
+            run.metadata["pause_reason"] = reason
+            run.metadata["pause_requested_at"] = utc_now().isoformat()
+            self._persist_run_locked(run)
+            control = self._controls.get(run_id)
+            if control:
+                control[1].set()
+        self.emit(run_id, "run.pause_requested", {"reason": reason})
+        if cascade:
+            for child in self.children(run_id):
+                if not child.status.terminal:
+                    self.request_pause(child.id, reason=f"parent:{run_id}", cascade=True)
+        restored = self.get(run_id)
+        assert restored is not None
+        return restored
+
+    def acknowledge_cancel(self, run_id: str) -> Run:
+        """执行器确认当前安全边界之后不会继续工作。"""
+
+        run = self.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        if run.status.terminal:
+            return run
+        if run.status != RunStatus.CANCEL_REQUESTED:
+            raise ValueError(f"Run {run_id} has no cancellation request")
+        return self.cancel(run_id)
+
+    def acknowledge_pause(self, run_id: str) -> Run:
+        """执行器已保存 checkpoint 并确认停止推进。"""
+
+        run = self.get(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run: {run_id}")
+        if run.status == RunStatus.PAUSED:
+            return run
+        if run.status != RunStatus.PAUSE_REQUESTED:
+            raise ValueError(f"Run {run_id} has no pause request")
+        if run.checkpoint is None:
+            raise ValueError(f"Run {run_id} cannot pause without a checkpoint")
+        return self.pause(run_id, reason=str(run.metadata.get("pause_reason", "manual")))
 
     def reconcile_terminal(
         self,
@@ -534,6 +658,10 @@ class RunManager:
             run = self._require_locked(run_id)
             if run.status.terminal:
                 return run.model_copy(deep=True)
+            if run.status == RunStatus.CANCEL_REQUESTED and status != RunStatus.CANCELLED:
+                status = RunStatus.CANCELLED
+                result = None
+                error = None
             run.status = status
             run.result = result
             run.error = error
@@ -577,6 +705,40 @@ class RunManager:
             if not recover_interrupted:
                 return
             for run in self._runs.values():
+                if run.status == RunStatus.CANCEL_REQUESTED:
+                    run.status = RunStatus.CANCELLED
+                    run.finished_at = utc_now()
+                    run.lease_owner = None
+                    run.lease_expires_at = None
+                    event = RunEvent(
+                        sequence=len(run.events) + 1,
+                        type="run.cancelled_after_restart",
+                        data={"previous_status": RunStatus.CANCEL_REQUESTED.value},
+                    )
+                    run.events.append(event)
+                    self._persist_run_locked(run)
+                    self._persist_event_locked(run.id, event)
+                    continue
+                if run.status == RunStatus.PAUSE_REQUESTED:
+                    if run.checkpoint is not None:
+                        run.status = RunStatus.PAUSED
+                        run.error = "应用重启前暂停请求尚未确认，已从 checkpoint 收敛"
+                        run.metadata["recovery_action"] = "resume"
+                    else:
+                        run.status = RunStatus.FAILED
+                        run.error = "暂停请求未产生可恢复 checkpoint"
+                        run.finished_at = utc_now()
+                    run.lease_owner = None
+                    run.lease_expires_at = None
+                    event = RunEvent(
+                        sequence=len(run.events) + 1,
+                        type="run.pause_recovered",
+                        data={"has_checkpoint": run.checkpoint is not None},
+                    )
+                    run.events.append(event)
+                    self._persist_run_locked(run)
+                    self._persist_event_locked(run.id, event)
+                    continue
                 if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                     continue
                 now = utc_now()

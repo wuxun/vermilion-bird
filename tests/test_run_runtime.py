@@ -1,5 +1,7 @@
 """Tests for the first unified Run runtime slice."""
 
+import threading
+
 import pytest
 
 from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
@@ -109,3 +111,66 @@ def test_resume_requires_checkpoint_and_checks_version():
     resumed = manager.resume(run.id)
     assert resumed.status == RunStatus.RUNNING
     assert resumed.checkpoint.state == {"draft": "v1"}
+
+
+def test_cancel_request_is_visible_until_worker_acknowledges():
+    manager = RunManager()
+    run = manager.start(RunType.CHAT)
+    cancel_event = threading.Event()
+    pause_event = threading.Event()
+    manager.register_control(
+        run.id,
+        cancel_event=cancel_event,
+        pause_event=pause_event,
+    )
+
+    requested = manager.request_cancel(run.id)
+
+    assert requested.status == RunStatus.CANCEL_REQUESTED
+    assert cancel_event.is_set()
+    assert requested.events[-1].type == "run.cancel_requested"
+
+    cancelled = manager.acknowledge_cancel(run.id)
+    assert cancelled.status == RunStatus.CANCELLED
+
+
+def test_pause_request_requires_checkpoint_before_acknowledgement():
+    manager = RunManager()
+    run = manager.start(RunType.WORKFLOW)
+    cancel_event = threading.Event()
+    pause_event = threading.Event()
+    manager.register_control(
+        run.id,
+        cancel_event=cancel_event,
+        pause_event=pause_event,
+    )
+
+    requested = manager.request_pause(run.id)
+
+    assert requested.status == RunStatus.PAUSE_REQUESTED
+    assert pause_event.is_set()
+    with pytest.raises(ValueError, match="without a checkpoint"):
+        manager.acknowledge_pause(run.id)
+
+    manager.checkpoint(run.id, cursor="safe", state={"step": 1})
+    paused = manager.acknowledge_pause(run.id)
+    assert paused.status == RunStatus.PAUSED
+    assert manager.resume(run.id).status == RunStatus.RUNNING
+
+
+def test_control_request_cascades_to_running_children():
+    manager = RunManager()
+    parent = manager.start(RunType.WORKFLOW)
+    child = manager.start(RunType.TOOL, parent_run_id=parent.id)
+    child_cancel = threading.Event()
+    manager.register_control(
+        child.id,
+        cancel_event=child_cancel,
+        pause_event=threading.Event(),
+    )
+
+    manager.request_cancel(parent.id)
+
+    assert manager.get(parent.id).status == RunStatus.CANCEL_REQUESTED
+    assert manager.get(child.id).status == RunStatus.CANCEL_REQUESTED
+    assert child_cancel.is_set()

@@ -12,6 +12,7 @@ from llm_chat.intent.types import Intent, RoutingDecision
 from llm_chat.pipeline.chat_state import ChatRoutingState
 from llm_chat.pipeline.stage import PipelineContext
 from llm_chat.protocols.base import ToolCall, ToolCallStatus
+from llm_chat.runtime.control import check_control
 
 
 class SerializableToolCall(BaseModel):
@@ -148,6 +149,7 @@ class ChatGraphState(BaseModel):
             params=dict(self.params),
             response=self.response,
             cancel_event=runtime.cancel_event,
+            pause_event=runtime.pause_event,
             status=self.status,
             error=self.error,
             on_chunk=runtime.on_chunk,
@@ -198,6 +200,13 @@ class ChatRuntimeContext:
     on_context_update: Optional[Callable[[int, int], None]] = None
     on_card: Optional[Callable[..., None]] = None
     cancel_event: Optional[threading.Event] = None
+    pause_event: Optional[threading.Event] = None
+
+    def check_control(self) -> None:
+        check_control(
+            cancel_event=self.cancel_event,
+            pause_event=self.pause_event,
+        )
 
     @classmethod
     def from_pipeline_context(
@@ -225,6 +234,7 @@ class ChatRuntimeContext:
             on_context_update=ctx.on_context_update,
             on_card=ctx.on_card,
             cancel_event=ctx.cancel_event,
+            pause_event=extra.get("pause_event"),
         )
 
 

@@ -28,6 +28,8 @@ class WorkItemStatus(str, Enum):
     DRAFT = "draft"
     READY = "ready"
     RUNNING = "running"
+    CANCELLING = "cancelling"
+    PAUSING = "pausing"
     WAITING_APPROVAL = "waiting_approval"
     PAUSED = "paused"
     COMPLETED = "completed"

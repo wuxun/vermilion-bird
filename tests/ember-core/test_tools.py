@@ -1,6 +1,8 @@
 """Tests for ember-core tools module — BaseTool, ToolRegistry, ToolExecutor."""
 
 import json
+import threading
+from types import SimpleNamespace
 import pytest
 from ember_core.tools import BaseTool, ToolRegistry, get_tool_registry, ToolExecutor
 
@@ -171,3 +173,22 @@ class TestToolExecutor:
         executor = ToolExecutor(self.reg)
         executor.shutdown()
         assert executor._executor is None
+
+    def test_control_request_prevents_tool_invocation(self):
+        executor = ToolExecutor(self.reg)
+        cancel_event = threading.Event()
+        cancel_event.set()
+        context = SimpleNamespace(
+            cancel_event=cancel_event,
+            pause_event=threading.Event(),
+        )
+
+        result = executor.execute_single_tool(
+            "echo",
+            {"message": "must not run"},
+            "controlled",
+            context,
+        )
+
+        assert result["is_error"] is True
+        assert result["control"] == "cancel"

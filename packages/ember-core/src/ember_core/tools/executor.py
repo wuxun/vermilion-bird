@@ -48,6 +48,12 @@ class ToolExecutor:
         last_error = None
 
         for attempt in range(self.max_retries):
+            control_result = self._control_result(
+                tool_call_id,
+                invocation_context,
+            )
+            if control_result is not None:
+                return control_result
             try:
                 logger.info(f"执行工具: {tool_name}, args={tool_args}")
 
@@ -94,7 +100,16 @@ class ToolExecutor:
                         f"工具 {tool_name} 执行失败，{total_delay:.1f}秒后重试 "
                         f"({attempt + 1}/{self.max_retries}): {e}"
                     )
-                    time.sleep(total_delay)
+                    if self._wait_for_control(
+                        total_delay,
+                        invocation_context,
+                    ):
+                        control_result = self._control_result(
+                            tool_call_id,
+                            invocation_context,
+                        )
+                        assert control_result is not None
+                        return control_result
 
         logger.error(f"工具 {tool_name} 执行失败，重试耗尽: {last_error}")
         return {
@@ -102,6 +117,57 @@ class ToolExecutor:
             "content": f"Error: {str(last_error)}",
             "is_error": True,
         }
+
+    @staticmethod
+    def _control_result(
+        tool_call_id: str,
+        invocation_context: Any,
+    ) -> Optional[Dict[str, Any]]:
+        if invocation_context is None:
+            return None
+        cancel_event = getattr(invocation_context, "cancel_event", None)
+        if cancel_event is not None and cancel_event.is_set():
+            return {
+                "tool_call_id": tool_call_id,
+                "content": "Execution cancelled before tool invocation",
+                "is_error": True,
+                "control": "cancel",
+            }
+        pause_event = getattr(invocation_context, "pause_event", None)
+        if pause_event is not None and pause_event.is_set():
+            return {
+                "tool_call_id": tool_call_id,
+                "content": "Execution paused before tool invocation",
+                "is_error": True,
+                "control": "pause",
+            }
+        return None
+
+    @staticmethod
+    def _wait_for_control(
+        timeout: float,
+        invocation_context: Any,
+    ) -> bool:
+        if invocation_context is None:
+            time.sleep(timeout)
+            return False
+        cancel_event = getattr(invocation_context, "cancel_event", None)
+        pause_event = getattr(invocation_context, "pause_event", None)
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                return True
+            if pause_event is not None and pause_event.is_set():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if cancel_event is not None:
+                cancel_event.wait(min(remaining, 0.1))
+            elif pause_event is not None:
+                pause_event.wait(min(remaining, 0.1))
+            else:
+                time.sleep(min(remaining, 0.1))
 
     def execute_tools_parallel(
         self,

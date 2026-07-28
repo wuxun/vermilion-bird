@@ -99,6 +99,7 @@ class PipelineContext:
 
     # ── 取消信号 ──
     cancel_event: Optional[threading.Event] = None
+    pause_event: Optional[threading.Event] = None
 
     # ── 管道状态 ──
     status: str = "running"          # running | completed | error
