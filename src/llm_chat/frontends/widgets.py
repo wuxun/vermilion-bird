@@ -159,12 +159,12 @@ if PYQT_AVAILABLE:
                     """
                     QListWidget {
                         font-family: Arial, sans-serif;
-                        background-color: #FFFBF5;
-                        border: 1px solid #D4A574;
+                        background-color: #262626;
+                        border: 1px solid #494949;
                         border-radius: 10px;
                         padding: 6px 2px;
                         font-size: 13px;
-                        color: #3D2C2E;
+                        color: #F1F1F1;
                     }
                     QListWidget::item {
                         padding: 6px 14px;
@@ -172,18 +172,18 @@ if PYQT_AVAILABLE:
                         border-radius: 6px;
                     }
                     QListWidget::item:selected {
-                        background-color: #C84B31;
-                        color: white;
+                        background-color: #3A3A3A;
+                        color: #F1F1F1;
                     }
                     QListWidget::item:hover:!selected {
-                        background-color: #FFF8F0;
+                        background-color: #2D2D2D;
                     }
                     QScrollBar:vertical {
                         width: 6px;
                         background: transparent;
                     }
                     QScrollBar::handle:vertical {
-                        background: #D4A574;
+                        background: #494949;
                         border-radius: 3px;
                         min-height: 20px;
                     }
@@ -340,7 +340,7 @@ if PYQT_AVAILABLE:
             self._tool_name = tool_name
             self._tool_args = tool_args
             self._result = None
-            self._is_expanded = True
+            self._is_expanded = False
             self._is_completed = False
             self._setup_ui()
 
@@ -385,7 +385,9 @@ if PYQT_AVAILABLE:
             layout.addWidget(self._header)
 
             self._content = QWidget()
-            self._content.setStyleSheet(f"background-color: #FFFFFF; border-radius: 0 0 8px 8px;")
+            self._content.setStyleSheet(
+                f"background-color:{Colors.SURFACE}; border-radius:0 0 8px 8px;"
+            )
             content_layout = QVBoxLayout(self._content)
             content_layout.setContentsMargins(12, 10, 12, 10)
             content_layout.setSpacing(8)
@@ -403,7 +405,7 @@ if PYQT_AVAILABLE:
             self._args_text.setStyleSheet(
                 f"""
                 QTextEdit {{
-                    background-color: #F5F5F5;
+                    background-color: {Colors.SURFACE_RAISED};
                     border-radius: 4px;
                     border: none;
                     padding: 8px;
@@ -442,17 +444,18 @@ if PYQT_AVAILABLE:
             content_layout.addWidget(self._result_text)
 
             layout.addWidget(self._content)
+            self._content.hide()
 
         def _update_header_text(self):
             if self._is_completed:
-                icon = "✅"
-                status = ""
+                icon = "✓"
+                status = " 已完成"
             else:
-                icon = "🔧"
-                status = " ▼ 执行中..."
+                icon = "·"
+                status = " 执行中"
 
-            expand_icon = "▼" if self._is_expanded else "▶"
-            self._header.setText(f"{expand_icon} {icon} 工具调用: {self._tool_name}{status}")
+            expand_icon = "⌄" if self._is_expanded else "›"
+            self._header.setText(f"{expand_icon}  {icon}  {self._tool_name}{status}")
 
         def _toggle(self):
             self._is_expanded = not self._is_expanded

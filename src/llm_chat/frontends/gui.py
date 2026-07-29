@@ -20,6 +20,7 @@ from llm_chat.frontends.widgets import (
 from llm_chat.frontends.theme import (
     Colors,
     MARKDOWN_CSS,
+    application_style,
     stop_button_style,
     sidebar_button_style,
     conversation_list_style,
@@ -163,6 +164,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._task_nav_button: Optional[QPushButton] = None
         self._workspace_nav_group: Optional[QButtonGroup] = None
         self._workspace_navigation_sync: bool = False
+        self._sidebar_expanded: bool = True
+        self._brand_label: Optional[QLabel] = None
+        self._recent_label: Optional[QLabel] = None
+        self._chat_title_label: Optional[QLabel] = None
+        self._composer_add_button: Optional[QPushButton] = None
+        self._sidebar_search_button: Optional[QPushButton] = None
         self._shortcuts: Dict[str, Any] = {}
         self._conversation_menu_button: Optional[QPushButton] = None
         self._app_instance: Optional[Any] = None
@@ -263,6 +270,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _focus_search(self):
         """聚焦侧边栏搜索框。"""
+        if not self._sidebar_expanded and getattr(self, "_sidebar", None) is not None:
+            self._toggle_sidebar()
         if self._search_input:
             self._search_input.setFocus()
             self._search_input.selectAll()
@@ -318,6 +327,23 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         menu.addAction("⌨️ 快捷键", self._show_shortcuts_help)
 
         pos = self._settings_button.mapToGlobal(self._settings_button.rect().bottomLeft())
+        menu.exec(pos)
+
+    def _show_composer_context_menu(self):
+        """展示当前输入可附加的上下文，避免把能力按钮常驻在主界面。"""
+        from PyQt6.QtWidgets import QMenu
+
+        if self._composer_add_button is None:
+            return
+        menu = QMenu(self._main_window)
+        menu.addAction("添加文件上下文…", lambda: self._fill_prompt("/file "))
+        menu.addAction("搜索历史对话", self._focus_search)
+        menu.addSeparator()
+        menu.addAction("选择技能…", self._on_skills_config)
+        menu.addAction("配置 MCP 工具…", self._on_mcp_config)
+        pos = self._composer_add_button.mapToGlobal(
+            self._composer_add_button.rect().topLeft()
+        )
         menu.exec(pos)
 
     def _show_shortcuts_help(self):
@@ -445,9 +471,12 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         except Exception:
             logger.debug("Failed to refresh task attention indicator", exc_info=True)
             return
-        self._task_nav_button.setText(
-            f"任务\n{attention_count} 待办" if attention_count else "任务"
-        )
+        if self._sidebar_expanded:
+            self._task_nav_button.setText(
+                f"✓  任务    {attention_count}" if attention_count else "✓  任务"
+            )
+        else:
+            self._task_nav_button.setText("✓")
         self._task_nav_button.setToolTip(
             (
                 f"任务工作区：{attention_count} 项待处理"
@@ -473,6 +502,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def start(self, post_init: Optional[Callable] = None):
         self._app = QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        self._app.setStyleSheet(application_style())
 
         self._stream_signals = StreamSignals()
         self._stream_signals.text_received.connect(self._on_stream_text)
@@ -495,7 +525,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._main_window = QMainWindow()
         self._main_window.setWindowTitle(self._title)
-        self._main_window.setMinimumSize(QSize(1000, 600))
+        self._main_window.setMinimumSize(QSize(1080, 660))
+        self._main_window.resize(QSize(1320, 820))
 
         self._set_window_icon()
 
@@ -561,15 +592,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        main_layout.addWidget(self._create_navigation_rail())
+        self._sidebar = self._create_sidebar()
+        main_layout.addWidget(self._sidebar)
 
         self._workspace_stack = QStackedWidget()
         self._chat_workspace = QWidget()
         chat_layout = QHBoxLayout(self._chat_workspace)
         chat_layout.setContentsMargins(0, 0, 0, 0)
         chat_layout.setSpacing(0)
-        self._sidebar = self._create_sidebar()
-        chat_layout.addWidget(self._sidebar)
         chat_area = self._create_chat_area()
         chat_layout.addWidget(chat_area, stretch=1)
         self._workspace_stack.addWidget(self._chat_workspace)
@@ -651,35 +681,45 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _create_sidebar(self) -> QWidget:
         sidebar = QFrame()
-        sidebar.setFixedWidth(216)
+        sidebar.setFixedWidth(260)
         sidebar.setObjectName("sidebar")
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 12, 10, 10)
+        layout.setSpacing(5)
 
-        # 顶栏：标题 + 折叠按钮
+        # 产品头部保持克制，只提供搜索和折叠两个全局动作。
         top_row = QHBoxLayout()
-        title_label = QLabel("会话")
-        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        top_row.addWidget(title_label)
-
+        top_row.setSpacing(4)
+        self._brand_label = QLabel("Vermilion")
+        self._brand_label.setFont(QFont("", 14, QFont.Weight.DemiBold))
+        self._brand_label.setStyleSheet(
+            f"color:{Colors.TEXT_PRIMARY}; padding:3px 5px; background:transparent;"
+        )
+        top_row.addWidget(self._brand_label)
         top_row.addStretch()
 
-        self._collapse_button = QPushButton("◀")
-        self._collapse_button.setFixedSize(24, 24)
+        self._sidebar_search_button = QPushButton("⌕")
+        self._sidebar_search_button.setObjectName("sidebarIconButton")
+        self._sidebar_search_button.setFixedSize(30, 30)
+        self._sidebar_search_button.setToolTip("搜索 (Ctrl+K)")
+        self._sidebar_search_button.clicked.connect(self._focus_search)
+        top_row.addWidget(self._sidebar_search_button)
+
+        self._collapse_button = QPushButton("◧")
+        self._collapse_button.setObjectName("sidebarIconButton")
+        self._collapse_button.setFixedSize(30, 30)
         self._collapse_button.setToolTip("收起侧边栏")
-        self._collapse_button.setStyleSheet(sidebar_button_style())
         self._collapse_button.clicked.connect(self._toggle_sidebar)
         top_row.addWidget(self._collapse_button)
-
         layout.addLayout(top_row)
 
         button_layout = QHBoxLayout()
         button_layout.setSpacing(4)
 
-        self._new_conv_button = QPushButton("＋ 新建对话")
-        self._new_conv_button.setFixedHeight(32)
+        self._new_conv_button = QPushButton("✎  新建任务")
+        self._new_conv_button.setObjectName("sidebarPrimaryAction")
+        self._new_conv_button.setFixedHeight(38)
         self._new_conv_button.setToolTip("新建对话 (Ctrl+N)")
         self._new_conv_button.clicked.connect(self._on_new_conv)
         button_layout.addWidget(self._new_conv_button, 1)
@@ -687,21 +727,58 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         from PyQt6.QtWidgets import QMenu
 
         self._conversation_menu_button = QPushButton("···")
-        self._conversation_menu_button.setFixedSize(32, 32)
-        self._conversation_menu_button.setToolTip("会话操作")
+        self._conversation_menu_button.setObjectName("sidebarIconButton")
+        self._conversation_menu_button.setFixedSize(38, 38)
+        self._conversation_menu_button.setToolTip("当前会话操作")
         conversation_menu = QMenu(self._conversation_menu_button)
         conversation_menu.addAction("重命名", self._on_rename_conv)
         conversation_menu.addAction("删除", self._on_delete_conv)
         self._conversation_menu_button.setMenu(conversation_menu)
         button_layout.addWidget(self._conversation_menu_button)
-
-        button_layout.addStretch()
         layout.addLayout(button_layout)
 
-        # 搜索栏
+        nav_style = f"""
+            QPushButton {{
+                border: none;
+                border-radius: 8px;
+                padding: 8px 10px;
+                color: {Colors.TEXT_SECONDARY};
+                background: transparent;
+                font-size: 13px;
+                text-align: left;
+            }}
+            QPushButton:hover {{ background: {Colors.SIDEBAR_HOVER}; color: {Colors.TEXT_PRIMARY}; }}
+            QPushButton:checked {{
+                background: {Colors.SIDEBAR_ACTIVE};
+                color: {Colors.TEXT_PRIMARY};
+                font-weight: 600;
+            }}
+        """
+        self._chat_nav_button = QPushButton("◌  对话")
+        self._chat_nav_button.setCheckable(True)
+        self._chat_nav_button.setFixedHeight(36)
+        self._chat_nav_button.setStyleSheet(nav_style)
+        self._chat_nav_button.toggled.connect(self._on_chat_navigation_toggled)
+        layout.addWidget(self._chat_nav_button)
+
+        self._task_nav_button = QPushButton("✓  任务")
+        self._task_nav_button.setCheckable(True)
+        self._task_nav_button.setFixedHeight(36)
+        self._task_nav_button.setStyleSheet(nav_style)
+        self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
+        self._task_nav_button.toggled.connect(self._on_task_navigation_toggled)
+        layout.addWidget(self._task_nav_button)
+
+        self._workspace_nav_group = QButtonGroup(sidebar)
+        self._workspace_nav_group.setExclusive(True)
+        self._workspace_nav_group.addButton(self._chat_nav_button)
+        self._workspace_nav_group.addButton(self._task_nav_button)
+
         search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 5, 0, 2)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("搜索对话…")
+        self._search_input.setPlaceholderText("搜索历史")
+        self._search_input.setClearButtonEnabled(True)
         self._search_input.setStyleSheet(search_input_style())
         self._search_input.returnPressed.connect(self._on_search)
         search_layout.addWidget(self._search_input)
@@ -709,8 +786,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._search_clear_button.setFixedSize(24, 24)
         self._search_clear_button.clicked.connect(self._clear_search)
         self._search_clear_button.setVisible(False)
-        search_layout.addWidget(self._search_clear_button)
         layout.addLayout(search_layout)
+
+        self._recent_label = QLabel("最近")
+        self._recent_label.setStyleSheet(
+            f"color:{Colors.TEXT_MUTED}; font-size:11px; padding:8px 8px 3px 8px;"
+            "background:transparent;"
+        )
+        layout.addWidget(self._recent_label)
 
         self._conversation_list = QListWidget()
         self._conversation_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -720,56 +803,55 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._conversation_list.itemClicked.connect(self._on_conversation_selected)
         layout.addWidget(self._conversation_list, stretch=1)
 
+        self._settings_button = QPushButton("⚙  设置")
+        self._settings_button.setObjectName("sidebarSettingsButton")
+        self._settings_button.setFixedHeight(38)
+        self._settings_button.setToolTip("设置 (Ctrl+,)")
+        self._settings_button.clicked.connect(self._show_settings_menu)
+        layout.addWidget(self._settings_button)
+
         return sidebar
 
     def _toggle_sidebar(self):
         """折叠/展开侧边栏。"""
-        if self._sidebar.width() > 50:
-            # 收起
-            self._sidebar.setFixedWidth(40)
-            self._collapse_button.setText("▶")
+        self._sidebar_expanded = not self._sidebar_expanded
+        if not self._sidebar_expanded:
+            self._sidebar.setFixedWidth(54)
+            self._collapse_button.setText("◨")
             self._collapse_button.setToolTip("展开侧边栏")
-            for w in [
-                self._new_conv_button,
-                self._rename_conv_button,
-                self._delete_conv_button,
+            for widget in [
+                self._brand_label,
+                self._sidebar_search_button,
                 self._conversation_menu_button,
                 self._search_input,
                 self._search_clear_button,
                 self._conversation_list,
+                self._recent_label,
             ]:
-                if w:
-                    w.hide()
-            # 隐藏标题（保留折叠按钮）
-            for i in range(self._sidebar.layout().count()):
-                item = self._sidebar.layout().itemAt(i)
-                if item and item.layout():
-                    for j in range(item.layout().count()):
-                        w = item.layout().itemAt(j).widget()
-                        if w and w != self._collapse_button:
-                            w.hide()
+                if widget is not None:
+                    widget.hide()
+            self._new_conv_button.setText("✎")
+            self._chat_nav_button.setText("◌")
+            self._task_nav_button.setText("✓")
+            self._settings_button.setText("⚙")
         else:
-            # 展开
-            self._sidebar.setFixedWidth(216)
-            self._collapse_button.setText("◀")
+            self._sidebar.setFixedWidth(260)
+            self._collapse_button.setText("◧")
             self._collapse_button.setToolTip("收起侧边栏")
-            for w in [
-                self._new_conv_button,
-                self._rename_conv_button,
-                self._delete_conv_button,
+            for widget in [
+                self._brand_label,
+                self._sidebar_search_button,
                 self._conversation_menu_button,
                 self._search_input,
                 self._conversation_list,
+                self._recent_label,
             ]:
-                if w:
-                    w.show()
-            for i in range(self._sidebar.layout().count()):
-                item = self._sidebar.layout().itemAt(i)
-                if item and item.layout():
-                    for j in range(item.layout().count()):
-                        w = item.layout().itemAt(j).widget()
-                        if w:
-                            w.show()
+                if widget is not None:
+                    widget.show()
+            self._new_conv_button.setText("✎  新建任务")
+            self._chat_nav_button.setText("◌  对话")
+            self._update_execution_center_indicator()
+            self._settings_button.setText("⚙  设置")
 
     def _create_chat_area(self) -> QWidget:
         chat_area = QFrame()
@@ -779,7 +861,33 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── 对话区域（居中 768px 列） ──
+        # 顶栏只显示当前上下文，低频操作放进省略菜单。
+        header = QFrame()
+        header.setObjectName("chatHeader")
+        header.setFixedHeight(56)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 0, 16, 0)
+        self._chat_title_label = QLabel("新任务")
+        self._chat_title_label.setObjectName("chatTitle")
+        self._chat_title_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        header_layout.addWidget(self._chat_title_label, 1)
+        header_menu_button = QPushButton("···")
+        header_menu_button.setObjectName("headerMenuButton")
+        header_menu_button.setFixedSize(34, 34)
+        header_menu_button.setToolTip("当前任务操作")
+        from PyQt6.QtWidgets import QMenu
+
+        header_menu = QMenu(header_menu_button)
+        header_menu.addAction("重命名", self._on_rename_conv)
+        header_menu.addAction("清空内容", self._on_clear)
+        header_menu.addAction("删除任务", self._on_delete_conv)
+        header_menu_button.setMenu(header_menu)
+        header_layout.addWidget(header_menu_button)
+        layout.addWidget(header)
+
+        # 对话正文限制最大行宽，在大屏上仍保持可读。
         self._chat_scroll_area = QScrollArea()
         self._chat_scroll_area.setWidgetResizable(True)
         self._chat_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -797,18 +905,20 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
 
-        # 对话列（撑满可用宽度）
         self._chat_container = QWidget()
+        self._chat_container.setMaximumWidth(920)
         self._chat_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._chat_container.setStyleSheet(f"background-color: {Colors.CHAT_BG};")
         self._chat_layout = QVBoxLayout(self._chat_container)
-        self._chat_layout.setContentsMargins(36, 20, 36, 20)
-        self._chat_layout.setSpacing(12)
+        self._chat_layout.setContentsMargins(28, 30, 28, 30)
+        self._chat_layout.setSpacing(16)
         self._chat_layout.addStretch()
 
-        center_layout.addWidget(self._chat_container, stretch=1)
+        center_layout.addStretch(1)
+        center_layout.addWidget(self._chat_container, stretch=8)
+        center_layout.addStretch(1)
 
         self._chat_scroll_area.setWidget(scroll_content)
         layout.addWidget(self._chat_scroll_area, stretch=1)
@@ -835,91 +945,71 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._reasoning_combo.setCurrentIndex(0)
         self._reasoning_combo.currentIndexChanged.connect(self._on_reasoning_changed)
 
-        # ── 底部固定区域：输入框 + 按需状态 ──
+        # ── Codex-like 底部 composer：输入与上下文动作属于同一张卡片 ──
         bottom_frame = QFrame()
-        bottom_frame.setStyleSheet(f"QFrame {{ background-color: {Colors.CHAT_BG}; }}")
+        bottom_frame.setObjectName("composerShell")
+        bottom_frame.setMaximumWidth(920)
         bottom_layout = QVBoxLayout(bottom_frame)
-        bottom_layout.setContentsMargins(20, 8, 20, 10)
-        bottom_layout.setSpacing(4)
-
-        # 输入行
-        input_row = QHBoxLayout()
-        input_row.setSpacing(8)
+        bottom_layout.setContentsMargins(12, 10, 10, 9)
+        bottom_layout.setSpacing(6)
 
         self._input_field = InputTextEdit()
-        self._input_field.setFont(QFont("Arial", 11))
-        self._input_field.setPlaceholderText("输入消息…")
-        self._input_field.setMinimumHeight(52)
-        self._input_field.setMaximumHeight(72)
+        self._input_field.setFont(QFont("", 12))
+        self._input_field.setPlaceholderText("描述你想完成的任务")
+        self._input_field.setMinimumHeight(58)
+        self._input_field.setMaximumHeight(132)
         self._input_field.setStyleSheet(
             f"""
             QTextEdit {{
-                border: 1px solid {Colors.CHAT_BORDER};
-                border-radius: 14px;
-                padding: 10px 14px;
-                background-color: white;
+                border: none;
+                border-radius: 0;
+                padding: 4px 6px;
+                background-color: transparent;
                 color: {Colors.TEXT_PRIMARY};
             }}
-            QTextEdit:focus {{
-                border: 1px solid {Colors.CHAT_ACCENT};
-            }}
+            QTextEdit:focus {{ border: none; }}
         """
         )
         self._input_field.send_requested.connect(self._on_send)
-        input_row.addWidget(self._input_field, stretch=1)
+        bottom_layout.addWidget(self._input_field)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+        self._composer_add_button = QPushButton("＋")
+        self._composer_add_button.setObjectName("composerIconButton")
+        self._composer_add_button.setFixedSize(32, 32)
+        self._composer_add_button.setToolTip("添加上下文或文件")
+        self._composer_add_button.clicked.connect(self._show_composer_context_menu)
+        toolbar.addWidget(self._composer_add_button)
+
+        self._model_combo = QComboBox()
+        self._model_combo.setMinimumWidth(132)
+        self._model_combo.setMaximumWidth(210)
+        self._model_combo.setObjectName("composerModelCombo")
+        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
+        toolbar.addWidget(self._model_combo)
+        toolbar.addStretch()
 
         self._send_button = QPushButton("↑")
-        self._send_button.setFixedSize(44, 44)
+        self._send_button.setObjectName("composerSendButton")
+        self._send_button.setFixedSize(36, 36)
         self._send_button.setToolTip("发送 (Enter)")
         self._send_button.clicked.connect(self._on_send)
         self._send_button.setDefault(True)
-        self._send_button.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {Colors.PRIMARY};
-                color: white;
-                border: none;
-                border-radius: 22px;
-                font-size: 20px;
-                font-weight: 700;
-            }}
-            QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}
-            QPushButton:disabled {{ background-color: {Colors.SIDEBAR_ACTIVE}; }}
-            """
-        )
-        input_row.addWidget(self._send_button)
+        toolbar.addWidget(self._send_button)
 
         self._stop_button = QPushButton("■")
-        self._stop_button.setFixedSize(44, 44)
+        self._stop_button.setFixedSize(36, 36)
         self._stop_button.setToolTip("停止生成")
         self._stop_button.clicked.connect(self._on_stop_generation)
         self._stop_button.setVisible(False)
         self._stop_button.setStyleSheet(stop_button_style())
-        input_row.addWidget(self._stop_button)
+        toolbar.addWidget(self._stop_button)
+        bottom_layout.addLayout(toolbar)
 
-        bottom_layout.addLayout(input_row)
-
-        # 状态栏：模型常驻，其余诊断信息通过 tooltip 按需查看。
+        # 诊断状态默认隐藏，只通过 tooltip 和设置面板按需查看。
         status_row = QHBoxLayout()
-        status_row.setContentsMargins(8, 0, 8, 0)
-
-        self._model_combo = QComboBox()
-        self._model_combo.setFixedWidth(152)
-        self._model_combo.setStyleSheet(
-            f"""
-            QComboBox {{
-                background: transparent;
-                border: none;
-                padding: 2px 4px;
-                color: {Colors.TEXT_MUTED};
-                font-size: 10px;
-            }}
-            QComboBox:hover {{ color: {Colors.TEXT_PRIMARY}; }}
-            QComboBox::drop-down {{ border: none; }}
-            """
-        )
-        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
-        status_row.addWidget(self._model_combo)
+        status_row.setContentsMargins(0, 0, 0, 0)
 
         self._context_label = QLabel(
             self._format_context_text(0, self._get_current_context_limit())
@@ -935,42 +1025,108 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._cost_label.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         self._cost_label.hide()
 
-        bottom_layout.addLayout(status_row)
-
-        layout.addWidget(bottom_frame)
+        composer_row = QHBoxLayout()
+        composer_row.setContentsMargins(24, 10, 24, 18)
+        composer_row.addStretch(1)
+        composer_row.addWidget(bottom_frame, 8)
+        composer_row.addStretch(1)
+        layout.addLayout(composer_row)
 
         return chat_area
 
     def _apply_styles(self):
-        """应用全局样式 — 引用 theme.py 共享常量。"""
+        """应用 Codex-like 壳层样式。"""
         self._main_window.setStyleSheet(
-            f"""
+            application_style()
+            + f"""
             QFrame#sidebar {{
                 background-color: {Colors.SIDEBAR_BG};
                 border-right: 1px solid {Colors.SIDEBAR_BORDER};
             }}
-            QFrame#navigationRail {{
-                background-color: {Colors.SIDEBAR_BG};
-                border-right: 1px solid {Colors.SIDEBAR_BORDER};
-            }}
             QFrame#sidebar QLabel {{ color: {Colors.SIDEBAR_TEXT}; }}
+            QPushButton#sidebarIconButton, QPushButton#headerMenuButton {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+                padding: 0;
+                color: {Colors.TEXT_MUTED};
+                text-align: center;
+            }}
+            QPushButton#sidebarIconButton:hover, QPushButton#headerMenuButton:hover {{
+                background: {Colors.SURFACE_HOVER};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QPushButton#sidebarPrimaryAction {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+                color: {Colors.TEXT_PRIMARY};
+                text-align: left;
+                padding: 8px 10px;
+                font-weight: 600;
+            }}
+            QPushButton#sidebarPrimaryAction:hover,
+            QPushButton#sidebarSettingsButton:hover {{
+                background: {Colors.SURFACE_HOVER};
+            }}
+            QPushButton#sidebarSettingsButton {{
+                background: transparent;
+                border: none;
+                color: {Colors.TEXT_SECONDARY};
+                text-align: left;
+                padding: 8px 10px;
+            }}
             QFrame#chatArea {{
                 background-color: {Colors.CHAT_BG};
+            }}
+            QFrame#chatHeader {{
+                background: {Colors.CHAT_BG};
+                border-bottom: 1px solid {Colors.BORDER};
+            }}
+            QLabel#chatTitle {{
+                color: {Colors.TEXT_PRIMARY};
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QFrame#composerShell {{
+                background: {Colors.SURFACE_RAISED};
+                border: 1px solid {Colors.BORDER_STRONG};
+                border-radius: 18px;
+            }}
+            QPushButton#composerIconButton {{
+                background: transparent;
+                border: none;
+                color: {Colors.TEXT_SECONDARY};
+                font-size: 18px;
+                padding: 0;
+            }}
+            QPushButton#composerIconButton:hover {{ background: {Colors.SURFACE_HOVER}; }}
+            QComboBox#composerModelCombo {{
+                background: transparent;
+                border: none;
+                color: {Colors.TEXT_SECONDARY};
+                padding: 4px 6px;
+                font-size: 12px;
+            }}
+            QPushButton#composerSendButton {{
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
+                border: none;
+                border-radius: 18px;
+                font-size: 18px;
+                font-weight: 700;
+                padding: 0;
+            }}
+            QPushButton#composerSendButton:hover {{ background: {Colors.ACTION_HOVER}; }}
+            QPushButton#composerSendButton:disabled {{
+                background: {Colors.SURFACE_SELECTED};
+                color: {Colors.TEXT_MUTED};
             }}
             QLabel {{ color: {Colors.TEXT_PRIMARY}; }}
         """
         )
 
         self._conversation_list.setStyleSheet(conversation_list_style())
-
-        for btn in [
-            self._new_conv_button,
-            self._rename_conv_button,
-            self._delete_conv_button,
-            self._conversation_menu_button,
-        ]:
-            if btn:
-                btn.setStyleSheet(sidebar_button_style())
 
     def _on_new_conv(self):
         if self._is_streaming:
@@ -1051,6 +1207,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         self._conversation_list.clear()
+        current_title = "新任务"
 
         for conv in conversations:
             item = QListWidgetItem()
@@ -1061,8 +1218,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
             if conv.get("id") == self.conversation_id:
                 item.setSelected(True)
+                current_title = title
 
             self._conversation_list.addItem(item)
+
+        if self._chat_title_label is not None:
+            self._chat_title_label.setText(current_title)
+            self._chat_title_label.setToolTip(current_title)
 
         for i in range(self._conversation_list.count()):
             list_item = self._conversation_list.item(i)
@@ -1082,6 +1244,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
     def set_current_conversation(self, conversation_id: str, messages: List[Dict[str, Any]]):
         self._conversation_id = conversation_id
         self._messages = []
+        if self._chat_title_label is not None:
+            self._chat_title_label.setText("新任务")
 
         for msg in messages:
             self._messages.append({"role": msg.get("role"), "content": msg.get("content")})
@@ -1253,36 +1417,31 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%H:%M")
         escaped = self._escape_html(content)
 
-        # 用户气泡：右对齐，朱红色背景
+        # 用户输入作为中性浮层，品牌色不再占据大面积阅读区域。
         wrapper = QWidget()
         wrapper.setStyleSheet("background: transparent;")
         outer = QHBoxLayout(wrapper)
-        outer.setContentsMargins(40, 4, 8, 4)
+        outer.setContentsMargins(96, 5, 0, 5)
         outer.addStretch()
 
-        bubble = QLabel(
-            f"<div style='text-align:right; font-size:10px; color:#BFA89A; margin-bottom:2px;'>{ts}</div>"
-            f"<div style='color:white;'>{escaped}</div>"
-        )
+        bubble = QLabel(f"<div style='color:{Colors.TEXT_PRIMARY};'>{escaped}</div>")
         bubble.setTextFormat(Qt.TextFormat.RichText)
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         bubble.setStyleSheet(
             f"""
-            background-color: {Colors.PRIMARY};
-            color: white;
-            border-radius: 12px;
-            padding: 8px 14px;
-            font-size: 13px;
+            background-color: {Colors.SURFACE_RAISED};
+            color: {Colors.TEXT_PRIMARY};
+            border: 1px solid {Colors.BORDER};
+            border-radius: 14px;
+            padding: 10px 14px;
+            font-size: 14px;
         """
         )
         bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        bubble.setMaximumWidth(800)
+        bubble.setMaximumWidth(720)
         outer.addWidget(bubble)
 
         self._add_widget_to_chat(wrapper)
@@ -1320,7 +1479,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._streaming_browser:
             # 流式光标：末尾闪烁 █
             html_content = self._render_markdown(self._current_stream_text)
-            html_content += '<span style="color:#C84B31; animation:blink 1s infinite;">▌</span>'
+            html_content += (
+                f'<span style="color:{Colors.PRIMARY}; animation:blink 1s infinite;">▌</span>'
+            )
             self._streaming_browser.setHtml(html_content)
 
         self._scroll_to_bottom()
@@ -1580,17 +1741,34 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._dismiss_welcome_state()
 
-        logo = QLabel("🐦‍🔥")
+        logo = QLabel("V")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet("font-size: 34px; background: transparent; margin-top: 56px;")
-        self._add_widget_to_chat(logo)
-        self._welcome_widgets.append(logo)
+        logo.setFixedSize(40, 40)
+        logo.setStyleSheet(
+            f"""
+            font-size: 16px;
+            font-weight: 700;
+            color: {Colors.ACTION_TEXT};
+            background: {Colors.ACTION_BG};
+            border-radius: 12px;
+            margin-top: 42px;
+            """
+        )
+        logo_wrapper = QWidget()
+        logo_wrapper.setStyleSheet("background:transparent;")
+        logo_row = QHBoxLayout(logo_wrapper)
+        logo_row.setContentsMargins(0, 42, 0, 6)
+        logo_row.addStretch()
+        logo_row.addWidget(logo)
+        logo_row.addStretch()
+        self._add_widget_to_chat(logo_wrapper)
+        self._welcome_widgets.append(logo_wrapper)
 
-        title = QLabel("想做什么？")
+        title = QLabel("今天想完成什么？")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(
             f"""
-            font-size: 21px; font-weight: 700;
+            font-size: 22px; font-weight: 650;
             color: {Colors.TEXT_PRIMARY};
             background: transparent;
             margin-bottom: 4px;
@@ -1599,7 +1777,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._add_widget_to_chat(title)
         self._welcome_widgets.append(title)
 
-        subtitle = QLabel("直接描述目标，能力会在需要时出现。")
+        subtitle = QLabel("描述目标，Vermilion 会规划、执行并在需要时向你确认。")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet(
             f"""
@@ -1612,18 +1790,17 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._add_widget_to_chat(subtitle)
         self._welcome_widgets.append(subtitle)
 
-        # 仅保留三个轻量起点，避免把能力目录铺在主工作区。
         shortcuts = [
             ("检查项目", "检查当前项目，给出架构、功能和实现上的优化建议"),
-            ("处理文件", "读取当前目录的文件并按我的目标进行修改"),
-            ("创建任务", "把下面的目标拆成一个可持续执行的任务："),
+            ("实现功能", "阅读当前项目并实现下面这个功能："),
+            ("规划任务", "把下面的目标拆解成可持续执行的任务："),
         ]
 
         shortcut_row = QWidget()
         shortcut_row.setStyleSheet("background: transparent;")
         row = QHBoxLayout(shortcut_row)
         row.setSpacing(8)
-        row.setContentsMargins(56, 0, 56, 0)
+        row.setContentsMargins(72, 0, 72, 0)
 
         for label, prompt in shortcuts:
             card = QPushButton(label)
@@ -1634,14 +1811,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 QPushButton {{
                     background-color: transparent;
                     border: 1px solid {Colors.CHAT_BORDER};
-                    border-radius: 17px;
+                    border-radius: 9px;
                     padding: 5px 13px;
                     font-size: 11px;
-                    color: {Colors.TEXT_PRIMARY};
+                    color: {Colors.TEXT_SECONDARY};
                 }}
                 QPushButton:hover {{
-                    background-color: {Colors.SIDEBAR_BG};
-                    border-color: {Colors.CHAT_ACCENT};
+                    background-color: {Colors.SURFACE_HOVER};
+                    border-color: {Colors.BORDER_STRONG};
+                    color: {Colors.TEXT_PRIMARY};
                 }}
             """
             )
@@ -1990,7 +2168,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         self._dismiss_welcome_state()
-        error_label = QLabel(f"<span style='color: #8B0000;'>Error: {error}</span>")
+        error_label = QLabel(
+            f"<span style='color:{Colors.ERROR_TEXT};'>运行失败：{self._escape_html(error)}</span>"
+        )
         error_label.setWordWrap(True)
         error_label.setTextFormat(Qt.TextFormat.RichText)
         error_label.setStyleSheet(error_label_style())
@@ -2006,7 +2186,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         self._dismiss_welcome_state()
-        info_label = QLabel(f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>")
+        info_label = QLabel(
+            f"<span style='color:{Colors.TEXT_MUTED};'>{self._escape_html(info)}</span>"
+        )
         info_label.setWordWrap(True)
         info_label.setTextFormat(Qt.TextFormat.RichText)
         info_label.setStyleSheet(info_label_style())
@@ -2063,7 +2245,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #D4A574; max-height: 1px; margin: 10px 0;")
+        separator.setStyleSheet(
+            f"background-color:{Colors.BORDER}; max-height:1px; margin:10px 0;"
+        )
         self._add_widget_to_chat(separator)
 
     def _on_card_received(self, card: DecisionCard):
@@ -2164,7 +2348,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._card_signals:
             self._card_signals.card_dismissed.emit(card_id)
 
-        info = QLabel(f"<span style='color: #8B7355; font-style: italic;'>" f"⏳ 卡片已暂缓</span>")
+        info = QLabel(
+            f"<span style='color:{Colors.TEXT_MUTED}; font-style:italic;'>卡片已暂缓</span>"
+        )
         info.setStyleSheet("padding: 4px 8px; margin: 2px 0;")
         self._add_widget_to_chat(info)
         self._scroll_to_bottom(force_layout=True)

@@ -300,13 +300,13 @@ class TaskCenterDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(20, 14, 20, 16)
+        root.setSpacing(12)
 
         header = QHBoxLayout()
         heading = QVBoxLayout()
         title = QLabel("任务" if self._embedded else "任务中心")
-        title.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {Colors.TEXT_PRIMARY};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 650; color: {Colors.TEXT_PRIMARY};")
         heading.addWidget(title)
         if not self._embedded:
             subtitle = QLabel("围绕目标查看执行、审批和最终交付物。")
@@ -315,7 +315,8 @@ class TaskCenterDialog(QDialog):
         header.addLayout(heading)
         header.addStretch()
 
-        self._new_button = QPushButton("＋ 新建任务")
+        self._new_button = QPushButton("＋ 新建")
+        self._new_button.setObjectName("taskPrimaryAction")
         self._new_button.clicked.connect(self._new_task)
         header.addWidget(self._new_button)
         self._header_menu_button = QToolButton()
@@ -325,7 +326,7 @@ class TaskCenterDialog(QDialog):
         self._header_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._header_menu_button.setStyleSheet(
             "QToolButton { border: none; border-radius: 6px; font-size: 18px; }"
-            "QToolButton:hover { background: #E9E2DA; }"
+            f"QToolButton:hover {{ background: {Colors.SURFACE_HOVER}; }}"
             "QToolButton::menu-indicator { image: none; }"
         )
         header_menu = QMenu(self._header_menu_button)
@@ -397,7 +398,7 @@ class TaskCenterDialog(QDialog):
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(8, 0, 0, 0)
         self._detail_title = QLabel("选择一个任务")
-        self._detail_title.setStyleSheet("font-size: 17px; font-weight: 700;")
+        self._detail_title.setStyleSheet("font-size: 16px; font-weight: 650;")
         detail_layout.addWidget(self._detail_title)
         self._detail_meta = QLabel("从左侧选择一项，查看当前进展和下一步。")
         self._detail_meta.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
@@ -623,14 +624,16 @@ class TaskCenterDialog(QDialog):
         self._primary_button.setStyleSheet(
             f"""
             QPushButton {{
-                background: {Colors.PRIMARY};
-                color: white;
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
                 border: none;
+                border-radius: 8px;
                 padding: 8px 18px;
                 font-weight: 700;
             }}
+            QPushButton:hover {{ background: {Colors.ACTION_HOVER}; }}
             QPushButton:disabled {{
-                background: {Colors.CHAT_ACCENT};
+                background: {Colors.SURFACE_SELECTED};
                 color: {Colors.TEXT_MUTED};
             }}
             """
@@ -652,7 +655,7 @@ class TaskCenterDialog(QDialog):
             QTableWidget, QTextBrowser {{
                 border: 1px solid {Colors.CHAT_BORDER};
                 border-radius: 7px;
-                background: white;
+                background: {Colors.CHAT_BG};
                 alternate-background-color: {Colors.CHAT_BG_ALT};
             }}
             QTableWidget::item {{ padding: 6px; }}
@@ -662,27 +665,35 @@ class TaskCenterDialog(QDialog):
             }}
             QFrame#taskComposer {{
                 border: 1px solid {Colors.CHAT_BORDER};
-                border-radius: 9px;
-                background: white;
+                border-radius: 14px;
+                background: {Colors.SURFACE_RAISED};
             }}
             QFrame#taskEmptyState {{
                 border: none;
                 background: transparent;
             }}
             QHeaderView::section {{
-                background: {Colors.PARAMS_BG};
+                background: {Colors.SURFACE};
                 border: none;
-                border-right: 1px solid {Colors.CHAT_BORDER};
+                border-bottom: 1px solid {Colors.CHAT_BORDER};
                 padding: 7px;
                 font-weight: 600;
             }}
             QComboBox, QPushButton {{
-                border: 1px solid {Colors.CHAT_ACCENT};
-                border-radius: 6px;
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 8px;
                 padding: 6px 10px;
-                background: white;
+                background: {Colors.SURFACE_RAISED};
+                color: {Colors.TEXT_PRIMARY};
             }}
-            QPushButton:hover {{ background: {Colors.PARAMS_BG}; }}
+            QPushButton:hover {{ background: {Colors.SURFACE_HOVER}; }}
+            QPushButton#taskPrimaryAction {{
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
+                border: none;
+                font-weight: 650;
+            }}
+            QPushButton#taskPrimaryAction:hover {{ background: {Colors.ACTION_HOVER}; }}
             """
         )
         self._update_actions(None)
@@ -1057,7 +1068,8 @@ class TaskCenterDialog(QDialog):
         def card(title: str, body: str, accent: str = Colors.CHAT_ACCENT) -> str:
             return (
                 f'<div style="margin:0 0 12px 0;padding:13px 15px;'
-                f'border:1px solid {accent};border-radius:9px;background:#ffffff;">'
+                f'border:1px solid {accent};border-radius:9px;'
+                f'background:{Colors.SURFACE_RAISED};">'
                 f'<div style="font-size:14px;font-weight:700;margin-bottom:7px;">'
                 f"{esc(title)}</div>{body}</div>"
             )
@@ -1088,7 +1100,7 @@ class TaskCenterDialog(QDialog):
 
         self._timeline.setHtml(
             f"""
-            <html><body style="font-family:-apple-system, BlinkMacSystemFont, sans-serif;
+            <html><body style="font-family:'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
             color:{Colors.TEXT_PRIMARY}; background:{Colors.CHAT_BG_ALT};">
             {''.join(cards)}
             </body></html>

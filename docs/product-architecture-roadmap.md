@@ -133,6 +133,9 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] 自动化系列聚合：同一 Scheduler/Webhook/Proactive 定义复用一个 WorkItem
 - [x] 注意力治理：必须处理、新结果和无需反馈分级
 - [x] 旧自动化记录按来源折叠，导航待办不再包含普通自动化结果
+- [x] Codex-like Shell V2：单侧栏、深色任务画布、卡片式 Composer
+- [x] 对话、任务、执行中心和决策卡片统一设计令牌
+- [x] 工具执行默认折叠，低频能力改为渐进式入口
 
 ### v0.4：任务复用与自动化
 

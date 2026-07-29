@@ -24,6 +24,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from llm_chat.decision.schema import DecisionCard, DecisionOption, CardStatus
+from llm_chat.frontends.theme import Colors
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +56,17 @@ except ImportError:
 # ── 颜色常量 ─────────────────────────────────────────────────────────
 
 _COLORS = {
-    "bg": "#FFF8F0",
-    "border": "#D4A574",
-    "title": "#B8312F",
-    "text": "#3D2C2E",
-    "muted": "#8B7355",
-    "accent": "#C84B31",
-    "accent_hover": "#EC994B",
-    "recommend_bg": "#E8F5E9",
-    "recommend_border": "#4CAF50",
-    "progress_fill": "#EC994B",
-    "progress_bg": "#F5E6D3",
+    "bg": Colors.SURFACE,
+    "border": Colors.BORDER_STRONG,
+    "title": Colors.TEXT_PRIMARY,
+    "text": Colors.TEXT_SECONDARY,
+    "muted": Colors.TEXT_MUTED,
+    "accent": Colors.PRIMARY,
+    "accent_hover": Colors.PRIMARY_HOVER,
+    "recommend_bg": "#1D2D24",
+    "recommend_border": "#56A873",
+    "progress_fill": Colors.TEXT_MUTED,
+    "progress_bg": Colors.SURFACE_SELECTED,
 }
 
 
@@ -129,7 +130,7 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
     else:
         style = f"""
             QPushButton {{
-                background-color: white;
+                background-color: {Colors.SURFACE_RAISED};
                 color: {_COLORS['text']};
                 border: 1px solid {_COLORS['border']};
                 border-radius: 4px;
@@ -141,9 +142,9 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
                 border-color: {_COLORS['accent_hover']};
             }}
             QPushButton:disabled {{
-                background-color: #f0f0f0;
-                color: #ccc;
-                border-color: #e0e0e0;
+                background-color: {Colors.SURFACE};
+                color: {Colors.TEXT_MUTED};
+                border-color: {Colors.BORDER};
             }}
         """
     btn = QPushButton(text)
@@ -431,7 +432,7 @@ class DecisionCardWidget(QFrame):
         if getattr(self, '_reselect_btn', None):
             self._reselect_btn.hide()
 
-        self.setStyleSheet(_CARD_STYLE.replace(_COLORS["bg"], "#f5f5f5"))
+        self.setStyleSheet(_CARD_STYLE.replace(_COLORS["bg"], Colors.BACKGROUND))
 
         if self._on_dismiss:
             self._on_dismiss(self._card.id)
@@ -453,12 +454,18 @@ class DecisionCardWidget(QFrame):
 
         text = QTextEdit()
         text.setReadOnly(True)
-        text.setStyleSheet("font-size: 13px; border: none; background: #FFFCF7;")
+        text.setStyleSheet(
+            f"font-size:13px; border:none; background:{Colors.SURFACE};"
+            f" color:{Colors.TEXT_PRIMARY};"
+        )
 
-        html_parts = [f"<h2 style='color:#B8312F;'>{self._card.title}</h2>"]
+        html_parts = [
+            f"<div style='background:{Colors.SURFACE};color:{Colors.TEXT_PRIMARY};'>"
+            f"<h2 style='color:{Colors.TEXT_PRIMARY};'>{self._card.title}</h2>"
+        ]
         if self._card.context:
             html_parts.append(
-                f"<p style='color:#666;'>{self._card.context}</p>"
+                f"<p style='color:{Colors.TEXT_SECONDARY};'>{self._card.context}</p>"
             )
         html_parts.append("<hr>")
 
@@ -480,6 +487,7 @@ class DecisionCardWidget(QFrame):
             )
             html_parts.append("<br>")
 
+        html_parts.append("</div>")
         text.setHtml("".join(html_parts))
         layout.addWidget(text)
         dlg.exec()
@@ -508,7 +516,7 @@ class DecisionCardWidget(QFrame):
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: white;
+                        background-color: {Colors.SURFACE_RAISED};
                         color: {_COLORS['text']};
                         border: 1px solid {_COLORS['border']};
                         border-radius: 4px;
@@ -543,9 +551,9 @@ class DecisionCardWidget(QFrame):
                 btn.setEnabled(True)  # 不禁止，允许换方案
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: #f8f8f8;
-                        color: #999;
-                        border: 1px solid #e0e0e0;
+                        background-color: {Colors.SURFACE};
+                        color: {Colors.TEXT_MUTED};
+                        border: 1px solid {Colors.BORDER};
                         border-radius: 4px;
                         padding: 6px 14px;
                     }}

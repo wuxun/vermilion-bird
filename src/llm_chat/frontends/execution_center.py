@@ -142,14 +142,14 @@ class ExecutionCenterDialog(QDialog):
                 color: {Colors.TEXT_SECONDARY};
             }}
             QTabBar::tab:selected {{
-                color: {Colors.PRIMARY};
+                color: {Colors.TEXT_PRIMARY};
                 font-weight: 700;
             }}
             QTableWidget {{
                 border: 1px solid {Colors.CHAT_BORDER};
                 border-radius: 6px;
                 gridline-color: {Colors.CHAT_BORDER};
-                background: white;
+                background: {Colors.CHAT_BG};
                 alternate-background-color: {Colors.CHAT_BG_ALT};
             }}
             QTableWidget::item {{ padding: 6px; }}
@@ -158,24 +158,24 @@ class ExecutionCenterDialog(QDialog):
                 color: {Colors.TEXT_PRIMARY};
             }}
             QHeaderView::section {{
-                background: {Colors.PARAMS_BG};
+                background: {Colors.SURFACE};
                 color: {Colors.TEXT_SECONDARY};
                 border: none;
-                border-right: 1px solid {Colors.CHAT_BORDER};
+                border-bottom: 1px solid {Colors.CHAT_BORDER};
                 padding: 7px;
                 font-weight: 600;
             }}
             QComboBox {{
-                border: 1px solid {Colors.CHAT_ACCENT};
-                border-radius: 6px;
+                border: 1px solid {Colors.CHAT_BORDER};
+                border-radius: 8px;
                 padding: 5px 9px;
-                background: white;
+                background: {Colors.SURFACE_RAISED};
             }}
             QTextBrowser {{
                 border: 1px solid {Colors.CHAT_BORDER};
                 border-radius: 6px;
                 padding: 8px;
-                background: white;
+                background: {Colors.CHAT_BG};
             }}
             """
         )
@@ -238,15 +238,15 @@ class ExecutionCenterDialog(QDialog):
         self._resume_run_button.setStyleSheet(
             f"""
             QPushButton {{
-                background: {Colors.PRIMARY};
-                color: white;
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
                 border: none;
                 border-radius: 6px;
                 padding: 7px 16px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
-            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            QPushButton:hover {{ background: {Colors.ACTION_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.SURFACE_SELECTED}; color:{Colors.TEXT_MUTED}; }}
             """
         )
         run_buttons.addWidget(self._resume_run_button)
@@ -310,15 +310,15 @@ class ExecutionCenterDialog(QDialog):
         self._approve_button.setStyleSheet(
             f"""
             QPushButton {{
-                background: {Colors.PRIMARY};
-                color: white;
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
                 border: none;
                 border-radius: 6px;
                 padding: 7px 16px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
-            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            QPushButton:hover {{ background: {Colors.ACTION_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.SURFACE_SELECTED}; color:{Colors.TEXT_MUTED}; }}
             """
         )
         buttons.addWidget(self._approve_button)
@@ -383,15 +383,15 @@ class ExecutionCenterDialog(QDialog):
         self._effect_success_button.setStyleSheet(
             f"""
             QPushButton {{
-                background: {Colors.PRIMARY};
-                color: white;
+                background: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
                 border: none;
                 border-radius: 6px;
                 padding: 7px 16px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background: {Colors.PRIMARY_HOVER}; }}
-            QPushButton:disabled {{ background: {Colors.CHAT_ACCENT}; }}
+            QPushButton:hover {{ background: {Colors.ACTION_HOVER}; }}
+            QPushButton:disabled {{ background: {Colors.SURFACE_SELECTED}; color:{Colors.TEXT_MUTED}; }}
             """
         )
         buttons.addWidget(self._effect_success_button)

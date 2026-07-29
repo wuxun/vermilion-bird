@@ -87,7 +87,7 @@ def test_task_navigation_surfaces_attention_count(qt_app):
     app.list_task_workspace_views = lambda **_kwargs: [object(), object()]
     frontend._update_execution_center_indicator()
 
-    assert frontend._task_nav_button.text() == "任务\n2 待办"
+    assert frontend._task_nav_button.text() == "✓  任务    2"
     assert "2 项待处理" in frontend._task_nav_button.toolTip()
 
     parent.close()
@@ -106,7 +106,8 @@ def test_chat_workspace_keeps_idle_runtime_details_out_of_view(qt_app):
     assert frontend._context_label.isHidden()
     assert frontend._cost_label.isHidden()
     assert frontend._send_button.text() == "↑"
-    assert frontend._input_field.maximumHeight() == 72
+    assert frontend._input_field.maximumHeight() == 132
+    assert frontend._input_field.placeholderText() == "描述你想完成的任务"
     assert (
         frontend._conversation_list.horizontalScrollBarPolicy()
         == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -124,7 +125,7 @@ def test_first_real_message_replaces_welcome_state(qt_app):
     frontend._setup_ui(parent)
     frontend._show_welcome_state()
     assert any(
-        label.text() == "想做什么？"
+        label.text() == "今天想完成什么？"
         for label in frontend._chat_container.findChildren(QLabel)
     )
 
@@ -134,11 +135,38 @@ def test_first_real_message_replaces_welcome_state(qt_app):
     qt_app.processEvents()
 
     assert not any(
-        label.text() == "想做什么？"
+        label.text() == "今天想完成什么？"
         for label in frontend._chat_container.findChildren(QLabel)
         if not label.isHidden()
     )
     assert frontend._welcome_widgets == []
+
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_codex_like_shell_uses_single_sidebar_and_contextual_composer(qt_app):
+    frontend = GUIFrontend()
+    frontend.set_app(_fake_app())
+    parent = QWidget()
+
+    frontend._setup_ui(parent)
+    qt_app.processEvents()
+
+    assert frontend._sidebar.width() == 260
+    assert parent.findChildren(QWidget, "navigationRail") == []
+    assert frontend._new_conv_button.text() == "✎  新建任务"
+    assert frontend._chat_title_label.text() == "新任务"
+    assert frontend._composer_add_button.toolTip() == "添加上下文或文件"
+
+    frontend._toggle_sidebar()
+    assert frontend._sidebar.width() == 54
+    assert frontend._task_nav_button.text() == "✓"
+    assert frontend._conversation_list.isHidden()
+
+    frontend._toggle_sidebar()
+    assert frontend._sidebar.width() == 260
+    assert frontend._chat_nav_button.text() == "◌  对话"
 
     parent.close()
     qt_app.processEvents()
