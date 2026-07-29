@@ -1,44 +1,46 @@
-"""共享主题模块 — Codex-like 中性深色设计系统。
+"""共享主题模块 — 暖白底、朱雀红强调的 Codex-like 设计系统。
 
-主界面只使用一套背景层级、边框、文字和状态颜色。朱红不再大面积铺底，
-只承担品牌识别和需要注意的状态，避免功能型桌面应用常见的视觉噪声。
+界面保持低噪声和清晰层级，以暖白与暖灰承载大面积内容，以朱红承担品牌、
+主动作、选中态和需要关注的状态。红色不大面积铺底，避免长时间使用时产生压迫感。
 """
 
 
 # ── 调色板 ──────────────────────────────────────────────────────────
 
 class Colors:
-    """Vermilion Bird 调色板 — 中性深色界面 + 克制的朱红品牌色。"""
+    """Vermilion Bird 调色板 — 暖色中性表面 + 克制的朱雀红。"""
 
     # 品牌和关键状态
-    PRIMARY = "#E2553D"
-    PRIMARY_HOVER = "#EE684F"
-    PRIMARY_DARK = "#C74631"
+    PRIMARY = "#C23B30"
+    PRIMARY_HOVER = "#A92F27"
+    PRIMARY_DARK = "#8F271F"
+    PRIMARY_SOFT = "#F8E1DA"
+    PRIMARY_SUBTLE = "#FDF0EB"
     BRAND = PRIMARY
 
-    # 主动作使用中性高对比，不让品牌色占满页面。
-    ACTION_BG = "#F2F2F2"
-    ACTION_HOVER = "#FFFFFF"
-    ACTION_TEXT = "#171717"
-    SECONDARY = "#303030"
-    SECONDARY_HOVER = "#3A3A3A"
+    # 主要动作使用朱红；其余操作保持暖中性色。
+    ACTION_BG = PRIMARY
+    ACTION_HOVER = PRIMARY_HOVER
+    ACTION_TEXT = "#FFFFFF"
+    SECONDARY = "#6B514C"
+    SECONDARY_HOVER = "#F3E4DE"
 
     # 基础表面层级
-    BACKGROUND = "#171717"
-    SURFACE = "#1E1E1E"
-    SURFACE_RAISED = "#262626"
-    SURFACE_HOVER = "#2D2D2D"
-    SURFACE_SELECTED = "#333333"
-    BORDER = "#343434"
-    BORDER_STRONG = "#494949"
+    BACKGROUND = "#FFF9F5"
+    SURFACE = "#FCF2ED"
+    SURFACE_RAISED = "#FFFFFF"
+    SURFACE_HOVER = "#F8E9E3"
+    SURFACE_SELECTED = PRIMARY_SOFT
+    BORDER = "#EAD8D1"
+    BORDER_STRONG = "#D5ADA4"
 
     # 侧边栏
-    SIDEBAR_BG = "#202020"
+    SIDEBAR_BG = "#F8EEE9"
     SIDEBAR_HOVER = SURFACE_HOVER
-    SIDEBAR_ACTIVE = SURFACE_SELECTED
+    SIDEBAR_ACTIVE = PRIMARY_SOFT
     SIDEBAR_BORDER = BORDER
-    SIDEBAR_TEXT = "#ECECEC"
-    SIDEBAR_TEXT_DIM = "#929292"
+    SIDEBAR_TEXT = "#3B2926"
+    SIDEBAR_TEXT_DIM = "#917872"
 
     # 聊天区
     CHAT_BG = BACKGROUND
@@ -47,45 +49,49 @@ class Colors:
     CHAT_ACCENT = BORDER_STRONG
 
     # 文本
-    TEXT_PRIMARY = "#F1F1F1"
-    TEXT_SECONDARY = "#C7C7C7"
-    TEXT_MUTED = "#8F8F8F"
+    TEXT_PRIMARY = "#2F2220"
+    TEXT_SECONDARY = "#67504B"
+    TEXT_MUTED = "#907771"
 
     # 用户消息
     USER_NAME = TEXT_PRIMARY
     AI_NAME = TEXT_SECONDARY
 
     # 状态
-    SUCCESS = "#28a745"
-    WARNING = "#ffc107"
-    DANGER = "#dc3545"
-    INFO = "#7EA6D8"
+    SUCCESS = "#347158"
+    WARNING = "#9A651E"
+    DANGER = "#B3261E"
+    INFO = "#4D6F89"
 
     # 错误
-    ERROR_BG = "#352326"
-    ERROR_TEXT = "#FF9B9B"
+    ERROR_BG = "#FCE8E5"
+    ERROR_TEXT = "#9F2D24"
 
     # 工具调用
-    TOOL_BG = SURFACE
+    TOOL_BG = PRIMARY_SUBTLE
     TOOL_BORDER = BORDER_STRONG
-    TOOL_HEADER = SURFACE_RAISED
+    TOOL_HEADER = PRIMARY_SUBTLE
     TOOL_HEADER_HOVER = SURFACE_HOVER
     TOOL_TEXT = TEXT_SECONDARY
-    TOOL_RESULT_BG = "#1D2D24"
-    TOOL_RESULT_TEXT = "#8DDAA9"
-    TOOL_RESULT_BORDER = "#3D7A54"
+    TOOL_RESULT_BG = "#EDF6F0"
+    TOOL_RESULT_TEXT = "#285D46"
+    TOOL_RESULT_BORDER = "#79A58D"
 
     # 代码
-    CODE_BG = "#2A2A2A"
-    CODE_TEXT = "#E6E6E6"
-    CODE_BLOCK_BG = "#111111"
-    CODE_BLOCK_TEXT = "#E8E8E8"
+    CODE_BG = "#F3E7E2"
+    CODE_TEXT = "#7E2D27"
+    CODE_BLOCK_BG = "#2C2321"
+    CODE_BLOCK_TEXT = "#FFF5F0"
 
     # 参数栏
-    PARAMS_BG = SURFACE_RAISED
+    PARAMS_BG = SURFACE
     PARAMS_BORDER = BORDER
     PARAMS_SLIDER = BORDER_STRONG
-    PARAMS_SLIDER_HANDLE = TEXT_SECONDARY
+    PARAMS_SLIDER_HANDLE = PRIMARY
+
+    # 文本链接
+    LINK = PRIMARY_DARK
+    LINK_HOVER = PRIMARY
 
 
 # ── 通用 QSS 模板 ──────────────────────────────────────────────────
@@ -105,8 +111,8 @@ def header_button_style() -> str:
             background-color: {Colors.SECONDARY_HOVER};
         }}
         QPushButton:disabled {{
-            background-color: {Colors.CHAT_ACCENT};
-            color: #ccc;
+            background-color: {Colors.SURFACE};
+            color: {Colors.TEXT_MUTED};
         }}
     """
 
@@ -142,7 +148,7 @@ def stop_button_style() -> str:
             font-weight: bold;
         }}
         QPushButton:hover {{
-            background-color: #E74C3C;
+            background-color: {Colors.PRIMARY_DARK};
         }}
     """
 
@@ -199,7 +205,8 @@ def conversation_list_style() -> str:
         }}
         QListWidget::item:selected {{
             background-color: {Colors.SIDEBAR_ACTIVE};
-            color: {Colors.TEXT_PRIMARY};
+            color: {Colors.PRIMARY_DARK};
+            font-weight: 600;
         }}
         QListWidget::item:hover:!selected {{
             background-color: {Colors.SIDEBAR_HOVER};
@@ -219,7 +226,7 @@ def input_field_style() -> str:
             color: {Colors.TEXT_PRIMARY};
         }}
         QTextEdit:focus {{
-            border: 1px solid {Colors.BORDER_STRONG};
+            border: 1px solid {Colors.PRIMARY};
         }}
     """
 
@@ -255,7 +262,7 @@ def message_browser_style() -> str:
         }}
         QMenu::item:selected {{
             background-color: {Colors.SURFACE_SELECTED};
-            color: {Colors.TEXT_PRIMARY};
+            color: {Colors.PRIMARY_DARK};
         }}
     """
 
@@ -307,7 +314,7 @@ def params_container_style() -> str:
             padding: 2px;
         }}
         QLabel {{
-            color: {Colors.SIDEBAR_BG};
+            color: {Colors.TEXT_SECONDARY};
             font-size: 11px;
         }}
         QSlider::groove:horizontal {{
@@ -322,11 +329,11 @@ def params_container_style() -> str:
             border-radius: 6px;
         }}
         QComboBox {{
-            background-color: white;
+            background-color: {Colors.SURFACE_RAISED};
             border: 1px solid {Colors.PARAMS_BORDER};
             border-radius: 3px;
             padding: 2px 5px;
-            color: {Colors.SIDEBAR_BG};
+            color: {Colors.TEXT_PRIMARY};
         }}
         QComboBox::drop-down {{
             border: none;
@@ -346,7 +353,7 @@ def search_input_style() -> str:
             font-size: 12px;
         }}
         QLineEdit:focus {{
-            border: 1px solid {Colors.BORDER_STRONG};
+            border: 1px solid {Colors.PRIMARY};
         }}
     """
 
@@ -368,8 +375,8 @@ MARKDOWN_CSS = f"""
     table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
     th, td {{ border: 1px solid {Colors.CHAT_ACCENT}; padding: 8px; text-align: left; }}
     th {{ background-color: {Colors.PARAMS_BG}; color: {Colors.TEXT_SECONDARY}; }}
-    a {{ color: #8AB4F8; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; color: #A9C8FA; }}
+    a {{ color: {Colors.LINK}; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; color: {Colors.LINK_HOVER}; }}
     .math-block {{ display: block; text-align: center; padding: 12px 0; font-family: 'Times New Roman', serif; font-style: italic; font-size: 1.15em; color: {Colors.TEXT_PRIMARY}; }}
     .math-inline {{ font-family: 'Times New Roman', serif; font-style: italic; color: {Colors.TEXT_PRIMARY}; }}
     .math-frac {{ display: inline-block; text-align: center; vertical-align: middle; line-height: 1.1; }}
@@ -401,10 +408,11 @@ def application_style() -> str:
             border: 1px solid {Colors.BORDER};
             border-radius: 8px;
             padding: 6px 8px;
-            selection-background-color: {Colors.BORDER_STRONG};
+            selection-background-color: {Colors.PRIMARY_SOFT};
+            selection-color: {Colors.TEXT_PRIMARY};
         }}
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
-            border-color: {Colors.BORDER_STRONG};
+            border-color: {Colors.PRIMARY};
         }}
         QComboBox::drop-down {{ border: none; }}
         QComboBox QAbstractItemView {{
@@ -436,7 +444,10 @@ def application_style() -> str:
             padding: 5px;
         }}
         QMenu::item {{ padding: 7px 28px 7px 10px; border-radius: 6px; }}
-        QMenu::item:selected {{ background: {Colors.SURFACE_SELECTED}; }}
+        QMenu::item:selected {{
+            background: {Colors.SURFACE_SELECTED};
+            color: {Colors.PRIMARY_DARK};
+        }}
         QMenu::separator {{ height: 1px; background: {Colors.BORDER}; margin: 5px 8px; }}
         QTabWidget::pane {{ border: none; background: {Colors.BACKGROUND}; }}
         QTabBar::tab {{
@@ -445,7 +456,10 @@ def application_style() -> str:
             border: none;
             padding: 8px 12px;
         }}
-        QTabBar::tab:selected {{ color: {Colors.TEXT_PRIMARY}; border-bottom: 2px solid {Colors.TEXT_PRIMARY}; }}
+        QTabBar::tab:selected {{
+            color: {Colors.PRIMARY_DARK};
+            border-bottom: 2px solid {Colors.PRIMARY};
+        }}
         QHeaderView::section {{
             color: {Colors.TEXT_SECONDARY};
             background: {Colors.SURFACE};
@@ -463,7 +477,7 @@ def application_style() -> str:
         }}
         QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selected {{
             background: {Colors.SURFACE_SELECTED};
-            color: {Colors.TEXT_PRIMARY};
+            color: {Colors.PRIMARY_DARK};
         }}
         QScrollBar:vertical {{
             background: transparent;

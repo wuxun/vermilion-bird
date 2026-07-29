@@ -63,8 +63,8 @@ _COLORS = {
     "muted": Colors.TEXT_MUTED,
     "accent": Colors.PRIMARY,
     "accent_hover": Colors.PRIMARY_HOVER,
-    "recommend_bg": "#1D2D24",
-    "recommend_border": "#56A873",
+    "recommend_bg": Colors.PRIMARY_SUBTLE,
+    "recommend_border": Colors.PRIMARY,
     "progress_fill": Colors.TEXT_MUTED,
     "progress_bg": Colors.SURFACE_SELECTED,
 }
@@ -123,8 +123,8 @@ def _make_button(text: str, primary: bool = False) -> "QPushButton":
                 background-color: {_COLORS['accent_hover']};
             }}
             QPushButton:disabled {{
-                background-color: #ccc;
-                color: #999;
+                background-color: {Colors.SURFACE};
+                color: {Colors.TEXT_MUTED};
             }}
         """
     else:
@@ -392,8 +392,8 @@ class DecisionCardWidget(QFrame):
                 border-color: {_COLORS['accent']};
             }}
             QPushButton:disabled {{
-                color: #ccc;
-                border-color: #e0e0e0;
+                color: {Colors.TEXT_MUTED};
+                border-color: {Colors.BORDER};
             }}
         """)
         dismiss_btn.clicked.connect(self._on_dismiss_clicked)

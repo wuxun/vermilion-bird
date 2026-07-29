@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+from llm_chat.frontends.theme import Colors
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,24 +37,24 @@ class SkillsConfigDialog(QDialog):
         layout.addWidget(label)
         
         self._skills_list = QListWidget()
-        self._skills_list.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #D4A574;
-                border-radius: 4px;
-                background-color: #FFFBF5;
-            }
-            QListWidget::item {
+        self._skills_list.setStyleSheet(f"""
+            QListWidget {{
+                border: 1px solid {Colors.BORDER};
+                border-radius: 8px;
+                background-color: {Colors.SURFACE_RAISED};
+            }}
+            QListWidget::item {{
                 padding: 8px;
-                border-bottom: 1px solid #E0D0C0;
-                color: #3D2C2E;
-            }
-            QListWidget::item:selected {
-                background-color: #F5E6D3;
-                color: #3D2C2E;
-            }
-            QListWidget::item:hover {
-                background-color: #F5E6D3;
-            }
+                border-bottom: 1px solid {Colors.BORDER};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QListWidget::item:selected {{
+                background-color: {Colors.SURFACE_SELECTED};
+                color: {Colors.PRIMARY_DARK};
+            }}
+            QListWidget::item:hover {{
+                background-color: {Colors.SURFACE_HOVER};
+            }}
         """)
         layout.addWidget(self._skills_list)
         
@@ -60,33 +62,33 @@ class SkillsConfigDialog(QDialog):
         
         self._toggle_btn = QPushButton("启用/禁用")
         self._toggle_btn.clicked.connect(self._toggle_skill)
-        self._toggle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #D4652F;
-                color: white;
+        self._toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.ACTION_BG};
+                color: {Colors.ACTION_TEXT};
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #C84B31;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.ACTION_HOVER};
+            }}
         """)
         button_layout.addWidget(self._toggle_btn)
         
         self._info_btn = QPushButton("查看详情")
         self._info_btn.clicked.connect(self._show_info)
-        self._info_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #5C3D3A;
-                color: white;
-                border: none;
-                border-radius: 4px;
+        self._info_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.SURFACE_RAISED};
+                color: {Colors.TEXT_PRIMARY};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 8px;
                 padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #6B4D4A;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.SURFACE_HOVER};
+            }}
         """)
         button_layout.addWidget(self._info_btn)
         
@@ -94,17 +96,17 @@ class SkillsConfigDialog(QDialog):
         
         close_btn = QPushButton("关闭")
         close_btn.clicked.connect(self.accept)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #D4A574;
-                color: #3D2C2E;
-                border: none;
-                border-radius: 4px;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {Colors.TEXT_SECONDARY};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 8px;
                 padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #C49464;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.SURFACE_HOVER};
+            }}
         """)
         button_layout.addWidget(close_btn)
         

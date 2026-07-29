@@ -49,6 +49,7 @@ def test_gui_uses_chat_as_primary_workspace_and_work_overview_as_aggregate(qt_ap
     frontend._on_task_center()
     assert frontend._workspace_stack.currentWidget() is frontend._task_workspace
     assert frontend._task_nav_button.isChecked()
+    assert frontend._conversation_list.selectedItems() == []
 
     frontend._on_chat_workspace()
     assert frontend._workspace_stack.currentWidget() is frontend._chat_workspace

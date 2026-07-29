@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
+from llm_chat.frontends.theme import Colors
+
 logger = logging.getLogger(__name__)
 
 # Status icons
@@ -66,7 +68,9 @@ class AgentStatusWidget(QWidget):
         # Header
         header = QHBoxLayout()
         self._title = QLabel("🕸 子 Agent (0)")
-        self._title.setStyleSheet("font-weight: bold; color: #888;")
+        self._title.setStyleSheet(
+            f"font-weight: bold; color: {Colors.TEXT_SECONDARY};"
+        )
         header.addWidget(self._title)
 
         self._toggle_btn = QPushButton("−")
@@ -88,22 +92,29 @@ class AgentStatusWidget(QWidget):
         self._tree.setAlternatingRowColors(True)
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)
-        self._tree.setStyleSheet("""
-            QTreeWidget {
+        self._tree.setStyleSheet(f"""
+            QTreeWidget {{
                 font-size: 11px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-            }
-            QTreeWidget::item {
+                border: 1px solid {Colors.BORDER};
+                border-radius: 8px;
+                background: {Colors.SURFACE_RAISED};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QTreeWidget::item {{
                 padding: 2px 4px;
-            }
-            QHeaderView::section {
+            }}
+            QTreeWidget::item:selected {{
+                background: {Colors.SURFACE_SELECTED};
+                color: {Colors.PRIMARY_DARK};
+            }}
+            QHeaderView::section {{
                 font-size: 10px;
                 padding: 2px 4px;
-                background: #f5f5f5;
+                background: {Colors.SURFACE};
                 border: none;
-                border-bottom: 1px solid #ddd;
-            }
+                border-bottom: 1px solid {Colors.BORDER};
+                color: {Colors.TEXT_SECONDARY};
+            }}
         """)
         self._tree.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._tree)

@@ -6,6 +6,8 @@
 from __future__ import annotations
 import logging
 
+from llm_chat.frontends.theme import Colors
+
 try:
     from PyQt6.QtWidgets import (
         QWidget,
@@ -139,7 +141,7 @@ if PYQT_AVAILABLE:
             """在输入框下方显示补全弹窗。
 
             使用 ToolTip 窗口类型确保不抢夺焦点、不阻塞输入。
-            配色对齐整体暖棕朱雀主题 (暖白底 + 朱红选中 + 沙色边框)。
+            配色对齐整体朱雀主题（暖白底 + 朱红选中 + 暖灰边框）。
             """
             if not items or not self.isVisible():
                 self._hide_popup()
@@ -154,39 +156,39 @@ if PYQT_AVAILABLE:
                 self._popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 self._popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
                 self._popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-                # 暖棕朱雀主题配色：暖白底、朱红选中、沙色边框
                 self._popup.setStyleSheet(
-                    """
-                    QListWidget {
+                    f"""
+                    QListWidget {{
                         font-family: Arial, sans-serif;
-                        background-color: #262626;
-                        border: 1px solid #494949;
+                        background-color: {Colors.SURFACE_RAISED};
+                        border: 1px solid {Colors.BORDER_STRONG};
                         border-radius: 10px;
                         padding: 6px 2px;
                         font-size: 13px;
-                        color: #F1F1F1;
-                    }
-                    QListWidget::item {
+                        color: {Colors.TEXT_PRIMARY};
+                    }}
+                    QListWidget::item {{
                         padding: 6px 14px;
                         margin: 1px 4px;
                         border-radius: 6px;
-                    }
-                    QListWidget::item:selected {
-                        background-color: #3A3A3A;
-                        color: #F1F1F1;
-                    }
-                    QListWidget::item:hover:!selected {
-                        background-color: #2D2D2D;
-                    }
-                    QScrollBar:vertical {
+                    }}
+                    QListWidget::item:selected {{
+                        background-color: {Colors.SURFACE_SELECTED};
+                        color: {Colors.PRIMARY_DARK};
+                        font-weight: 600;
+                    }}
+                    QListWidget::item:hover:!selected {{
+                        background-color: {Colors.SURFACE_HOVER};
+                    }}
+                    QScrollBar:vertical {{
                         width: 6px;
                         background: transparent;
-                    }
-                    QScrollBar::handle:vertical {
-                        background: #494949;
+                    }}
+                    QScrollBar::handle:vertical {{
+                        background: {Colors.BORDER_STRONG};
                         border-radius: 3px;
                         min-height: 20px;
-                    }
+                    }}
                 """
                 )
                 self._popup.itemClicked.connect(self._on_popup_selected)

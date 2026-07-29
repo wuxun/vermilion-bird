@@ -437,6 +437,19 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         try:
             if self._task_nav_button is not None:
                 self._task_nav_button.setChecked(current is self._task_workspace)
+            if self._conversation_list is not None:
+                if current is self._task_workspace:
+                    self._conversation_list.clearSelection()
+                    self._conversation_list.setCurrentItem(None)
+                else:
+                    for index in range(self._conversation_list.count()):
+                        item = self._conversation_list.item(index)
+                        if (
+                            item.data(Qt.ItemDataRole.UserRole)
+                            == self.conversation_id
+                        ):
+                            self._conversation_list.setCurrentItem(item)
+                            break
         finally:
             self._workspace_navigation_sync = False
 
@@ -628,10 +641,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         # 产品头部保持克制，只提供搜索和折叠两个全局动作。
         top_row = QHBoxLayout()
         top_row.setSpacing(4)
-        self._brand_label = QLabel("Vermilion")
+        self._brand_label = QLabel("Vermilion Bird")
         self._brand_label.setFont(QFont("", 14, QFont.Weight.DemiBold))
         self._brand_label.setStyleSheet(
-            f"color:{Colors.TEXT_PRIMARY}; padding:3px 5px; background:transparent;"
+            f"color:{Colors.PRIMARY_DARK}; padding:3px 5px; background:transparent;"
         )
         top_row.addWidget(self._brand_label)
         top_row.addStretch()
@@ -687,7 +700,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             QPushButton:hover {{ background: {Colors.SIDEBAR_HOVER}; color: {Colors.TEXT_PRIMARY}; }}
             QPushButton:checked {{
                 background: {Colors.SIDEBAR_ACTIVE};
-                color: {Colors.TEXT_PRIMARY};
+                color: {Colors.PRIMARY_DARK};
                 font-weight: 600;
             }}
         """
@@ -1017,7 +1030,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 background: transparent;
                 border: none;
                 border-radius: 8px;
-                color: {Colors.TEXT_PRIMARY};
+                color: {Colors.PRIMARY_DARK};
                 text-align: left;
                 padding: 8px 10px;
                 font-weight: 600;
@@ -1046,8 +1059,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 font-weight: 600;
             }}
             QFrame#goalProgress {{
-                background: {Colors.SURFACE_RAISED};
-                border: 1px solid {Colors.BORDER};
+                background: {Colors.PRIMARY_SUBTLE};
+                border: 1px solid {Colors.BORDER_STRONG};
                 border-radius: 10px;
             }}
             QLabel#goalMark {{
@@ -1083,7 +1096,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             }}
             QFrame#composerShell {{
                 background: {Colors.SURFACE_RAISED};
-                border: 1px solid {Colors.BORDER_STRONG};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 18px;
             }}
             QPushButton#composerIconButton {{
@@ -1399,11 +1412,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._context_label.setText(self._format_context_text(total_tokens, limit, usage_percent))
 
         if usage_percent < 50:
-            color = "#28a745"
+            color = Colors.SUCCESS
         elif usage_percent < 80:
-            color = "#ffc107"
+            color = Colors.WARNING
         else:
-            color = "#dc3545"
+            color = Colors.DANGER
 
         self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
 
@@ -1422,10 +1435,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             total_cost = summary.get("cost", {}).get("total_usd", 0)
             if total_tokens > 0:
                 self._cost_label.setText(f"💲 {total_tokens:,} tokens · $" + f"{total_cost:.4f}")
-                self._cost_label.setStyleSheet("color: #666; padding: 2px; font-weight: bold;")
+                self._cost_label.setStyleSheet(
+                    f"color: {Colors.TEXT_SECONDARY}; padding: 2px; font-weight: bold;"
+                )
             else:
                 self._cost_label.setText("💲 成本: —")
-                self._cost_label.setStyleSheet("color: #888; padding: 2px;")
+                self._cost_label.setStyleSheet(
+                    f"color: {Colors.TEXT_MUTED}; padding: 2px;"
+                )
         except Exception:
             self._cost_label.setText("💲 成本: —")
 
@@ -1489,7 +1506,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._display_ai_prefix()
         self._ensure_streaming_browser()
         if self._streaming_browser:
-            self._streaming_browser.setHtml('<span style="color:#8B7355;">● ● ●</span>')
+            self._streaming_browser.setHtml(
+                f'<span style="color:{Colors.PRIMARY};">● ● ●</span>'
+            )
 
         current_conv_id = self.conversation_id
         model_params = self._get_model_params()
@@ -1765,11 +1784,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 self._format_context_text(used_tokens, limit, usage_percent)
             )
             if usage_percent < 50:
-                color = "#28a745"
+                color = Colors.SUCCESS
             elif usage_percent < 80:
-                color = "#ffc107"
+                color = Colors.WARNING
             else:
-                color = "#dc3545"
+                color = Colors.DANGER
             self._context_label.setStyleSheet(f"color: {color}; padding: 2px; font-weight: bold;")
             self._update_cost_status()
 

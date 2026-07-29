@@ -28,27 +28,29 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QFont
 
+from llm_chat.frontends.theme import Colors
+
 if TYPE_CHECKING:
     from llm_chat.skills.task_delegator.registry import SubAgentRegistry
 
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
-# Color palette (warm brown theme)
+# Shared Vermilion Bird palette
 # ------------------------------------------------------------------
 
-C_DARK    = "#3D2C2E"
-C_MEDIUM  = "#6B4423"
-C_LIGHT   = "#A67B5B"
-C_ACCENT  = "#8B5E3C"
-C_BG      = "#FFFCF7"
-C_BG_PANEL = "#F5E6D3"
-C_BORDER  = "#E8D5C4"
-C_BORDER2 = "#D4A574"
-C_SUCCESS = "#2E7D32"
-C_ERROR   = "#C0392B"
-C_BLUE    = "#1565C0"
-C_TOOL_BG = "#FDF2E9"
+C_DARK = Colors.TEXT_PRIMARY
+C_MEDIUM = Colors.TEXT_SECONDARY
+C_LIGHT = Colors.TEXT_MUTED
+C_ACCENT = Colors.PRIMARY
+C_BG = Colors.BACKGROUND
+C_BG_PANEL = Colors.SURFACE
+C_BORDER = Colors.BORDER
+C_BORDER2 = Colors.BORDER_STRONG
+C_SUCCESS = Colors.SUCCESS
+C_ERROR = Colors.DANGER
+C_BLUE = Colors.INFO
+C_TOOL_BG = Colors.PRIMARY_SUBTLE
 
 # ------------------------------------------------------------------
 # Status helpers
@@ -63,11 +65,11 @@ _STATUS_ICONS = {
 }
 
 _STATUS_COLORS = {
-    "running":   "#E67E22",
-    "spawned":   "#2980B9",
+    "running":   Colors.WARNING,
+    "spawned":   Colors.INFO,
     "completed": C_SUCCESS,
     "failed":    C_ERROR,
-    "cancelled": "#95A5A6",
+    "cancelled": Colors.TEXT_MUTED,
 }
 
 _STATUS_LABELS = {
@@ -225,7 +227,8 @@ class AgentDetailDialog(QDialog):
         self._error_text.setFont(QFont("Menlo", 9))
         self._error_text.setMaximumHeight(100)
         self._error_text.setStyleSheet(
-            f"QTextEdit {{ background-color: #FDEDEC; border: 1px solid #E6B0AA; "
+            f"QTextEdit {{ background-color: {Colors.ERROR_BG}; "
+            f"border: 1px solid {Colors.BORDER_STRONG}; "
             f"border-radius: 4px; padding: 8px; color: {C_ERROR}; }}"
         )
         layout.addWidget(self._error_text)
@@ -262,9 +265,19 @@ class AgentDetailDialog(QDialog):
         # Meta badges
         _clear_layout(self._meta_layout, keep_stretch=False)
         if e._model:
-            self._meta_layout.insertWidget(0, _fmt_badge(f"🧠 {e._model}", bg="#EBF5FB", fg=C_BLUE))
+            self._meta_layout.insertWidget(
+                0,
+                _fmt_badge(f"🧠 {e._model}", bg=Colors.SURFACE, fg=C_BLUE),
+            )
         if e._protocol:
-            self._meta_layout.insertWidget(0, _fmt_badge(f"⚡ {e._protocol}", bg="#F4ECF7", fg="#6C3483"))
+            self._meta_layout.insertWidget(
+                0,
+                _fmt_badge(
+                    f"⚡ {e._protocol}",
+                    bg=Colors.PRIMARY_SOFT,
+                    fg=Colors.PRIMARY_DARK,
+                ),
+            )
         self._meta_layout.addStretch()
 
         # Tools
@@ -386,12 +399,12 @@ class AgentEntryWidget(QFrame):
         self._cancel_button.setFont(QFont("Arial", 8))
         self._cancel_button.setStyleSheet(f"""
             QPushButton {{
-                background-color: #FFF3E6;
+                background-color: {Colors.PRIMARY_SUBTLE};
                 border: 1px solid {C_BORDER2};
                 border-radius: 3px;
                 color: {C_MEDIUM};
             }}
-            QPushButton:hover {{ background-color: #F5E6D3; }}
+            QPushButton:hover {{ background-color: {Colors.SURFACE_HOVER}; }}
         """)
         self._cancel_button.clicked.connect(lambda: self.cancelled.emit(self.agent_id))
         row.addWidget(self._cancel_button)
@@ -726,7 +739,8 @@ def _add_tool_call_row(layout, index: int, call: Dict[str, Any]):
         res_lbl = QLabel(preview)
         res_lbl.setFont(QFont("Arial", 8))
         res_lbl.setStyleSheet(
-            f"color: #4A2C2A; border: none; background-color: #FFF8F0; "
+            f"color: {Colors.TEXT_SECONDARY}; border: none; "
+            f"background-color: {Colors.PRIMARY_SUBTLE}; "
             f"border-radius: 3px; padding: 3px 6px; margin-left: 12px;"
         )
         res_lbl.setWordWrap(True)

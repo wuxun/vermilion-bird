@@ -360,7 +360,7 @@ class TaskCenterDialog(QDialog):
         empty_icon = QLabel("✓")
         empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_icon.setStyleSheet(
-            f"font-size: 28px; color: {Colors.CHAT_ACCENT}; background: transparent;"
+            f"font-size: 28px; color: {Colors.PRIMARY}; background: transparent;"
         )
         empty_layout.addWidget(empty_icon)
         self._empty_title = QLabel("还没有持续工作")
@@ -372,6 +372,7 @@ class TaskCenterDialog(QDialog):
         self._empty_description.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         empty_layout.addWidget(self._empty_description)
         self._empty_action = QPushButton("新建第一个目标")
+        self._empty_action.setObjectName("taskPrimaryAction")
         self._empty_action.clicked.connect(self._on_empty_action)
         empty_layout.addWidget(self._empty_action, alignment=Qt.AlignmentFlag.AlignCenter)
         empty_layout.addStretch()
@@ -675,8 +676,8 @@ class TaskCenterDialog(QDialog):
             }}
             QTableWidget::item {{ padding: 6px; }}
             QTableWidget::item:selected {{
-                background: {Colors.CHAT_ACCENT};
-                color: {Colors.TEXT_PRIMARY};
+                background: {Colors.SURFACE_SELECTED};
+                color: {Colors.PRIMARY_DARK};
             }}
             QFrame#taskComposer {{
                 border: 1px solid {Colors.CHAT_BORDER};
@@ -1114,8 +1115,8 @@ class TaskCenterDialog(QDialog):
 
         accents = {
             TimelineKind.OBJECTIVE: Colors.PRIMARY,
-            TimelineKind.APPROVAL: "#d59b28",
-            TimelineKind.ARTIFACT: "#5e9f72",
+            TimelineKind.APPROVAL: Colors.WARNING,
+            TimelineKind.ARTIFACT: Colors.SUCCESS,
         }
         cards = []
         for entry in workspace_view.timeline:
