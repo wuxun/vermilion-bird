@@ -28,7 +28,7 @@ langgraph = "^1.2.9"
 langgraph-checkpoint-sqlite = "^3.1.0"
 duckduckgo-search = "^6.0.0"
 ddgs = "^9.0.0"
-tiktoken = "^0.7.0"
+tiktoken = "^0.13.0"
 beautifulsoup4 = "^4.12.0"
 playwright = { version = "^1.40.0", optional = true }
 apscheduler = "^3.9.1"
