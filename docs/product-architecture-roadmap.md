@@ -130,6 +130,9 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] 任务内计划确认、审批与交付验收渐进展示
 - [x] TaskWorkspace 只读投影层与统一待处理范围
 - [x] 单列任务流、全文筛选和全局待处理导航提示
+- [x] 自动化系列聚合：同一 Scheduler/Webhook/Proactive 定义复用一个 WorkItem
+- [x] 注意力治理：必须处理、新结果和无需反馈分级
+- [x] 旧自动化记录按来源折叠，导航待办不再包含普通自动化结果
 
 ### v0.4：任务复用与自动化
 
@@ -140,6 +143,8 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] CLI 固定版本执行并记录版本来源
 - [ ] GUI、Scheduler 选择并运行同一 Workflow 版本
 - [x] 资源级权限：目录、域名、消息目标和授权期限
+- [x] 自动化结果验收策略：required/optional/none
+- [x] 自动化任务编辑器可配置结果处理方式
 
 进入下一阶段的门槛：核心任务成功率不低于 85%，成功任务能够稳定产出 Artifact。
 

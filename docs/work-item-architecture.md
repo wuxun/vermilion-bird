@@ -11,6 +11,8 @@
 WorkItem
   ├── root_run_id ──────► 首次主 Run
   ├── latest_run_id ────► 当前主 Run
+  ├── series_key ───────► 可重复来源的稳定任务流
+  ├── artifact_review_policy ─► required / optional / none
   ├── Run.work_item_id ─► 所有执行与子执行
   └── Artifact
         ├── work_item_id
@@ -56,6 +58,7 @@ SQLite 无法在一次事务内覆盖内存 RunManager 的状态变化，因此�
 ## 幂等语义
 
 - WorkItem 的 `idempotency_key` 防止同一外部触发创建两个用户任务；
+- WorkItem 的 `series_key` 让同一 Scheduler、Webhook 或 Proactive 定义复用一个任务流；
 - Run 的 `idempotency_key` 防止同一任务步骤重复执行；
 - WorkItemService 不允许把已属于其他 WorkItem 的幂等 Run 重新挂载；
 - Artifact 必须关联存在的 WorkItem；若填写 `run_id`，该 Run 必须属于同一 WorkItem。
@@ -78,15 +81,16 @@ WorkItem，从而避免 Tool、Subagent 和 Graph 节点产生孤立执行记录
 已完成：
 
 1. CLI 新增 `task start/list/show/cancel/retry/artifacts`；
-2. Scheduler、Webhook、Proactive 显式创建 WorkItem；
+2. Scheduler、Webhook、Proactive 显式创建并按 `series_key` 复用 WorkItem；
 3. GUI 新增任务中心，WorkItem 作为主视图，Run 时间线作为高级信息；
 4. 文本结果以幂等 Artifact 固化，文件和链接 Artifact 可从 GUI 打开。
 
 下一步：
 
-1. 在任务详情内展示结构化计划；
-2. 将协作式暂停扩展到非 Chat Workflow，并增加导出和“保存为 Workflow”能力；
-3. 为首次启动提供模型连接与安全示例任务。
+1. 完成 Workflow 库、版本选择和参数化运行界面；
+2. 增加 Artifact 内嵌预览、版本对比和自动化结果已读状态；
+3. 将协作式暂停扩展到非 Chat Workflow；
+4. 为首次启动提供模型连接与安全示例任务。
 
 任务中心已内嵌待审批动作，可查看风险、能力、影响和参数，并直接批准或拒绝。
 已有 checkpoint 的暂停主 Run 可从 GUI 或 `task resume` 恢复。Chat 主任务支持
