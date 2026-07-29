@@ -39,15 +39,21 @@ def qt_app():
     yield app
 
 
-def _detail(status=WorkItemStatus.COMPLETED):
+def _detail(
+    status=WorkItemStatus.COMPLETED,
+    *,
+    work_item_id="work_gui",
+    title="生成产品规划",
+    objective="生成一份完整的产品规划文档",
+):
     now = datetime.now(timezone.utc)
     item = WorkItem(
-        id="work_gui",
-        title="生成产品规划",
-        objective="生成一份完整的产品规划文档",
+        id=work_item_id,
+        title=title,
+        objective=objective,
         status=status,
-        root_run_id="run_gui",
-        latest_run_id="run_gui",
+        root_run_id=f"run_{work_item_id}",
+        latest_run_id=f"run_{work_item_id}",
         created_at=now,
         updated_at=now,
         completed_at=now if status.terminal else None,
@@ -58,14 +64,14 @@ def _detail(status=WorkItemStatus.COMPLETED):
         WorkItemStatus.RUNNING: RunStatus.RUNNING,
     }.get(status, RunStatus.PAUSED)
     run = Run(
-        id="run_gui",
+        id=f"run_{work_item_id}",
         work_item_id=item.id,
         type=RunType.WORKFLOW,
         status=run_status,
         created_at=now,
     )
     artifact = Artifact(
-        id="artifact_gui",
+        id=f"artifact_{work_item_id}",
         work_item_id=item.id,
         run_id=run.id,
         kind=ArtifactKind.REPORT,
@@ -175,6 +181,52 @@ def test_task_workspace_filters_attention_and_searches_objective(qt_app):
     qt_app.processEvents()
     assert dialog._table.rowCount() == 0
     assert dialog._empty_action.text() == "清除筛选"
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_task_workspace_filter_keeps_detail_in_sync(qt_app):
+    first = _detail(
+        work_item_id="work_hourly",
+        title="每小时检查",
+        objective="检查系统状态",
+    )
+    second = _detail(
+        work_item_id="work_greeting",
+        title="每日问候",
+        objective="发送每日问候",
+    )
+    details = {
+        first.work_item.id: first,
+        second.work_item.id: second,
+    }
+    service = MagicMock()
+    service.subscribe.return_value = lambda: None
+    app = SimpleNamespace(
+        work_items=service,
+        list_work_items=lambda **_kwargs: [first.work_item, second.work_item],
+        get_work_item_detail=lambda work_item_id: details[work_item_id],
+        list_work_item_actions=lambda _work_item_id: [],
+        can_retry_work_item=lambda _work_item_id: False,
+        can_resume_work_item=lambda _work_item_id: False,
+        can_pause_work_item=lambda _work_item_id: False,
+    )
+
+    dialog = TaskCenterDialog(app)
+    qt_app.processEvents()
+    assert dialog._detail_title.text() == "每小时检查"
+
+    dialog._task_search_input.setText("每日问候")
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 1
+    assert dialog._selected_work_item_id == "work_greeting"
+    assert dialog._detail_title.text() == "每日问候"
+
+    dialog._task_search_input.setText("不存在的任务")
+    qt_app.processEvents()
+    assert dialog._selected_work_item_id is None
+    assert dialog._detail_title.text() == "选择一个任务"
 
     dialog.close()
     qt_app.processEvents()

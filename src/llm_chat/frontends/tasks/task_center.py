@@ -733,26 +733,41 @@ class TaskCenterDialog(QDialog):
         self._items_by_id = {item.id: item for item in items}
         self._workspace_views_by_id = {view.work_item_id: view for view in views}
         self._update_content_state(bool(views))
-        self._table.setRowCount(len(views))
-        selected_row = None
-        for row, view in enumerate(views):
-            attention = f" · {len(view.attention)} 待处理" if view.attention else ""
-            list_item = QTableWidgetItem(
-                f"{view.title}\n"
-                f"{view.status_label} · {self._format_time(view.updated_at)}{attention}"
-            )
-            list_item.setData(Qt.ItemDataRole.UserRole, view.work_item_id)
-            self._table.setItem(row, 0, list_item)
-            self._table.setRowHeight(row, 58)
-            if view.work_item_id == self._selected_work_item_id:
-                selected_row = row
-        if selected_row is not None:
-            self._table.selectRow(selected_row)
-        elif views:
-            self._table.selectRow(0)
-        else:
+        selected_row = next(
+            (
+                row
+                for row, view in enumerate(views)
+                if view.work_item_id == self._selected_work_item_id
+            ),
+            0 if views else None,
+        )
+        self._table.blockSignals(True)
+        try:
+            self._table.setRowCount(len(views))
+            for row, view in enumerate(views):
+                attention = f" · {len(view.attention)} 待处理" if view.attention else ""
+                list_item = QTableWidgetItem(
+                    f"{view.title}\n"
+                    f"{view.status_label} · {self._format_time(view.updated_at)}{attention}"
+                )
+                list_item.setData(Qt.ItemDataRole.UserRole, view.work_item_id)
+                self._table.setItem(row, 0, list_item)
+                self._table.setRowHeight(row, 58)
+            if selected_row is not None:
+                self._table.selectRow(selected_row)
+            else:
+                self._table.clearSelection()
+        finally:
+            self._table.blockSignals(False)
+
+        if selected_row is None:
             self._selected_work_item_id = None
             self._clear_detail()
+            return
+
+        selected_work_item_id = views[selected_row].work_item_id
+        self._selected_work_item_id = selected_work_item_id
+        self._load_detail(selected_work_item_id)
 
     def _fallback_workspace_views(self, items, *, scope, query: str):
         normalized_query = query.casefold()
