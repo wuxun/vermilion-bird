@@ -5,6 +5,10 @@ cd "$(dirname "$0")"
 echo "=== Vermilion Bird 可重复打包 ==="
 
 BUILD_PYTHON="${VB_BUILD_PYTHON:-}"
+if [ -n "$BUILD_PYTHON" ]; then
+    # Accept either an executable path or a command name supplied by CI/users.
+    BUILD_PYTHON="$(command -v "$BUILD_PYTHON" || true)"
+fi
 if [ -z "$BUILD_PYTHON" ]; then
     for candidate in python3.12 python3.13; do
         if command -v "$candidate" >/dev/null 2>&1; then
