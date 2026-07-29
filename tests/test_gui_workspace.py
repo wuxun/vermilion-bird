@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import Qt  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QWidget  # noqa: E402
 
 from llm_chat.frontends.base import Message, MessageType  # noqa: E402
 from llm_chat.frontends.gui import GUIFrontend  # noqa: E402
@@ -52,6 +52,27 @@ def test_gui_uses_primary_chat_and_task_workspaces(qt_app):
     assert frontend._chat_nav_button.isChecked()
 
     parent.close()
+    qt_app.processEvents()
+
+
+def test_workspace_shortcut_is_retained_and_switches_to_tasks(qt_app):
+    frontend = GUIFrontend()
+    frontend.set_app(_fake_app())
+    main_window = QMainWindow()
+    parent = QWidget()
+    main_window.setCentralWidget(parent)
+    frontend._main_window = main_window
+
+    frontend._setup_ui(parent)
+    frontend._setup_shortcuts()
+    frontend._shortcuts["Ctrl+Shift+T"].activated.emit()
+    qt_app.processEvents()
+
+    assert len(frontend._shortcuts) == 7
+    assert frontend._workspace_stack.currentWidget() is frontend._task_workspace
+    assert frontend._task_nav_button.isChecked()
+
+    main_window.close()
     qt_app.processEvents()
 
 

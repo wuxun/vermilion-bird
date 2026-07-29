@@ -162,6 +162,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_nav_button: Optional[QPushButton] = None
         self._task_nav_button: Optional[QPushButton] = None
         self._workspace_nav_group: Optional[QButtonGroup] = None
+        self._workspace_navigation_sync: bool = False
+        self._shortcuts: Dict[str, Any] = {}
         self._conversation_menu_button: Optional[QPushButton] = None
         self._app_instance: Optional[Any] = None
         self._worker_thread: Optional[threading.Thread] = None
@@ -238,28 +240,25 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """注册全局键盘快捷键。"""
         from PyQt6.QtGui import QShortcut, QKeySequence
 
+        def register(sequence: str, callback: Callable) -> None:
+            shortcut = QShortcut(QKeySequence(sequence), self._main_window)
+            shortcut.activated.connect(callback)
+            self._shortcuts[sequence] = shortcut
+
         # Ctrl+N → 新建对话
-        QShortcut(QKeySequence("Ctrl+N"), self._main_window, self._on_new_conv)
+        register("Ctrl+N", self._on_new_conv)
         # Ctrl+K → 聚焦搜索框
-        QShortcut(QKeySequence("Ctrl+K"), self._main_window, self._focus_search)
+        register("Ctrl+K", self._focus_search)
         # Ctrl+L → 清空对话
-        QShortcut(QKeySequence("Ctrl+L"), self._main_window, self._on_clear)
+        register("Ctrl+L", self._on_clear)
         # Escape → 停止生成（流式中）或聚焦输入框
-        QShortcut(QKeySequence("Escape"), self._main_window, self._on_escape)
+        register("Escape", self._on_escape)
         # Ctrl+, → 打开设置菜单
-        QShortcut(QKeySequence("Ctrl+,"), self._main_window, self._show_settings_menu)
+        register("Ctrl+,", self._show_settings_menu)
         # Ctrl+Shift+R → 打开执行与审批中心
-        QShortcut(
-            QKeySequence("Ctrl+Shift+R"),
-            self._main_window,
-            self._on_execution_center,
-        )
+        register("Ctrl+Shift+R", self._on_execution_center)
         # Ctrl+Shift+T → 打开产品级任务中心
-        QShortcut(
-            QKeySequence("Ctrl+Shift+T"),
-            self._main_window,
-            self._on_task_center,
-        )
+        register("Ctrl+Shift+T", self._on_task_center)
         logger.info("键盘快捷键已注册")
 
     def _focus_search(self):
@@ -396,12 +395,28 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._input_field is not None:
             self._input_field.setFocus()
 
+    def _on_chat_navigation_toggled(self, checked: bool):
+        """响应鼠标、键盘和辅助功能触发的导航状态变化。"""
+
+        if checked and not self._workspace_navigation_sync:
+            self._on_chat_workspace()
+
+    def _on_task_navigation_toggled(self, checked: bool):
+        """响应鼠标、键盘和辅助功能触发的导航状态变化。"""
+
+        if checked and not self._workspace_navigation_sync:
+            self._on_task_center()
+
     def _update_workspace_navigation(self):
         current = self._workspace_stack.currentWidget() if self._workspace_stack else None
-        if self._chat_nav_button is not None:
-            self._chat_nav_button.setChecked(current is self._chat_workspace)
-        if self._task_nav_button is not None:
-            self._task_nav_button.setChecked(current is self._task_workspace)
+        self._workspace_navigation_sync = True
+        try:
+            if self._chat_nav_button is not None:
+                self._chat_nav_button.setChecked(current is self._chat_workspace)
+            if self._task_nav_button is not None:
+                self._task_nav_button.setChecked(current is self._task_workspace)
+        finally:
+            self._workspace_navigation_sync = False
 
     def _update_execution_center_indicator(self):
         """在顶栏展示待审批数量，避免审批请求被聊天内容淹没。"""
@@ -594,7 +609,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_nav_button.setCheckable(True)
         self._chat_nav_button.setFixedHeight(42)
         self._chat_nav_button.setStyleSheet(nav_style)
-        self._chat_nav_button.clicked.connect(self._on_chat_workspace)
+        self._chat_nav_button.toggled.connect(self._on_chat_navigation_toggled)
         layout.addWidget(self._chat_nav_button)
 
         self._task_nav_button = QPushButton("任务")
@@ -602,7 +617,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._task_nav_button.setFixedHeight(42)
         self._task_nav_button.setStyleSheet(nav_style)
         self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
-        self._task_nav_button.clicked.connect(self._on_task_center)
+        self._task_nav_button.toggled.connect(self._on_task_navigation_toggled)
         layout.addWidget(self._task_nav_button)
         self._workspace_nav_group = QButtonGroup(rail)
         self._workspace_nav_group.setExclusive(True)
