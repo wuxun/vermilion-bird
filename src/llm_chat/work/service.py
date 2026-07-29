@@ -177,17 +177,29 @@ class WorkItemService:
         if not isinstance(artifact_review_policy, ArtifactReviewPolicy):
             artifact_review_policy = ArtifactReviewPolicy(artifact_review_policy)
         series_key = (series_key or "").strip() or None
+        display_title = (title or objective[:80]).strip()
+        if not display_title:
+            raise ValueError("work item title cannot be empty")
         if series_key:
             existing = self.repository.get_work_item_by_series_key(series_key)
             if existing is not None:
+                existing.title = display_title
+                existing.objective = objective
+                existing.kind = kind
+                existing.artifact_review_policy = artifact_review_policy
+                existing.conversation_id = conversation_id or existing.conversation_id
+                existing.workflow_id = workflow_id or existing.workflow_id
+                existing.workspace = workspace or existing.workspace
+                if metadata:
+                    existing.metadata.update(metadata)
+                existing.updated_at = utc_now()
+                self.repository.save_work_item(existing)
+                self._notify(existing)
                 return existing.model_copy(deep=True)
         if idempotency_key:
             existing = self.repository.get_work_item_by_idempotency_key(idempotency_key)
             if existing is not None:
                 return existing
-        display_title = (title or objective[:80]).strip()
-        if not display_title:
-            raise ValueError("work item title cannot be empty")
         item = WorkItem(
             title=display_title,
             objective=objective,

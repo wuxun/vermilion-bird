@@ -235,6 +235,16 @@ class TaskEditDialog(QDialog):
         self._max_retries_spin.setValue(3)
         options_layout.addWidget(self._max_retries_spin)
 
+        options_layout.addWidget(QLabel("结果处理:"))
+        self._review_policy_combo = QComboBox()
+        self._review_policy_combo.addItem("只提醒（推荐）", "optional")
+        self._review_policy_combo.addItem("需要验收", "required")
+        self._review_policy_combo.addItem("无需反馈", "none")
+        self._review_policy_combo.setToolTip(
+            "决定自动任务结果是否进入“待你处理”；失败和审批始终需要处理。"
+        )
+        options_layout.addWidget(self._review_policy_combo)
+
         options_layout.addStretch()
         layout.addLayout(options_layout)
 
@@ -367,6 +377,9 @@ class TaskEditDialog(QDialog):
 
         self._enabled_check.setChecked(task.enabled)
         self._max_retries_spin.setValue(task.max_retries)
+        review_policy = str(params.get("artifact_review_policy", "optional"))
+        review_index = self._review_policy_combo.findData(review_policy)
+        self._review_policy_combo.setCurrentIndex(max(0, review_index))
 
         # 加载通知配置
         self._notify_enabled_check.setChecked(getattr(task, "notify_enabled", True))
@@ -423,6 +436,7 @@ class TaskEditDialog(QDialog):
                 "演进理解": "evolve_understanding",
             }
             params["maintenance_type"] = type_map.get(maint_type_str)
+        params["artifact_review_policy"] = self._review_policy_combo.currentData()
 
         # 构建触发器配置
         trigger_type_str = self._trigger_type_combo.currentText()

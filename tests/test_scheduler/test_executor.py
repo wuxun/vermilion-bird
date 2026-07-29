@@ -11,7 +11,12 @@ from llm_chat.scheduler.models import Task, TaskType, TaskStatus, TaskExecution
 from llm_chat.scheduler.task_executor import TaskExecutor
 from llm_chat.runtime import RunManager, RunStatus, RunType
 from llm_chat.storage import Storage
-from llm_chat.work import WorkItemKind, WorkItemService, WorkItemStatus
+from llm_chat.work import (
+    ArtifactReviewPolicy,
+    WorkItemKind,
+    WorkItemService,
+    WorkItemStatus,
+)
 
 
 @pytest.fixture
@@ -181,14 +186,22 @@ class TestTaskExecutorInit:
         storage.save_task(task)
 
         execution = executor.execute(task)
-        item = work_items.list(limit=1)[0]
+        second_execution = executor.execute(task)
+        items = work_items.list(limit=10)
+        item = items[0]
         detail = work_items.detail(item.id)
 
         assert execution.status == TaskStatus.COMPLETED
+        assert second_execution.status == TaskStatus.COMPLETED
+        assert len(items) == 1
         assert item.kind == WorkItemKind.AUTOMATION
+        assert item.series_key == f"scheduler:{task.id}"
+        assert item.artifact_review_policy == ArtifactReviewPolicy.OPTIONAL
         assert item.status == WorkItemStatus.COMPLETED
-        assert detail.runs[0].work_item_id == item.id
-        assert detail.artifacts[0].content == "scheduled result"
+        assert len(detail.runs) == 2
+        assert all(run.work_item_id == item.id for run in detail.runs)
+        assert len(detail.artifacts) == 2
+        assert all(artifact.content == "scheduled result" for artifact in detail.artifacts)
 
         work_items.close()
         Storage.set_instance(None)

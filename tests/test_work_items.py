@@ -111,14 +111,15 @@ def test_work_item_series_reuses_one_product_task(storage):
         objective="再次生成摘要",
         kind=WorkItemKind.AUTOMATION,
         series_key="scheduler:daily-digest",
-        artifact_review_policy=ArtifactReviewPolicy.OPTIONAL,
+        artifact_review_policy=ArtifactReviewPolicy.REQUIRED,
     )
 
     assert second.id == first.id
     restored = work_items.get(first.id)
     assert restored is not None
     assert restored.series_key == "scheduler:daily-digest"
-    assert restored.artifact_review_policy == ArtifactReviewPolicy.OPTIONAL
+    assert restored.title == "每日摘要（重复触发）"
+    assert restored.artifact_review_policy == ArtifactReviewPolicy.REQUIRED
     assert len(work_items.list(limit=10)) == 1
 
 

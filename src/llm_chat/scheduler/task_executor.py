@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
 from llm_chat.scheduler.models import Task, TaskExecution, TaskStatus, TaskType
-from llm_chat.work import ArtifactKind, WorkItemKind, WorkItemService
+from llm_chat.work import (
+    ArtifactKind,
+    ArtifactReviewPolicy,
+    WorkItemKind,
+    WorkItemService,
+)
 
 if TYPE_CHECKING:
     from llm_chat.app import App
@@ -47,6 +52,7 @@ class TaskExecutor:
         run = None
         work_item = None
         if self.work_items:
+            review_policy = self._artifact_review_policy(task)
             work_item = self.work_items.create(
                 title=task.name,
                 objective=self._work_objective(task),
@@ -61,12 +67,12 @@ class TaskExecutor:
                     }
                     else None
                 ),
-                idempotency_key=f"scheduled:{task.id}:{execution_id}",
+                series_key=f"scheduler:{task.id}",
+                artifact_review_policy=review_policy,
                 metadata={
                     "source": "scheduler",
                     "scheduled_task_id": task.id,
                     "scheduled_task_type": task.task_type.value,
-                    "execution_id": execution_id,
                 },
             )
         if self.run_manager:
@@ -271,6 +277,24 @@ class TaskExecutor:
             or params.get("skill_name")
             or task.name
         )
+
+    @staticmethod
+    def _artifact_review_policy(task: Task) -> ArtifactReviewPolicy:
+        value = str(
+            (task.params or {}).get(
+                "artifact_review_policy",
+                ArtifactReviewPolicy.OPTIONAL.value,
+            )
+        ).strip()
+        try:
+            return ArtifactReviewPolicy(value)
+        except ValueError:
+            logger.warning(
+                "Unknown artifact review policy %r for scheduled task %s; using optional",
+                value,
+                task.id,
+            )
+            return ArtifactReviewPolicy.OPTIONAL
 
     def _materialize_result(self, run_id: str, result: Optional[str]) -> None:
         if not self.work_items or not result:
