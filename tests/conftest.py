@@ -13,20 +13,21 @@ sys.path.insert(0, os.path.join(_base, "packages", "ember-core", "src"))
 sys.path.insert(0, os.path.join(_base, "packages", "ember-agent", "src"))
 sys.path.insert(0, os.path.join(_base, "src"))
 
+_QT_APP = None
+
 
 @pytest.fixture(scope="session")
 def qt_app():
-    """整套 GUI 测试共享唯一 QApplication，避免原生 Qt 重建竞态。"""
+    """当前测试进程共享唯一 QApplication，并延长其 Python 生命周期。"""
 
+    global _QT_APP
     try:
         from PyQt6.QtWidgets import QApplication
     except ImportError:
         pytest.skip("PyQt6 is not installed")
 
-    app = QApplication.instance() or QApplication([])
-    yield app
-    app.closeAllWindows()
-    app.processEvents()
+    _QT_APP = QApplication.instance() or QApplication([])
+    return _QT_APP
 
 
 @pytest.fixture(scope="session", autouse=True)
