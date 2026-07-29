@@ -19,6 +19,17 @@ from .models import (
     WorkItemStatus,
 )
 from .grants import ResourceGrantService
+from .presentation import (
+    AttentionItemView,
+    AttentionKind,
+    PrimaryActionView,
+    TaskWorkspaceProjector,
+    TaskWorkspaceQueryService,
+    TaskWorkspaceScope,
+    TaskWorkspaceView,
+    TimelineEntryView,
+    TimelineKind,
+)
 from .service import WorkItemRepository, WorkItemService
 
 __all__ = [
@@ -26,15 +37,24 @@ __all__ = [
     "ArtifactFeedback",
     "ArtifactFeedbackDecision",
     "ArtifactKind",
+    "AttentionItemView",
+    "AttentionKind",
     "GrantScope",
     "GrantStatus",
     "PlanRevision",
     "PlanStatus",
     "PlanStep",
     "PlanStepStatus",
+    "PrimaryActionView",
     "ResourceGrant",
     "ResourceGrantService",
     "ResourceType",
+    "TaskWorkspaceProjector",
+    "TaskWorkspaceQueryService",
+    "TaskWorkspaceScope",
+    "TaskWorkspaceView",
+    "TimelineEntryView",
+    "TimelineKind",
     "WorkItem",
     "WorkItemDetail",
     "WorkItemKind",

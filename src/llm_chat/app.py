@@ -43,6 +43,8 @@ from llm_chat.work import (
     PlanStepStatus,
     ResourceGrantService,
     ResourceType,
+    TaskWorkspaceQueryService,
+    TaskWorkspaceScope,
     WorkItemKind,
     WorkItemService,
     WorkItemStatus,
@@ -119,6 +121,10 @@ class App:
         )
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
+        self.task_workspace = TaskWorkspaceQueryService(
+            work_items=self.work_items,
+            actions=self.action_proposals,
+        )
         self.effect_outbox = EffectOutbox(self.storage)
         self.uncertain_effects = self.effect_outbox.reconcile_interrupted()
         self.effect_reconciliation = EffectReconciliationService(
@@ -248,6 +254,22 @@ class App:
 
     def get_work_item_detail(self, work_item_id: str):
         return self.work_items.detail(work_item_id)
+
+    def get_task_workspace_view(self, work_item_id: str):
+        return self.task_workspace.get(work_item_id)
+
+    def list_task_workspace_views(
+        self,
+        *,
+        scope: TaskWorkspaceScope = TaskWorkspaceScope.ALL,
+        query: str = "",
+        limit: int = 100,
+    ):
+        return self.task_workspace.list(
+            scope=scope,
+            query=query,
+            limit=limit,
+        )
 
     def create_work_item_plan(
         self,
