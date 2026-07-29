@@ -23,6 +23,7 @@ from .grants import ResourceGrantService
 from .presentation import (
     AttentionItemView,
     AttentionKind,
+    AttentionLevel,
     PrimaryActionView,
     TaskWorkspaceProjector,
     TaskWorkspaceQueryService,
@@ -41,6 +42,7 @@ __all__ = [
     "ArtifactReviewPolicy",
     "AttentionItemView",
     "AttentionKind",
+    "AttentionLevel",
     "GrantScope",
     "GrantStatus",
     "PlanRevision",

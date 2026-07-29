@@ -13,7 +13,9 @@ from llm_chat.work import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactReviewPolicy,
     AttentionKind,
+    AttentionLevel,
     PlanRevision,
     PlanStatus,
     PlanStep,
@@ -23,6 +25,7 @@ from llm_chat.work import (
     TimelineKind,
     WorkItem,
     WorkItemDetail,
+    WorkItemKind,
     WorkItemStatus,
 )
 
@@ -32,16 +35,28 @@ def _detail(
     *,
     status: WorkItemStatus = WorkItemStatus.COMPLETED,
     with_artifact: bool = True,
+    kind: WorkItemKind = WorkItemKind.TASK,
+    review_policy: ArtifactReviewPolicy = ArtifactReviewPolicy.REQUIRED,
+    scheduled_task_id: str = "",
 ) -> WorkItemDetail:
     now = datetime.now(timezone.utc)
     item = WorkItem(
         id=item_id,
         title="生成产品规划",
         objective="分析项目并交付可执行的产品规划",
+        kind=kind,
         status=status,
         root_run_id=f"run_{item_id}",
         latest_run_id=f"run_{item_id}",
-        metadata={"expected_deliverable": "Markdown 规划文档"},
+        artifact_review_policy=review_policy,
+        metadata={
+            "expected_deliverable": "Markdown 规划文档",
+            **(
+                {"source": "scheduler", "scheduled_task_id": scheduled_task_id}
+                if scheduled_task_id
+                else {}
+            ),
+        },
         created_at=now - timedelta(minutes=10),
         updated_at=now,
         completed_at=now if status.terminal else None,
@@ -155,6 +170,47 @@ def test_feedback_removes_artifact_from_attention():
     assert any("已接受" in line for line in artifact_entry.details)
 
 
+def test_optional_automation_result_is_an_update_not_a_todo():
+    detail = _detail(
+        "work_automation",
+        kind=WorkItemKind.AUTOMATION,
+        review_policy=ArtifactReviewPolicy.OPTIONAL,
+        scheduled_task_id="daily-digest",
+    )
+
+    view = TaskWorkspaceProjector().project(detail)
+
+    assert view.unreviewed_artifact_count == 1
+    assert view.required_review_count == 0
+    assert view.optional_review_count == 1
+    assert not view.requires_attention
+    assert view.has_updates
+    assert view.action_required_count == 0
+    assert view.notice_count == 1
+    assert view.attention[0].level == AttentionLevel.NOTICE
+    assert "可选反馈" in next(
+        entry for entry in view.timeline if entry.kind == TimelineKind.ARTIFACT
+    ).details[0]
+
+
+def test_artifact_review_override_can_suppress_all_notifications():
+    detail = _detail(
+        "work_silent_automation",
+        kind=WorkItemKind.AUTOMATION,
+        review_policy=ArtifactReviewPolicy.OPTIONAL,
+    )
+    detail.artifacts[0].metadata["review_policy"] = ArtifactReviewPolicy.NONE.value
+
+    view = TaskWorkspaceProjector().project(detail)
+
+    assert not view.requires_attention
+    assert not view.has_updates
+    assert view.attention == ()
+    assert "无需反馈" in next(
+        entry for entry in view.timeline if entry.kind == TimelineKind.ARTIFACT
+    ).details[0]
+
+
 class _WorkItems:
     def __init__(self, details):
         self._details = {detail.work_item.id: detail for detail in details}
@@ -192,3 +248,32 @@ def test_query_service_filters_attention_and_search_without_frontend_logic():
 
     assert [view.work_item_id for view in attention] == ["work_completed"]
     assert [view.work_item_id for view in search] == ["work_running"]
+
+
+def test_query_service_separates_updates_and_collapses_legacy_automation_series():
+    latest = _detail(
+        "work_latest",
+        kind=WorkItemKind.AUTOMATION,
+        review_policy=ArtifactReviewPolicy.OPTIONAL,
+        scheduled_task_id="hourly-check",
+    )
+    legacy = _detail(
+        "work_legacy",
+        kind=WorkItemKind.AUTOMATION,
+        review_policy=ArtifactReviewPolicy.OPTIONAL,
+        scheduled_task_id="hourly-check",
+    )
+    latest.work_item.updated_at = datetime.now(timezone.utc)
+    legacy.work_item.updated_at = latest.work_item.updated_at - timedelta(hours=1)
+    service = TaskWorkspaceQueryService(
+        work_items=_WorkItems([latest, legacy]),
+        actions=_Actions(),
+    )
+
+    all_views = service.list()
+    attention = service.list(scope=TaskWorkspaceScope.ATTENTION)
+    updates = service.list(scope=TaskWorkspaceScope.UPDATES)
+
+    assert [view.work_item_id for view in all_views] == ["work_latest"]
+    assert attention == []
+    assert [view.work_item_id for view in updates] == ["work_latest"]

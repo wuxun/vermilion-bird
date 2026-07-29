@@ -43,6 +43,7 @@ from llm_chat.frontends.theme import Colors
 from llm_chat.runtime import ActionStatus, Capability
 from llm_chat.work import (
     ArtifactFeedbackDecision,
+    ArtifactReviewPolicy,
     AttentionKind,
     GrantScope,
     GrantStatus,
@@ -125,6 +126,12 @@ _FEEDBACK_LABELS = {
     "accepted": "已接受",
     "needs_revision": "需修改",
     "rejected": "已拒绝",
+}
+
+_REVIEW_POLICY_LABELS = {
+    ArtifactReviewPolicy.REQUIRED: "需要验收",
+    ArtifactReviewPolicy.OPTIONAL: "只提醒",
+    ArtifactReviewPolicy.NONE: "无需反馈",
 }
 
 
@@ -367,6 +374,7 @@ class TaskCenterDialog(QDialog):
         self._scope_filter.addItem("全部任务", TaskWorkspaceScope.ALL)
         self._scope_filter.addItem("进行中", TaskWorkspaceScope.ACTIVE)
         self._scope_filter.addItem("待你处理", TaskWorkspaceScope.ATTENTION)
+        self._scope_filter.addItem("新结果", TaskWorkspaceScope.UPDATES)
         self._scope_filter.addItem("已结束", TaskWorkspaceScope.FINISHED)
         self._scope_filter.currentIndexChanged.connect(self.refresh)
         filters.addWidget(self._scope_filter)
@@ -745,7 +753,12 @@ class TaskCenterDialog(QDialog):
         try:
             self._table.setRowCount(len(views))
             for row, view in enumerate(views):
-                attention = f" · {len(view.attention)} 待处理" if view.attention else ""
+                badges = []
+                if view.action_required_count:
+                    badges.append(f"{view.action_required_count} 待处理")
+                if view.notice_count:
+                    badges.append(f"{view.notice_count} 新结果")
+                attention = f" · {' · '.join(badges)}" if badges else ""
                 list_item = QTableWidgetItem(
                     f"{view.title}\n"
                     f"{view.status_label} · {self._format_time(view.updated_at)}{attention}"
@@ -786,6 +799,8 @@ class TaskCenterDialog(QDialog):
             view = self._projector.project(detail, proposals)
             if scope == TaskWorkspaceScope.ATTENTION and not view.requires_attention:
                 continue
+            if scope == TaskWorkspaceScope.UPDATES and not view.has_updates:
+                continue
             if scope == TaskWorkspaceScope.ACTIVE and view.status.terminal:
                 continue
             if scope == TaskWorkspaceScope.FINISHED and not view.status.terminal:
@@ -816,11 +831,12 @@ class TaskCenterDialog(QDialog):
             self._workspace_views_by_id[work_item_id] = workspace_view
         self._current_workspace_view = workspace_view
         self._detail_title.setText(item.title)
-        attention_text = (
-            f" · {len(workspace_view.attention)} 项待处理"
-            if workspace_view.attention
-            else ""
-        )
+        badges = []
+        if workspace_view.action_required_count:
+            badges.append(f"{workspace_view.action_required_count} 项待处理")
+        if workspace_view.notice_count:
+            badges.append(f"{workspace_view.notice_count} 个新结果")
+        attention_text = f" · {' · '.join(badges)}" if badges else ""
         self._detail_meta.setText(
             f"{workspace_view.status_label} · {workspace_view.kind_label}"
             f" · 更新于 {self._format_time(workspace_view.updated_at)}{attention_text}"
@@ -828,6 +844,7 @@ class TaskCenterDialog(QDialog):
         lines = [
             f"状态：{_STATUS_LABELS[item.status]}",
             f"类型：{_KIND_LABELS[item.kind]}",
+            f"结果处理：{_REVIEW_POLICY_LABELS[item.artifact_review_policy]}",
             f"目标：{item.objective}",
             f"任务 ID：{item.id}",
             f"创建时间：{self._format_time(item.created_at)}",
@@ -914,7 +931,7 @@ class TaskCenterDialog(QDialog):
             feedback_label = (
                 _FEEDBACK_LABELS.get(feedback.decision.value, feedback.decision.value)
                 if feedback
-                else "未反馈"
+                else self._unreviewed_artifact_label(item, artifact)
             )
             self._artifacts_table.setItem(
                 row,
@@ -1004,15 +1021,34 @@ class TaskCenterDialog(QDialog):
         self._approve_button.setVisible(bool(pending_count))
         self._reject_button.setVisible(bool(pending_count))
         self._approve_plan_button.setVisible(draft_plan)
-        self._attention_panel.setVisible(workspace_view.requires_attention)
-        self._tabs.setTabText(
-            0,
-            (
-                f"进展 · {len(workspace_view.attention)} 待处理"
-                if workspace_view.requires_attention
-                else "进展"
-            ),
+        self._attention_panel.setTitle(
+            "待你处理" if workspace_view.requires_attention else "新结果"
         )
+        self._attention_panel.setVisible(bool(workspace_view.attention))
+        if workspace_view.requires_attention:
+            tab_text = f"进展 · {workspace_view.action_required_count} 待处理"
+        elif workspace_view.has_updates:
+            tab_text = f"进展 · {workspace_view.notice_count} 新结果"
+        else:
+            tab_text = "进展"
+        self._tabs.setTabText(0, tab_text)
+
+    @staticmethod
+    def _unreviewed_artifact_label(item, artifact) -> str:
+        raw_policy = str(artifact.metadata.get("review_policy") or "").strip()
+        try:
+            policy = (
+                ArtifactReviewPolicy(raw_policy)
+                if raw_policy
+                else item.artifact_review_policy
+            )
+        except ValueError:
+            policy = item.artifact_review_policy
+        return {
+            ArtifactReviewPolicy.REQUIRED: "待验收",
+            ArtifactReviewPolicy.OPTIONAL: "可选反馈",
+            ArtifactReviewPolicy.NONE: "无需反馈",
+        }[policy]
 
     def _render_timeline(self, workspace_view) -> None:
         def esc(value: Any) -> str:

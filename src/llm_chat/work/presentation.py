@@ -10,9 +10,11 @@ from typing import Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 from llm_chat.runtime import ActionProposal, ActionStatus
 
 from .models import (
+    Artifact,
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactReviewPolicy,
     PlanStatus,
     WorkItem,
     WorkItemDetail,
@@ -27,6 +29,7 @@ class TaskWorkspaceScope(str, Enum):
     ALL = "all"
     ACTIVE = "active"
     ATTENTION = "attention"
+    UPDATES = "updates"
     FINISHED = "finished"
 
 
@@ -35,6 +38,11 @@ class AttentionKind(str, Enum):
     APPROVAL = "approval"
     FAILURE = "failure"
     ARTIFACT = "artifact"
+
+
+class AttentionLevel(str, Enum):
+    REQUIRED = "required"
+    NOTICE = "notice"
 
 
 class TimelineKind(str, Enum):
@@ -50,6 +58,7 @@ class TimelineKind(str, Enum):
 class AttentionItemView:
     id: str
     kind: AttentionKind
+    level: AttentionLevel
     title: str
     summary: str
     action_label: str
@@ -82,17 +91,33 @@ class TaskWorkspaceView:
     status_label: str
     kind: WorkItemKind
     kind_label: str
+    series_key: Optional[str]
+    artifact_review_policy: ArtifactReviewPolicy
     updated_at: datetime
     expected_deliverable: str
     attention: Tuple[AttentionItemView, ...]
     timeline: Tuple[TimelineEntryView, ...]
     artifact_count: int
     unreviewed_artifact_count: int
+    required_review_count: int
+    optional_review_count: int
     primary_action: PrimaryActionView
 
     @property
     def requires_attention(self) -> bool:
-        return bool(self.attention)
+        return self.action_required_count > 0
+
+    @property
+    def action_required_count(self) -> int:
+        return sum(item.level == AttentionLevel.REQUIRED for item in self.attention)
+
+    @property
+    def notice_count(self) -> int:
+        return sum(item.level == AttentionLevel.NOTICE for item in self.attention)
+
+    @property
+    def has_updates(self) -> bool:
+        return self.notice_count > 0
 
 
 _STATUS_LABELS: Dict[WorkItemStatus, str] = {
@@ -210,7 +235,22 @@ class TaskWorkspaceProjector:
         unreviewed = [
             artifact for artifact in detail.artifacts if artifact.id not in feedback
         ]
-        attention = self._attention(detail, pending, unreviewed)
+        required_review = [
+            artifact
+            for artifact in unreviewed
+            if self._review_policy(item, artifact) == ArtifactReviewPolicy.REQUIRED
+        ]
+        optional_review = [
+            artifact
+            for artifact in unreviewed
+            if self._review_policy(item, artifact) == ArtifactReviewPolicy.OPTIONAL
+        ]
+        attention = self._attention(
+            detail,
+            pending,
+            required_review,
+            optional_review,
+        )
         timeline = self._timeline(detail, pending, feedback)
         expected = ""
         if item.metadata:
@@ -223,12 +263,16 @@ class TaskWorkspaceProjector:
             status_label=_STATUS_LABELS[item.status],
             kind=item.kind,
             kind_label=_KIND_LABELS[item.kind],
+            series_key=item.series_key,
+            artifact_review_policy=item.artifact_review_policy,
             updated_at=item.updated_at,
             expected_deliverable=expected,
             attention=tuple(attention),
             timeline=tuple(timeline),
             artifact_count=len(detail.artifacts),
             unreviewed_artifact_count=len(unreviewed),
+            required_review_count=len(required_review),
+            optional_review_count=len(optional_review),
             primary_action=self._primary_action(
                 item,
                 pending_count=len(pending),
@@ -254,7 +298,8 @@ class TaskWorkspaceProjector:
         self,
         detail: WorkItemDetail,
         pending: Sequence[ActionProposal],
-        unreviewed,
+        required_review: Sequence[Artifact],
+        optional_review: Sequence[Artifact],
     ) -> List[AttentionItemView]:
         item = detail.work_item
         result: List[AttentionItemView] = []
@@ -263,6 +308,7 @@ class TaskWorkspaceProjector:
                 AttentionItemView(
                     id=detail.plan.id,
                     kind=AttentionKind.PLAN,
+                    level=AttentionLevel.REQUIRED,
                     title="确认执行计划",
                     summary=f"计划 v{detail.plan.version}：{detail.plan.summary}",
                     action_label="查看并确认",
@@ -274,6 +320,7 @@ class TaskWorkspaceProjector:
                 AttentionItemView(
                     id=proposal.id,
                     kind=AttentionKind.APPROVAL,
+                    level=AttentionLevel.REQUIRED,
                     title=f"审批 {proposal.tool_name}",
                     summary=proposal.impact or proposal.reason or "确认是否允许执行此动作",
                     action_label="处理审批",
@@ -289,21 +336,35 @@ class TaskWorkspaceProjector:
                 AttentionItemView(
                     id=f"{item.id}:failure",
                     kind=AttentionKind.FAILURE,
+                    level=AttentionLevel.REQUIRED,
                     title="任务执行失败",
                     summary=latest_error,
                     action_label="检查并重试",
                     occurred_at=item.updated_at,
                 )
             )
-        if item.status == WorkItemStatus.COMPLETED and unreviewed:
+        if item.status == WorkItemStatus.COMPLETED and required_review:
             result.append(
                 AttentionItemView(
                     id=f"{item.id}:artifacts",
                     kind=AttentionKind.ARTIFACT,
+                    level=AttentionLevel.REQUIRED,
                     title="验收交付物",
-                    summary=f"{len(unreviewed)} 个交付物等待你的反馈",
+                    summary=f"{len(required_review)} 个交付物等待你的反馈",
                     action_label="查看交付物",
-                    occurred_at=max(artifact.created_at for artifact in unreviewed),
+                    occurred_at=max(artifact.created_at for artifact in required_review),
+                )
+            )
+        if item.status == WorkItemStatus.COMPLETED and optional_review:
+            result.append(
+                AttentionItemView(
+                    id=f"{item.id}:updates",
+                    kind=AttentionKind.ARTIFACT,
+                    level=AttentionLevel.NOTICE,
+                    title="有新的自动化结果",
+                    summary=f"{len(optional_review)} 个结果可查看，不阻塞其他任务",
+                    action_label="查看新结果",
+                    occurred_at=max(artifact.created_at for artifact in optional_review),
                 )
             )
         return sorted(result, key=lambda entry: entry.occurred_at, reverse=True)
@@ -401,8 +462,11 @@ class TaskWorkspaceProjector:
                     title="交付结果",
                     summary=f"{len(detail.artifacts)} 个交付物",
                     details=tuple(
-                        f"{artifact.name} · {_ARTIFACT_KIND_LABELS[artifact.kind]}"
-                        f" · {self._feedback_label(feedback.get(artifact.id))}"
+                        self._artifact_timeline_label(
+                            item,
+                            artifact,
+                            feedback.get(artifact.id),
+                        )
                         for artifact in detail.artifacts
                     ),
                     occurred_at=max(artifact.created_at for artifact in detail.artifacts),
@@ -422,10 +486,38 @@ class TaskWorkspaceProjector:
         return entries
 
     @staticmethod
-    def _feedback_label(feedback: Optional[ArtifactFeedback]) -> str:
+    def _feedback_label(
+        feedback: Optional[ArtifactFeedback],
+        policy: ArtifactReviewPolicy,
+    ) -> str:
         if feedback is None:
+            if policy == ArtifactReviewPolicy.OPTIONAL:
+                return "可选反馈"
+            if policy == ArtifactReviewPolicy.NONE:
+                return "无需反馈"
             return "待验收"
         return _FEEDBACK_LABELS.get(feedback.decision, feedback.decision.value)
+
+    def _artifact_timeline_label(
+        self,
+        item: WorkItem,
+        artifact: Artifact,
+        feedback: Optional[ArtifactFeedback],
+    ) -> str:
+        return (
+            f"{artifact.name} · {_ARTIFACT_KIND_LABELS[artifact.kind]}"
+            f" · {self._feedback_label(feedback, self._review_policy(item, artifact))}"
+        )
+
+    @staticmethod
+    def _review_policy(item: WorkItem, artifact: Artifact) -> ArtifactReviewPolicy:
+        override = str(artifact.metadata.get("review_policy") or "").strip()
+        if override:
+            try:
+                return ArtifactReviewPolicy(override)
+            except ValueError:
+                pass
+        return item.artifact_review_policy
 
     @staticmethod
     def _primary_action(
@@ -483,7 +575,14 @@ class TaskWorkspaceQueryService:
         normalized_query = query.strip().casefold()
         proposals = self.actions.list(limit=2000)
         views = []
-        for item in self.work_items.list(limit=limit):
+        source_limit = max(limit, min(limit * 10, 2000))
+        seen_series = set()
+        for item in self.work_items.list(limit=source_limit):
+            series_identity = self._series_identity(item)
+            if series_identity and series_identity in seen_series:
+                continue
+            if series_identity:
+                seen_series.add(series_identity)
             if normalized_query and normalized_query not in (
                 f"{item.title}\n{item.objective}".casefold()
             ):
@@ -495,7 +594,18 @@ class TaskWorkspaceQueryService:
             )
             if self._matches_scope(view, scope):
                 views.append(view)
+                if len(views) >= limit:
+                    break
         return views
+
+    @staticmethod
+    def _series_identity(item: WorkItem) -> Optional[str]:
+        if item.series_key:
+            return item.series_key
+        if item.kind != WorkItemKind.AUTOMATION:
+            return None
+        scheduled_task_id = str(item.metadata.get("scheduled_task_id") or "").strip()
+        return f"scheduler:{scheduled_task_id}" if scheduled_task_id else None
 
     @staticmethod
     def _proposals_for(
@@ -518,6 +628,8 @@ class TaskWorkspaceQueryService:
             return True
         if scope == TaskWorkspaceScope.ATTENTION:
             return view.requires_attention
+        if scope == TaskWorkspaceScope.UPDATES:
+            return view.has_updates
         if scope == TaskWorkspaceScope.FINISHED:
             return view.status.terminal
         return not view.status.terminal

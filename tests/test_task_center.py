@@ -21,6 +21,7 @@ from llm_chat.runtime import (  # noqa: E402
 from llm_chat.work import (  # noqa: E402
     Artifact,
     ArtifactKind,
+    ArtifactReviewPolicy,
     GrantStatus,
     PlanRevision,
     PlanStatus,
@@ -29,6 +30,7 @@ from llm_chat.work import (  # noqa: E402
     ResourceType,
     WorkItem,
     WorkItemDetail,
+    WorkItemKind,
     WorkItemStatus,
 )
 
@@ -227,6 +229,30 @@ def test_task_workspace_filter_keeps_detail_in_sync(qt_app):
     qt_app.processEvents()
     assert dialog._selected_work_item_id is None
     assert dialog._detail_title.text() == "选择一个任务"
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_optional_automation_result_uses_updates_scope_not_attention(qt_app):
+    detail = _detail()
+    detail.work_item.kind = WorkItemKind.AUTOMATION
+    detail.work_item.artifact_review_policy = ArtifactReviewPolicy.OPTIONAL
+    dialog = TaskCenterDialog(_fake_app(detail))
+    qt_app.processEvents()
+
+    assert "1 新结果" in dialog._table.item(0, 0).text()
+    assert dialog._tabs.tabText(0) == "进展 · 1 新结果"
+    assert dialog._attention_panel.title() == "新结果"
+    assert "可选反馈" == dialog._artifacts_table.item(0, 2).text()
+
+    dialog._scope_filter.setCurrentIndex(2)
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 0
+
+    dialog._scope_filter.setCurrentIndex(3)
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 1
 
     dialog.close()
     qt_app.processEvents()
