@@ -36,13 +36,7 @@ jobs:
             libfontconfig1 \
             libgl1 \
             libglib2.0-0t64 \
-            libxcb-cursor0 \
-            libxcb-keysyms1 \
-            libxcb-xinerama0 \
-            libxkbcommon0 \
-            libxkbcommon-x11-0 \
-            xauth \
-            xvfb
+            libxkbcommon0
 
       - name: Install test dependencies
         run: |
@@ -58,7 +52,9 @@ jobs:
         run: python -m compileall -q src packages
 
       - name: Test
-        run: xvfb-run -a pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q
 
   build-macos:
     name: Package macOS arm64
