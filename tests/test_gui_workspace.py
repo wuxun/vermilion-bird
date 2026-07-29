@@ -76,6 +76,24 @@ def test_workspace_shortcut_is_retained_and_switches_to_tasks(qt_app):
     qt_app.processEvents()
 
 
+def test_task_navigation_surfaces_attention_count(qt_app):
+    frontend = GUIFrontend()
+    app = _fake_app()
+    app.list_task_workspace_views = lambda **_kwargs: []
+    frontend.set_app(app)
+    parent = QWidget()
+
+    frontend._setup_ui(parent)
+    app.list_task_workspace_views = lambda **_kwargs: [object(), object()]
+    frontend._update_execution_center_indicator()
+
+    assert frontend._task_nav_button.text() == "任务\n2 待办"
+    assert "2 项待处理" in frontend._task_nav_button.toolTip()
+
+    parent.close()
+    qt_app.processEvents()
+
+
 def test_chat_workspace_keeps_idle_runtime_details_out_of_view(qt_app):
     frontend = GUIFrontend()
     frontend.set_app(_fake_app())

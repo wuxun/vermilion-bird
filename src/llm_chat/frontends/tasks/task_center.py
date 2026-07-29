@@ -43,10 +43,14 @@ from llm_chat.frontends.theme import Colors
 from llm_chat.runtime import ActionStatus, Capability
 from llm_chat.work import (
     ArtifactFeedbackDecision,
+    AttentionKind,
     GrantScope,
     GrantStatus,
     PlanStatus,
     ResourceType,
+    TaskWorkspaceProjector,
+    TaskWorkspaceScope,
+    TimelineKind,
     WorkItemKind,
     WorkItemStatus,
 )
@@ -259,8 +263,11 @@ class TaskCenterDialog(QDialog):
         self._artifact_feedback_by_id: Dict[str, Any] = {}
         self._actions_by_id: Dict[str, Any] = {}
         self._grants_by_id: Dict[str, Any] = {}
+        self._workspace_views_by_id: Dict[str, Any] = {}
+        self._projector = TaskWorkspaceProjector()
         self._current_plan = None
         self._current_detail = None
+        self._current_workspace_view = None
         self._primary_action: Optional[str] = None
         self._selected_work_item_id: Optional[str] = None
         self._busy_work_item_id: Optional[str] = None
@@ -351,39 +358,30 @@ class TaskCenterDialog(QDialog):
         filters = QHBoxLayout(self._filters_bar)
         filters.setContentsMargins(0, 0, 0, 0)
         filters.setSpacing(8)
-        self._status_filter = QComboBox()
-        self._status_filter.addItem("全部状态", None)
-        for status, label in _STATUS_LABELS.items():
-            self._status_filter.addItem(label, status)
-        self._status_filter.currentIndexChanged.connect(self.refresh)
-        filters.addWidget(self._status_filter)
-        self._kind_filter = QComboBox()
-        self._kind_filter.addItem("全部类型", None)
-        for kind, label in _KIND_LABELS.items():
-            self._kind_filter.addItem(label, kind)
-        self._kind_filter.currentIndexChanged.connect(self.refresh)
-        filters.addWidget(self._kind_filter)
+        self._task_search_input = QLineEdit()
+        self._task_search_input.setPlaceholderText("搜索任务…")
+        self._task_search_input.setClearButtonEnabled(True)
+        self._task_search_input.textChanged.connect(self.refresh)
+        filters.addWidget(self._task_search_input, 1)
+        self._scope_filter = QComboBox()
+        self._scope_filter.addItem("全部任务", TaskWorkspaceScope.ALL)
+        self._scope_filter.addItem("进行中", TaskWorkspaceScope.ACTIVE)
+        self._scope_filter.addItem("待你处理", TaskWorkspaceScope.ATTENTION)
+        self._scope_filter.addItem("已结束", TaskWorkspaceScope.FINISHED)
+        self._scope_filter.currentIndexChanged.connect(self.refresh)
+        filters.addWidget(self._scope_filter)
         filters.addStretch()
         root.addWidget(self._filters_bar)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["状态", "任务", "类型", "更新时间"])
+        self._table = QTableWidget(0, 1)
+        self._table.horizontalHeader().hide()
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
         self._table.verticalHeader().setVisible(False)
-        self._table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._splitter.addWidget(self._table)
 
@@ -393,6 +391,9 @@ class TaskCenterDialog(QDialog):
         self._detail_title = QLabel("选择一个任务")
         self._detail_title.setStyleSheet("font-size: 17px; font-weight: 700;")
         detail_layout.addWidget(self._detail_title)
+        self._detail_meta = QLabel("从左侧选择一项，查看当前进展和下一步。")
+        self._detail_meta.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
+        detail_layout.addWidget(self._detail_meta)
 
         self._tabs = QTabWidget()
         self._timeline = QTextBrowser()
@@ -460,7 +461,6 @@ class TaskCenterDialog(QDialog):
         progress_layout = QVBoxLayout(progress_panel)
         progress_layout.setContentsMargins(0, 0, 0, 0)
         progress_layout.setSpacing(10)
-        progress_layout.addWidget(self._timeline, 1)
 
         self._attention_panel = QGroupBox("待你处理")
         attention_layout = QVBoxLayout(self._attention_panel)
@@ -481,6 +481,7 @@ class TaskCenterDialog(QDialog):
         approval_actions.addStretch()
         attention_layout.addLayout(approval_actions)
         progress_layout.addWidget(self._attention_panel)
+        progress_layout.addWidget(self._timeline, 1)
         self._tabs.addTab(progress_panel, "进展")
 
         plan_panel = QWidget()
@@ -629,7 +630,7 @@ class TaskCenterDialog(QDialog):
         actions.addWidget(self._primary_button)
         detail_layout.addLayout(actions)
         self._splitter.addWidget(detail_panel)
-        self._splitter.setSizes([340, 860])
+        self._splitter.setSizes([290, 910])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
         root.addWidget(self._splitter, 1)
@@ -684,16 +685,19 @@ class TaskCenterDialog(QDialog):
             self._unsubscribe = service.subscribe(lambda _item: self._signals.changed.emit())
 
     def _on_empty_action(self) -> None:
-        if self._status_filter.currentData() is not None or self._kind_filter.currentData() is not None:
-            self._status_filter.setCurrentIndex(0)
-            self._kind_filter.setCurrentIndex(0)
+        if (
+            self._scope_filter.currentData() != TaskWorkspaceScope.ALL
+            or self._task_search_input.text().strip()
+        ):
+            self._scope_filter.setCurrentIndex(0)
+            self._task_search_input.clear()
             return
         self._new_task()
 
     def _update_content_state(self, has_items: bool) -> None:
         filtered = bool(
-            self._status_filter.currentData() is not None
-            or self._kind_filter.currentData() is not None
+            self._scope_filter.currentData() != TaskWorkspaceScope.ALL
+            or self._task_search_input.text().strip()
         )
         self._empty_state.setVisible(not has_items)
         self._filters_bar.setVisible(has_items or filtered)
@@ -711,33 +715,68 @@ class TaskCenterDialog(QDialog):
             self._empty_action.setText("新建第一个任务")
 
     def refresh(self) -> None:
-        status = self._status_filter.currentData()
-        kind = self._kind_filter.currentData()
+        scope = self._scope_filter.currentData() or TaskWorkspaceScope.ALL
+        query = self._task_search_input.text().strip()
         try:
-            items = self._app.list_work_items(status=status, kind=kind, limit=500)
+            items = self._app.list_work_items(limit=500)
+            if hasattr(self._app, "list_task_workspace_views"):
+                views = self._app.list_task_workspace_views(
+                    scope=scope,
+                    query=query,
+                    limit=500,
+                )
+            else:
+                views = self._fallback_workspace_views(items, scope=scope, query=query)
         except Exception as exc:
             QMessageBox.warning(self, "刷新失败", str(exc))
             return
         self._items_by_id = {item.id: item for item in items}
-        self._update_content_state(bool(items))
-        self._table.setRowCount(len(items))
+        self._workspace_views_by_id = {view.work_item_id: view for view in views}
+        self._update_content_state(bool(views))
+        self._table.setRowCount(len(views))
         selected_row = None
-        for row, item in enumerate(items):
-            status_item = QTableWidgetItem(_STATUS_LABELS[item.status])
-            status_item.setData(Qt.ItemDataRole.UserRole, item.id)
-            self._table.setItem(row, 0, status_item)
-            self._table.setItem(row, 1, QTableWidgetItem(item.title))
-            self._table.setItem(row, 2, QTableWidgetItem(_KIND_LABELS[item.kind]))
-            self._table.setItem(row, 3, QTableWidgetItem(self._format_time(item.updated_at)))
-            if item.id == self._selected_work_item_id:
+        for row, view in enumerate(views):
+            attention = f" · {len(view.attention)} 待处理" if view.attention else ""
+            list_item = QTableWidgetItem(
+                f"{view.title}\n"
+                f"{view.status_label} · {self._format_time(view.updated_at)}{attention}"
+            )
+            list_item.setData(Qt.ItemDataRole.UserRole, view.work_item_id)
+            self._table.setItem(row, 0, list_item)
+            self._table.setRowHeight(row, 58)
+            if view.work_item_id == self._selected_work_item_id:
                 selected_row = row
         if selected_row is not None:
             self._table.selectRow(selected_row)
-        elif items:
+        elif views:
             self._table.selectRow(0)
         else:
             self._selected_work_item_id = None
             self._clear_detail()
+
+    def _fallback_workspace_views(self, items, *, scope, query: str):
+        normalized_query = query.casefold()
+        views = []
+        for item in items:
+            if normalized_query and normalized_query not in (
+                f"{item.title}\n{item.objective}".casefold()
+            ):
+                continue
+            detail = self._app.get_work_item_detail(item.id)
+            proposals = (
+                self._app.list_work_item_actions(item.id)
+                if hasattr(self._app, "list_work_item_actions")
+                else []
+            )
+            view = self._projector.project(detail, proposals)
+            if scope == TaskWorkspaceScope.ATTENTION and not view.requires_attention:
+                continue
+            if scope == TaskWorkspaceScope.ACTIVE and view.status.terminal:
+                continue
+            if scope == TaskWorkspaceScope.FINISHED and not view.status.terminal:
+                continue
+            views.append(view)
+        return views
 
     def _on_selection_changed(self) -> None:
         selected = self._table.selectedItems()
@@ -756,7 +795,21 @@ class TaskCenterDialog(QDialog):
             return
         item = detail.work_item
         self._current_detail = detail
+        workspace_view = self._workspace_views_by_id.get(work_item_id)
+        if workspace_view is None:
+            workspace_view = self._projector.project(detail, proposals)
+            self._workspace_views_by_id[work_item_id] = workspace_view
+        self._current_workspace_view = workspace_view
         self._detail_title.setText(item.title)
+        attention_text = (
+            f" · {len(workspace_view.attention)} 项待处理"
+            if workspace_view.attention
+            else ""
+        )
+        self._detail_meta.setText(
+            f"{workspace_view.status_label} · {workspace_view.kind_label}"
+            f" · 更新于 {self._format_time(workspace_view.updated_at)}{attention_text}"
+        )
         lines = [
             f"状态：{_STATUS_LABELS[item.status]}",
             f"类型：{_KIND_LABELS[item.kind]}",
@@ -858,8 +911,8 @@ class TaskCenterDialog(QDialog):
         self._tabs.setTabText(1, f"交付物 ({len(detail.artifacts)})")
         self._load_plan(detail.plan)
         self._load_grants(detail.grants)
-        self._update_attention(proposals, pending_count)
-        self._render_timeline(detail, proposals)
+        self._update_attention(workspace_view, pending_count)
+        self._render_timeline(workspace_view)
         self._update_actions(item)
 
     def _load_plan(self, plan) -> None:
@@ -922,26 +975,31 @@ class TaskCenterDialog(QDialog):
         else:
             self._update_grant_actions()
 
-    def _update_attention(self, proposals, pending_count: int) -> None:
-        draft_plan = bool(
-            self._current_plan is not None and self._current_plan.status == PlanStatus.DRAFT
+    def _update_attention(self, workspace_view, pending_count: int) -> None:
+        draft_plan = any(
+            item.kind == AttentionKind.PLAN for item in workspace_view.attention
         )
-        parts = []
-        if pending_count:
-            parts.append(f"{pending_count} 个动作等待审批")
-        if draft_plan:
-            parts.append(f"计划 v{self._current_plan.version} 等待确认")
-        self._attention_summary.setText(" · ".join(parts))
+        self._attention_summary.setText(
+            "\n".join(
+                f"• {item.title} — {item.summary}"
+                for item in workspace_view.attention
+            )
+        )
         self._approvals_table.setVisible(bool(pending_count))
         self._approve_button.setVisible(bool(pending_count))
         self._reject_button.setVisible(bool(pending_count))
         self._approve_plan_button.setVisible(draft_plan)
-        self._attention_panel.setVisible(bool(parts))
-        self._tabs.setTabText(0, "进展 · 待处理" if parts else "进展")
+        self._attention_panel.setVisible(workspace_view.requires_attention)
+        self._tabs.setTabText(
+            0,
+            (
+                f"进展 · {len(workspace_view.attention)} 待处理"
+                if workspace_view.requires_attention
+                else "进展"
+            ),
+        )
 
-    def _render_timeline(self, detail, proposals) -> None:
-        item = detail.work_item
-
+    def _render_timeline(self, workspace_view) -> None:
         def esc(value: Any) -> str:
             return html.escape(str(value or ""))
 
@@ -953,94 +1011,29 @@ class TaskCenterDialog(QDialog):
                 f"{esc(title)}</div>{body}</div>"
             )
 
-        cards = [
-            card(
-                "目标",
-                f'<div style="line-height:1.55;">{esc(item.objective)}</div>',
-                Colors.PRIMARY,
+        accents = {
+            TimelineKind.OBJECTIVE: Colors.PRIMARY,
+            TimelineKind.APPROVAL: "#d59b28",
+            TimelineKind.ARTIFACT: "#5e9f72",
+        }
+        cards = []
+        for entry in workspace_view.timeline:
+            details = "".join(
+                f'<div style="margin:5px 0;color:{Colors.TEXT_SECONDARY};">'
+                f"{esc(line)}</div>"
+                for line in entry.details
             )
-        ]
-        expected = item.metadata.get("expected_deliverable") if item.metadata else None
-        if expected:
+            summary = (
+                f'<div style="line-height:1.55;'
+                f'color:{Colors.TEXT_PRIMARY};">{esc(entry.summary)}</div>'
+            )
             cards.append(
                 card(
-                    "预期交付",
-                    f'<div style="line-height:1.55;">{esc(expected)}</div>',
+                    entry.title,
+                    summary + details,
+                    accents.get(entry.kind, Colors.CHAT_ACCENT),
                 )
             )
-
-        plan = detail.plan
-        if plan is not None:
-            step_icons = {
-                "pending": "○",
-                "running": "◉",
-                "blocked": "!",
-                "completed": "✓",
-                "failed": "×",
-                "skipped": "–",
-            }
-            step_lines = []
-            for step in plan.steps:
-                icon = step_icons.get(step.status.value, "○")
-                expected_kind = (
-                    f" · 产物 "
-                    f"{esc(_ARTIFACT_KIND_LABELS.get(step.expected_artifact_kind.value, step.expected_artifact_kind.value))}"
-                    if step.expected_artifact_kind
-                    else ""
-                )
-                step_lines.append(
-                    f'<div style="margin:5px 0;"><b>{icon}</b>&nbsp; '
-                    f"{esc(step.title)}"
-                    f'<span style="color:{Colors.TEXT_MUTED};">'
-                    f" · {esc(_STEP_STATUS_LABELS.get(step.status.value, step.status.value))}"
-                    f"{expected_kind}</span></div>"
-                )
-            plan_body = (
-                f'<div style="color:{Colors.TEXT_MUTED};margin-bottom:6px;">'
-                f"v{plan.version} · "
-                f"{esc(_PLAN_STATUS_LABELS.get(plan.status.value, plan.status.value))}"
-                f" · {esc(plan.summary)}</div>" + "".join(step_lines)
-            )
-            cards.append(card("执行计划", plan_body))
-
-        pending = [proposal for proposal in proposals if proposal.status == ActionStatus.PENDING]
-        if pending:
-            lines = "".join(
-                f'<div style="margin:5px 0;"><b>{esc(proposal.tool_name)}</b>'
-                f" · {esc(proposal.impact or proposal.reason)}</div>"
-                for proposal in pending
-            )
-            cards.append(card("等待你的批准", lines, "#d59b28"))
-
-        if detail.runs:
-            run_lines = []
-            for run in detail.runs[:6]:
-                run_lines.append(
-                    f'<div style="margin:5px 0;"><b>'
-                    f"{esc(_RUN_STATUS_LABELS.get(run.status.value, run.status.value))}</b>"
-                    f" · {esc(_RUN_TYPE_LABELS.get(run.type.value, run.type.value))}"
-                    f" · {esc(self._format_time(run.created_at))}</div>"
-                )
-            cards.append(card("执行活动", "".join(run_lines)))
-
-        if detail.artifacts:
-            artifact_lines = []
-            for artifact in detail.artifacts:
-                feedback = self._artifact_feedback_by_id.get(artifact.id)
-                decision = (
-                    _FEEDBACK_LABELS.get(feedback.decision.value, feedback.decision.value)
-                    if feedback
-                    else "待验收"
-                )
-                artifact_lines.append(
-                    f'<div style="margin:5px 0;"><b>{esc(artifact.name)}</b>'
-                    f" · "
-                    f"{esc(_ARTIFACT_KIND_LABELS.get(artifact.kind.value, artifact.kind.value))}"
-                    f'<span style="color:{Colors.TEXT_MUTED};"> · {esc(decision)}</span></div>'
-                )
-            cards.append(card("交付结果", "".join(artifact_lines), "#5e9f72"))
-        elif item.status == WorkItemStatus.COMPLETED:
-            cards.append(card("交付结果", "任务已完成，但没有登记可交付产物。", "#d59b28"))
 
         self._timeline.setHtml(
             f"""
@@ -1639,6 +1632,7 @@ class TaskCenterDialog(QDialog):
 
     def _clear_detail(self) -> None:
         self._detail_title.setText("选择一个任务")
+        self._detail_meta.setText("从左侧选择一项，查看当前进展和下一步。")
         self._timeline.clear()
         self._follow_up_input.clear()
         self._overview.clear()
@@ -1654,6 +1648,7 @@ class TaskCenterDialog(QDialog):
         self._grants_by_id = {}
         self._current_plan = None
         self._current_detail = None
+        self._current_workspace_view = None
         self._attention_panel.hide()
         self._tabs.setTabText(0, "进展")
         self._tabs.setTabText(1, "交付物")

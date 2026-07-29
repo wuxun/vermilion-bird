@@ -419,25 +419,41 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._workspace_navigation_sync = False
 
     def _update_execution_center_indicator(self):
-        """在顶栏展示待审批数量，避免审批请求被聊天内容淹没。"""
+        """在一级导航展示需要用户处理的任务数量。"""
 
         if self._task_nav_button is None or self._app_instance is None:
             return
         try:
-            from llm_chat.runtime import ActionStatus
+            if hasattr(self._app_instance, "list_task_workspace_views"):
+                from llm_chat.work import TaskWorkspaceScope
 
-            pending_count = len(
-                self._app_instance.action_proposals.list(
-                    status=ActionStatus.PENDING,
-                    limit=100,
+                attention_count = len(
+                    self._app_instance.list_task_workspace_views(
+                        scope=TaskWorkspaceScope.ATTENTION,
+                        limit=100,
+                    )
                 )
-            )
+            else:
+                from llm_chat.runtime import ActionStatus
+
+                attention_count = len(
+                    self._app_instance.action_proposals.list(
+                        status=ActionStatus.PENDING,
+                        limit=100,
+                    )
+                )
         except Exception:
-            logger.debug("Failed to refresh pending action indicator", exc_info=True)
+            logger.debug("Failed to refresh task attention indicator", exc_info=True)
             return
-        self._task_nav_button.setText(f"任务\n{pending_count} 待办" if pending_count else "任务")
+        self._task_nav_button.setText(
+            f"任务\n{attention_count} 待办" if attention_count else "任务"
+        )
         self._task_nav_button.setToolTip(
-            f"任务工作区：{pending_count} 项待处理" if pending_count else "任务工作区 (Ctrl+Shift+T)"
+            (
+                f"任务工作区：{attention_count} 项待处理"
+                if attention_count
+                else "任务工作区 (Ctrl+Shift+T)"
+            )
         )
 
     def set_conversation_callbacks(

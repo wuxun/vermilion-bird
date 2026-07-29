@@ -112,7 +112,8 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     qt_app.processEvents()
 
     assert dialog._table.rowCount() == 1
-    assert dialog._table.item(0, 1).text() == "生成产品规划"
+    assert "生成产品规划" in dialog._table.item(0, 0).text()
+    assert "1 待处理" in dialog._table.item(0, 0).text()
     assert dialog._runs_table.rowCount() == 1
     assert dialog._artifacts_table.rowCount() == 1
     assert dialog._tabs.count() == 3
@@ -146,6 +147,34 @@ def test_empty_task_center_only_shows_the_next_step(qt_app):
     assert dialog._splitter.isHidden()
     assert dialog._filters_bar.isHidden()
     assert dialog._empty_action.text() == "新建第一个任务"
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_task_workspace_filters_attention_and_searches_objective(qt_app):
+    detail = _detail()
+    dialog = TaskCenterDialog(_fake_app(detail))
+    qt_app.processEvents()
+
+    dialog._scope_filter.setCurrentIndex(2)
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 1
+
+    dialog._scope_filter.setCurrentIndex(1)
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 0
+    assert not dialog._empty_state.isHidden()
+
+    dialog._scope_filter.setCurrentIndex(0)
+    dialog._task_search_input.setText("完整的产品规划")
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 1
+
+    dialog._task_search_input.setText("不存在的任务")
+    qt_app.processEvents()
+    assert dialog._table.rowCount() == 0
+    assert dialog._empty_action.text() == "清除筛选"
 
     dialog.close()
     qt_app.processEvents()
@@ -195,7 +224,7 @@ def test_task_center_shows_inline_pending_approval(qt_app):
     qt_app.processEvents()
 
     assert dialog._approvals_table.rowCount() == 1
-    assert dialog._tabs.tabText(0) == "进展 · 待处理"
+    assert dialog._tabs.tabText(0) == "进展 · 1 待处理"
     assert dialog._approve_button.isEnabled()
     assert dialog._reject_button.isEnabled()
     assert dialog._primary_button.text() == "处理审批"
@@ -269,7 +298,7 @@ def test_task_center_can_be_embedded_as_main_workspace(qt_app):
     qt_app.processEvents()
 
     assert not workspace.isWindow()
-    assert workspace._tabs.tabText(0) == "进展"
+    assert workspace._tabs.tabText(0) == "进展 · 1 待处理"
     assert workspace._tabs.tabText(2) == "详细信息"
 
     workspace.close()
