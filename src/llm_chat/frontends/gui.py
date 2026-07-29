@@ -89,7 +89,6 @@ try:
         QComboBox,
         QDialog,
         QStackedWidget,
-        QButtonGroup,
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -120,7 +119,6 @@ except ImportError:
     QComboBox = None
     QDialog = None
     QStackedWidget = None
-    QButtonGroup = None
     Qt = None
     QTimer = None
     QSize = None
@@ -162,12 +160,17 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._chat_workspace: Optional[QWidget] = None
         self._chat_nav_button: Optional[QPushButton] = None
         self._task_nav_button: Optional[QPushButton] = None
-        self._workspace_nav_group: Optional[QButtonGroup] = None
         self._workspace_navigation_sync: bool = False
         self._sidebar_expanded: bool = True
         self._brand_label: Optional[QLabel] = None
         self._recent_label: Optional[QLabel] = None
         self._chat_title_label: Optional[QLabel] = None
+        self._goal_frame: Optional[QFrame] = None
+        self._goal_title_label: Optional[QLabel] = None
+        self._goal_status_label: Optional[QLabel] = None
+        self._goal_open_button: Optional[QPushButton] = None
+        self._goal_menu_action = None
+        self._current_work_item = None
         self._composer_add_button: Optional[QPushButton] = None
         self._sidebar_search_button: Optional[QPushButton] = None
         self._shortcuts: Dict[str, Any] = {}
@@ -264,7 +267,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         register("Ctrl+,", self._show_settings_menu)
         # Ctrl+Shift+R → 打开执行与审批中心
         register("Ctrl+Shift+R", self._on_execution_center)
-        # Ctrl+Shift+T → 打开产品级任务中心
+        # Ctrl+Shift+T → 打开跨对话工作概览
         register("Ctrl+Shift+T", self._on_task_center)
         logger.info("键盘快捷键已注册")
 
@@ -316,6 +319,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         menu.addAction("💬 新建对话", self._on_new_conv)
         menu.addAction("🗑 清空对话", self._on_clear)
+        menu.addAction("🎯 设为目标 / 查看进展", self._on_goal_action)
         menu.addSeparator()
         menu.addAction("🔧 MCP Tools", self._on_mcp_config)
         menu.addAction("⚡ Skills", self._on_skills_config)
@@ -357,7 +361,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             "Ctrl+K  — 搜索历史对话\n"
             "Ctrl+L  — 清空当前对话\n"
             "Ctrl+,  — 打开设置菜单\n"
-            "Ctrl+Shift+T — 任务中心\n"
+            "Ctrl+Shift+T — 工作概览\n"
             "Ctrl+Shift+R — 执行与审批中心\n"
             "Escape  — 停止生成 / 聚焦输入框\n"
             "Enter   — 发送消息\n"
@@ -386,7 +390,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._execution_center_dialog = None
 
     def _on_task_center(self):
-        """切换到以用户目标和交付物为中心的任务工作区。"""
+        """打开跨对话目标、审批和交付物的工作概览。"""
 
         if self._app_instance is None:
             QMessageBox.warning(self._main_window, "暂不可用", "应用服务尚未初始化。")
@@ -412,7 +416,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._task_center_dialog = None
 
     def _on_chat_workspace(self):
-        """切换回对话工作区。"""
+        """返回当前工作线程。"""
 
         if self._workspace_stack is None or self._chat_workspace is None:
             return
@@ -421,14 +425,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._input_field is not None:
             self._input_field.setFocus()
 
-    def _on_chat_navigation_toggled(self, checked: bool):
-        """响应鼠标、键盘和辅助功能触发的导航状态变化。"""
-
-        if checked and not self._workspace_navigation_sync:
-            self._on_chat_workspace()
-
     def _on_task_navigation_toggled(self, checked: bool):
-        """响应鼠标、键盘和辅助功能触发的导航状态变化。"""
+        """工作概览是跨线程聚合入口，不是另一种内容类型。"""
 
         if checked and not self._workspace_navigation_sync:
             self._on_task_center()
@@ -437,15 +435,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         current = self._workspace_stack.currentWidget() if self._workspace_stack else None
         self._workspace_navigation_sync = True
         try:
-            if self._chat_nav_button is not None:
-                self._chat_nav_button.setChecked(current is self._chat_workspace)
             if self._task_nav_button is not None:
                 self._task_nav_button.setChecked(current is self._task_workspace)
         finally:
             self._workspace_navigation_sync = False
 
     def _update_execution_center_indicator(self):
-        """在一级导航展示需要用户处理的任务数量。"""
+        """在工作概览入口展示需要用户处理的数量。"""
 
         if self._task_nav_button is None or self._app_instance is None:
             return
@@ -473,15 +469,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
         if self._sidebar_expanded:
             self._task_nav_button.setText(
-                f"✓  任务    {attention_count}" if attention_count else "✓  任务"
+                f"◎  工作概览    {attention_count}" if attention_count else "◎  工作概览"
             )
         else:
-            self._task_nav_button.setText("✓")
+            self._task_nav_button.setText("◎")
         self._task_nav_button.setToolTip(
             (
-                f"任务工作区：{attention_count} 项待处理"
+                f"工作概览：{attention_count} 项待处理"
                 if attention_count
-                else "任务工作区 (Ctrl+Shift+T)"
+                else "工作概览 (Ctrl+Shift+T)"
             )
         )
 
@@ -541,8 +537,10 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._setup_shortcuts()
         self._execution_center_timer = QTimer(self._main_window)
         self._execution_center_timer.timeout.connect(self._update_execution_center_indicator)
+        self._execution_center_timer.timeout.connect(self._refresh_goal_state)
         self._execution_center_timer.start(2500)
         self._update_execution_center_indicator()
+        self._refresh_goal_state()
 
         self._main_window.closeEvent = self._on_close_event
 
@@ -618,67 +616,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         main_layout.addWidget(self._workspace_stack, stretch=1)
         self._update_workspace_navigation()
 
-    def _create_navigation_rail(self) -> QWidget:
-        rail = QFrame()
-        rail.setObjectName("navigationRail")
-        rail.setFixedWidth(52)
-        layout = QVBoxLayout(rail)
-        layout.setContentsMargins(6, 10, 6, 10)
-        layout.setSpacing(6)
-
-        brand = QLabel("朱")
-        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand.setFixedHeight(32)
-        brand.setStyleSheet(f"font-size: 17px; font-weight: 700; color: {Colors.PRIMARY};")
-        layout.addWidget(brand)
-
-        nav_style = f"""
-            QPushButton {{
-                border: none;
-                border-radius: 9px;
-                padding: 7px 4px;
-                color: {Colors.TEXT_SECONDARY};
-                background: transparent;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{
-                background: {Colors.PARAMS_BG};
-                color: {Colors.TEXT_PRIMARY};
-            }}
-            QPushButton:checked {{
-                background: {Colors.SIDEBAR_ACTIVE};
-                color: {Colors.PRIMARY};
-                font-weight: 700;
-            }}
-        """
-        self._chat_nav_button = QPushButton("对话")
-        self._chat_nav_button.setCheckable(True)
-        self._chat_nav_button.setFixedHeight(42)
-        self._chat_nav_button.setStyleSheet(nav_style)
-        self._chat_nav_button.toggled.connect(self._on_chat_navigation_toggled)
-        layout.addWidget(self._chat_nav_button)
-
-        self._task_nav_button = QPushButton("任务")
-        self._task_nav_button.setCheckable(True)
-        self._task_nav_button.setFixedHeight(42)
-        self._task_nav_button.setStyleSheet(nav_style)
-        self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
-        self._task_nav_button.toggled.connect(self._on_task_navigation_toggled)
-        layout.addWidget(self._task_nav_button)
-        self._workspace_nav_group = QButtonGroup(rail)
-        self._workspace_nav_group.setExclusive(True)
-        self._workspace_nav_group.addButton(self._chat_nav_button)
-        self._workspace_nav_group.addButton(self._task_nav_button)
-        layout.addStretch()
-
-        self._settings_button = QPushButton("设置")
-        self._settings_button.setFixedHeight(40)
-        self._settings_button.setStyleSheet(nav_style)
-        self._settings_button.setToolTip("设置 (Ctrl+,)")
-        self._settings_button.clicked.connect(self._show_settings_menu)
-        layout.addWidget(self._settings_button)
-        return rail
-
     def _create_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setFixedWidth(260)
@@ -717,7 +654,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(4)
 
-        self._new_conv_button = QPushButton("✎  新建任务")
+        self._new_conv_button = QPushButton("✎  新建对话")
         self._new_conv_button.setObjectName("sidebarPrimaryAction")
         self._new_conv_button.setFixedHeight(38)
         self._new_conv_button.setToolTip("新建对话 (Ctrl+N)")
@@ -754,25 +691,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 font-weight: 600;
             }}
         """
-        self._chat_nav_button = QPushButton("◌  对话")
-        self._chat_nav_button.setCheckable(True)
-        self._chat_nav_button.setFixedHeight(36)
-        self._chat_nav_button.setStyleSheet(nav_style)
-        self._chat_nav_button.toggled.connect(self._on_chat_navigation_toggled)
-        layout.addWidget(self._chat_nav_button)
-
-        self._task_nav_button = QPushButton("✓  任务")
+        self._task_nav_button = QPushButton("◎  工作概览")
         self._task_nav_button.setCheckable(True)
         self._task_nav_button.setFixedHeight(36)
         self._task_nav_button.setStyleSheet(nav_style)
-        self._task_nav_button.setToolTip("任务工作区 (Ctrl+Shift+T)")
+        self._task_nav_button.setToolTip("工作概览 (Ctrl+Shift+T)")
         self._task_nav_button.toggled.connect(self._on_task_navigation_toggled)
         layout.addWidget(self._task_nav_button)
-
-        self._workspace_nav_group = QButtonGroup(sidebar)
-        self._workspace_nav_group.setExclusive(True)
-        self._workspace_nav_group.addButton(self._chat_nav_button)
-        self._workspace_nav_group.addButton(self._task_nav_button)
 
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 5, 0, 2)
@@ -831,8 +756,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 if widget is not None:
                     widget.hide()
             self._new_conv_button.setText("✎")
-            self._chat_nav_button.setText("◌")
-            self._task_nav_button.setText("✓")
+            self._task_nav_button.setText("◎")
             self._settings_button.setText("⚙")
         else:
             self._sidebar.setFixedWidth(260)
@@ -848,8 +772,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             ]:
                 if widget is not None:
                     widget.show()
-            self._new_conv_button.setText("✎  新建任务")
-            self._chat_nav_button.setText("◌  对话")
+            self._new_conv_button.setText("✎  新建对话")
             self._update_execution_center_indicator()
             self._settings_button.setText("⚙  设置")
 
@@ -867,7 +790,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         header.setFixedHeight(56)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(20, 0, 16, 0)
-        self._chat_title_label = QLabel("新任务")
+        self._chat_title_label = QLabel("新对话")
         self._chat_title_label.setObjectName("chatTitle")
         self._chat_title_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
@@ -876,13 +799,15 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         header_menu_button = QPushButton("···")
         header_menu_button.setObjectName("headerMenuButton")
         header_menu_button.setFixedSize(34, 34)
-        header_menu_button.setToolTip("当前任务操作")
+        header_menu_button.setToolTip("当前对话操作")
         from PyQt6.QtWidgets import QMenu
 
         header_menu = QMenu(header_menu_button)
         header_menu.addAction("重命名", self._on_rename_conv)
         header_menu.addAction("清空内容", self._on_clear)
-        header_menu.addAction("删除任务", self._on_delete_conv)
+        self._goal_menu_action = header_menu.addAction("设为目标…", self._on_goal_action)
+        header_menu.addSeparator()
+        header_menu.addAction("删除对话", self._on_delete_conv)
         header_menu_button.setMenu(header_menu)
         header_layout.addWidget(header_menu_button)
         layout.addWidget(header)
@@ -945,6 +870,38 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._reasoning_combo.setCurrentIndex(0)
         self._reasoning_combo.currentIndexChanged.connect(self._on_reasoning_changed)
 
+        # 目标是对话的渐进能力，而不是另一套输入界面。
+        self._goal_frame = QFrame()
+        self._goal_frame.setObjectName("goalProgress")
+        self._goal_frame.setMaximumWidth(920)
+        goal_layout = QHBoxLayout(self._goal_frame)
+        goal_layout.setContentsMargins(13, 8, 10, 8)
+        goal_layout.setSpacing(8)
+        goal_mark = QLabel("◎")
+        goal_mark.setObjectName("goalMark")
+        goal_layout.addWidget(goal_mark)
+        goal_text = QVBoxLayout()
+        goal_text.setSpacing(1)
+        self._goal_title_label = QLabel()
+        self._goal_title_label.setObjectName("goalTitle")
+        goal_text.addWidget(self._goal_title_label)
+        self._goal_status_label = QLabel()
+        self._goal_status_label.setObjectName("goalStatus")
+        goal_text.addWidget(self._goal_status_label)
+        goal_layout.addLayout(goal_text, 1)
+        self._goal_open_button = QPushButton("查看进展")
+        self._goal_open_button.setObjectName("goalOpenButton")
+        self._goal_open_button.clicked.connect(self._open_current_goal)
+        goal_layout.addWidget(self._goal_open_button)
+        self._goal_frame.hide()
+
+        goal_row = QHBoxLayout()
+        goal_row.setContentsMargins(24, 8, 24, 0)
+        goal_row.addStretch(1)
+        goal_row.addWidget(self._goal_frame, 8)
+        goal_row.addStretch(1)
+        layout.addLayout(goal_row)
+
         # ── Codex-like 底部 composer：输入与上下文动作属于同一张卡片 ──
         bottom_frame = QFrame()
         bottom_frame.setObjectName("composerShell")
@@ -955,7 +912,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._input_field = InputTextEdit()
         self._input_field.setFont(QFont("", 12))
-        self._input_field.setPlaceholderText("描述你想完成的任务")
+        self._input_field.setPlaceholderText("输入消息，或描述想完成的工作")
         self._input_field.setMinimumHeight(58)
         self._input_field.setMaximumHeight(132)
         self._input_field.setStyleSheet(
@@ -1088,6 +1045,42 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 font-size: 14px;
                 font-weight: 600;
             }}
+            QFrame#goalProgress {{
+                background: {Colors.SURFACE_RAISED};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 10px;
+            }}
+            QLabel#goalMark {{
+                color: {Colors.PRIMARY};
+                border: none;
+                background: transparent;
+                font-size: 17px;
+                font-weight: 700;
+            }}
+            QLabel#goalTitle {{
+                color: {Colors.TEXT_PRIMARY};
+                border: none;
+                background: transparent;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QLabel#goalStatus {{
+                color: {Colors.TEXT_MUTED};
+                border: none;
+                background: transparent;
+                font-size: 11px;
+            }}
+            QPushButton#goalOpenButton {{
+                background: transparent;
+                color: {Colors.TEXT_SECONDARY};
+                border: none;
+                border-radius: 6px;
+                padding: 5px 8px;
+            }}
+            QPushButton#goalOpenButton:hover {{
+                background: {Colors.SURFACE_HOVER};
+                color: {Colors.TEXT_PRIMARY};
+            }}
             QFrame#composerShell {{
                 background: {Colors.SURFACE_RAISED};
                 border: 1px solid {Colors.BORDER_STRONG};
@@ -1135,6 +1128,118 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         if self._on_new_conversation:
             self._on_new_conversation()
+
+    def _conversation_goal(self):
+        if self._app_instance is None or not hasattr(
+            self._app_instance,
+            "get_conversation_work_item",
+        ):
+            return None
+        return self._app_instance.get_conversation_work_item(self.conversation_id)
+
+    def _refresh_goal_state(self) -> None:
+        """把持久目标渐进呈现在当前对话，而不是建立第二套输入界面。"""
+
+        try:
+            item = self._conversation_goal()
+        except Exception:
+            logger.debug("Failed to refresh conversation goal", exc_info=True)
+            return
+        self._current_work_item = item
+        if self._goal_menu_action is not None:
+            self._goal_menu_action.setText("查看目标进展" if item else "设为目标…")
+        if self._goal_frame is None:
+            return
+        self._goal_frame.setVisible(item is not None)
+        if item is None:
+            return
+
+        status_value = getattr(item.status, "value", str(item.status))
+        status_label = {
+            "draft": "草稿",
+            "ready": "待执行",
+            "running": "执行中",
+            "cancelling": "正在取消",
+            "pausing": "正在暂停",
+            "waiting_approval": "等待你的审批",
+            "paused": "已暂停",
+            "completed": "已完成",
+            "failed": "执行失败",
+            "cancelled": "已取消",
+        }.get(status_value, status_value)
+        self._goal_title_label.setText(item.title)
+        self._goal_status_label.setText(f"目标 · {status_label}")
+        self._goal_frame.setToolTip(item.objective)
+
+    def _on_goal_action(self) -> None:
+        if self._is_streaming:
+            self.display_info("请等待当前响应完成后再设置目标")
+            return
+        self._refresh_goal_state()
+        if self._current_work_item is not None:
+            self._open_current_goal()
+            return
+        if self._app_instance is None or not hasattr(
+            self._app_instance,
+            "promote_conversation_to_work_item",
+        ):
+            QMessageBox.warning(self._main_window, "暂不可用", "目标服务尚未初始化。")
+            return
+
+        from llm_chat.frontends.tasks.task_center import NewTaskDialog
+
+        initial_objective = next(
+            (
+                str(message.get("content", "")).strip()
+                for message in reversed(self._messages)
+                if message.get("role") == "user" and message.get("content")
+            ),
+            "",
+        )
+        current_title = (
+            self._chat_title_label.text().strip()
+            if self._chat_title_label is not None
+            else ""
+        )
+        if current_title == "新对话":
+            current_title = ""
+        dialog = NewTaskDialog(
+            self._main_window,
+            initial_objective=initial_objective,
+            initial_title=current_title,
+            conversation_goal=True,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            item = self._app_instance.promote_conversation_to_work_item(
+                self.conversation_id,
+                dialog.objective,
+                title=dialog.title or None,
+                workspace=dialog.workspace or None,
+                expected_deliverable=dialog.expected_deliverable or None,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self._main_window, "设置目标失败", str(exc))
+            return
+
+        self._current_work_item = item
+        self._refresh_goal_state()
+        self._update_execution_center_indicator()
+        if dialog.start_immediately.isChecked():
+            self._start_streaming(dialog.objective)
+
+    def _open_current_goal(self) -> None:
+        self._refresh_goal_state()
+        item = self._current_work_item
+        if item is None:
+            return
+        self._on_task_center()
+        if self._task_workspace is not None and hasattr(
+            self._task_workspace,
+            "focus_work_item",
+        ):
+            self._task_workspace.focus_work_item(item.id)
 
     def _on_delete_conv(self):
         if self._is_streaming:
@@ -1198,16 +1303,20 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             return
 
         conv_id = item.data(Qt.ItemDataRole.UserRole)
-        if conv_id and conv_id != self.conversation_id:
-            if self._on_switch_conversation:
-                self._on_switch_conversation(conv_id)
+        if not conv_id:
+            return
+        self._on_chat_workspace()
+        if conv_id != self.conversation_id and self._on_switch_conversation:
+            self._on_switch_conversation(conv_id)
+        else:
+            self._refresh_goal_state()
 
     def update_conversation_list(self, conversations: List[Dict[str, Any]]):
         if self._conversation_list is None:
             return
 
         self._conversation_list.clear()
-        current_title = "新任务"
+        current_title = "新对话"
 
         for conv in conversations:
             item = QListWidgetItem()
@@ -1225,6 +1334,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_title_label is not None:
             self._chat_title_label.setText(current_title)
             self._chat_title_label.setToolTip(current_title)
+        self._refresh_goal_state()
 
         for i in range(self._conversation_list.count()):
             list_item = self._conversation_list.item(i)
@@ -1245,7 +1355,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._conversation_id = conversation_id
         self._messages = []
         if self._chat_title_label is not None:
-            self._chat_title_label.setText("新任务")
+            self._chat_title_label.setText("新对话")
 
         for msg in messages:
             self._messages.append({"role": msg.get("role"), "content": msg.get("content")})
@@ -1253,6 +1363,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._update_context_status()
         self._refresh_chat_display()
         self._refresh_conversation_list()
+        self._refresh_goal_state()
 
     def is_current_conversation_empty(self) -> bool:
         return len(self._messages) == 0
@@ -1382,6 +1493,11 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         current_conv_id = self.conversation_id
         model_params = self._get_model_params()
+        try:
+            current_goal = self._conversation_goal()
+        except Exception:
+            logger.debug("Failed to resolve conversation goal for turn", exc_info=True)
+            current_goal = None
 
         def stream_response():
             try:
@@ -1390,6 +1506,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                     self._stream_signals.error_occurred.emit(current_conv_id, "ChatCore 未初始化")
                     return
 
+                run_context = {}
+                if current_goal is not None:
+                    from llm_chat.runtime import RunType
+
+                    run_context = {
+                        "work_item_id": current_goal.id,
+                        "run_type": RunType.WORKFLOW,
+                    }
                 full_text = chat_core.send_message_stream(
                     conversation_id=current_conv_id,
                     message=message,
@@ -1404,8 +1528,14 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                         used, limit
                     ),
                     on_card=lambda card: self._card_signals.card_created.emit(card),
+                    **run_context,
                     **model_params,
                 )
+                if current_goal is not None and hasattr(
+                    self._app_instance,
+                    "finalize_work_item_result",
+                ):
+                    self._app_instance.finalize_work_item_result(current_goal.id)
                 self._stream_signals.stream_finished.emit(current_conv_id, full_text)
             except Exception as e:
                 self._stream_signals.error_occurred.emit(current_conv_id, str(e))
@@ -1521,6 +1651,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._set_input_state(True)
         self._refresh_conversation_list()
+        self._refresh_goal_state()
+        self._update_execution_center_indicator()
 
     def _on_stream_error(self, conv_id: str, error: str):
         if conv_id != self.conversation_id:
@@ -1530,6 +1662,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._streaming_conversation_id = None
         self.display_error(error)
         self._set_input_state(True)
+        self._refresh_goal_state()
 
     def _on_tool_call_started(self, tool_name: str, tool_args: str):
         if self._chat_layout is None:

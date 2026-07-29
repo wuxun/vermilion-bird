@@ -244,6 +244,83 @@ class App:
             metadata=metadata,
         )
 
+    def get_conversation_work_item(self, conversation_id: str):
+        """返回当前对话承载的产品目标；普通对话没有 WorkItem。"""
+
+        conversation_id = conversation_id.strip()
+        if not conversation_id:
+            return None
+        items = self.work_items.list(
+            limit=10,
+            conversation_id=conversation_id,
+        )
+        return items[0] if items else None
+
+    def promote_conversation_to_work_item(
+        self,
+        conversation_id: str,
+        objective: str,
+        *,
+        title: Optional[str] = None,
+        workspace: Optional[str] = None,
+        expected_deliverable: Optional[str] = None,
+    ):
+        """把已有对话原地升级为持久目标，并复用完整对话上下文。"""
+
+        conversation_id = conversation_id.strip()
+        if not conversation_id:
+            raise ValueError("conversation id cannot be empty")
+        conversation = self.storage.get_conversation(conversation_id)
+        if conversation is None:
+            raise KeyError(f"Unknown conversation: {conversation_id}")
+
+        existing = self.get_conversation_work_item(conversation_id)
+        if existing is not None:
+            return existing
+
+        display_title = (title or conversation.get("title") or "").strip() or None
+        metadata: Dict[str, Any] = {
+            "source": "conversation_goal",
+            "promoted_from_conversation": True,
+        }
+        if expected_deliverable:
+            metadata["expected_deliverable"] = expected_deliverable.strip()
+        return self.create_work_item(
+            objective,
+            title=display_title,
+            kind=WorkItemKind.TASK,
+            conversation_id=conversation_id,
+            workspace=workspace,
+            idempotency_key=f"conversation-goal:{conversation_id}",
+            metadata=metadata,
+        )
+
+    def create_conversation_goal(
+        self,
+        objective: str,
+        *,
+        title: Optional[str] = None,
+        workspace: Optional[str] = None,
+        expected_deliverable: Optional[str] = None,
+    ):
+        """创建一个带独立对话的目标，供工作概览和其他前端共用。"""
+
+        display_title = (title or objective[:80]).strip()
+        conversation = self.conversation_manager.create_conversation(
+            title=display_title or None,
+        )
+        item = self.promote_conversation_to_work_item(
+            conversation.conversation_id,
+            objective,
+            title=display_title or None,
+            workspace=workspace,
+            expected_deliverable=expected_deliverable,
+        )
+        frontend = getattr(self, "current_frontend", None)
+        if frontend is not None and hasattr(frontend, "request_conversation_list_refresh"):
+            frontend.request_conversation_list_refresh()
+        return item
+
     def list_work_items(
         self,
         *,
@@ -570,6 +647,12 @@ class App:
             )
             detail = self.work_items.detail(work_item_id)
         return detail
+
+    def finalize_work_item_result(self, work_item_id: str):
+        """公开的执行收口用例，供统一对话界面固化目标交付物。"""
+
+        self.work_items.reconcile()
+        return self._materialize_work_item_result(work_item_id)
 
     def cancel_work_item(self, work_item_id: str):
         detail = self.work_items.detail(work_item_id)

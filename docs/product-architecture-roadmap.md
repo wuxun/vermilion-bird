@@ -125,7 +125,7 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] WorkItem 状态统一从 Run 事实投影
 - [x] Ember 依赖方向加入可执行架构边界测试
 - [x] LangGraph 保持在应用运行时，不进入 Ember 公共 API
-- [x] Codex 式对话/任务一级工作区与任务时间线
+- [x] Codex 式统一工作线程、渐进目标模式与任务时间线
 - [x] 状态主操作、统一创建表单和终态任务 follow-up
 - [x] 任务内计划确认、审批与交付验收渐进展示
 - [x] TaskWorkspace 只读投影层与统一待处理范围
@@ -136,6 +136,8 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] Codex-like Shell V2：单侧栏、深色任务画布、卡片式 Composer
 - [x] 对话、任务、执行中心和决策卡片统一设计令牌
 - [x] 工具执行默认折叠，低频能力改为渐进式入口
+- [x] 当前对话可原地升级为 WorkItem，并复用历史、Run 和 Artifact
+- [x] 任务中心降级为跨对话工作概览，消除两套内容入口
 
 ### v0.4：任务复用与自动化
 

@@ -5,7 +5,7 @@ import pytest
 
 from llm_chat.app import App
 from llm_chat.runtime import RunType
-from llm_chat.work import WorkItem, WorkItemStatus
+from llm_chat.work import WorkItem, WorkItemKind, WorkItemStatus
 
 
 def _app_for_item(item):
@@ -79,3 +79,84 @@ def test_continue_work_item_binds_a_conversation_when_missing():
         "conversation_created",
     )
     assert app.chat_core.send_message.call_args.kwargs["conversation_id"] == "conversation_created"
+
+
+def test_promote_conversation_to_work_item_reuses_history_and_is_idempotent():
+    app = App.__new__(App)
+    app.storage = MagicMock()
+    app.storage.get_conversation.return_value = {
+        "id": "conversation_goal",
+        "title": "架构讨论",
+    }
+    app.work_items = MagicMock()
+    app.work_items.list.return_value = []
+    created = WorkItem(
+        id="work_goal",
+        title="架构讨论",
+        objective="完成架构评审",
+        conversation_id="conversation_goal",
+    )
+    app.work_items.create.return_value = created
+
+    result = app.promote_conversation_to_work_item(
+        "conversation_goal",
+        "完成架构评审",
+        expected_deliverable="评审报告",
+    )
+
+    assert result == created
+    app.work_items.create.assert_called_once_with(
+        objective="完成架构评审",
+        title="架构讨论",
+        kind=WorkItemKind.TASK,
+        conversation_id="conversation_goal",
+        series_key=None,
+        artifact_review_policy=created.artifact_review_policy,
+        workspace=None,
+        idempotency_key="conversation-goal:conversation_goal",
+        metadata={
+            "source": "conversation_goal",
+            "promoted_from_conversation": True,
+            "expected_deliverable": "评审报告",
+        },
+    )
+
+    app.work_items.list.return_value = [created]
+    assert (
+        app.promote_conversation_to_work_item(
+            "conversation_goal",
+            "不会创建第二个目标",
+        )
+        == created
+    )
+    app.work_items.create.assert_called_once()
+
+
+def test_create_conversation_goal_binds_new_chat_before_execution():
+    app = App.__new__(App)
+    app.conversation_manager = MagicMock()
+    app.conversation_manager.create_conversation.return_value = SimpleNamespace(
+        conversation_id="conversation_created"
+    )
+    app.promote_conversation_to_work_item = MagicMock(
+        return_value=WorkItem(
+            id="work_created",
+            title="生成报告",
+            objective="生成报告",
+            conversation_id="conversation_created",
+        )
+    )
+    app.current_frontend = MagicMock()
+
+    item = app.create_conversation_goal("生成报告")
+
+    assert item.conversation_id == "conversation_created"
+    app.conversation_manager.create_conversation.assert_called_once_with(title="生成报告")
+    app.promote_conversation_to_work_item.assert_called_once_with(
+        "conversation_created",
+        "生成报告",
+        title="生成报告",
+        workspace=None,
+        expected_deliverable=None,
+    )
+    app.current_frontend.request_conversation_list_refresh.assert_called_once_with()

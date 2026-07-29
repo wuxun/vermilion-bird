@@ -138,9 +138,16 @@ _REVIEW_POLICY_LABELS = {
 class NewTaskDialog(QDialog):
     """以目标为主，按需展开命名和交付细节。"""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        *,
+        initial_objective: str = "",
+        initial_title: str = "",
+        conversation_goal: bool = False,
+    ):
         super().__init__(parent)
-        self.setWindowTitle("新建任务")
+        self.setWindowTitle("设为目标" if conversation_goal else "新建目标")
         self.resize(560, 360)
         self.setMinimumWidth(520)
 
@@ -148,10 +155,14 @@ class NewTaskDialog(QDialog):
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(10)
 
-        title = QLabel("新建任务")
+        title = QLabel("设为目标" if conversation_goal else "新建目标")
         title.setStyleSheet("font-size: 18px; font-weight: 700;")
         root.addWidget(title)
-        subtitle = QLabel("描述最终目标，任务会持续运行并保留进展。")
+        subtitle = QLabel(
+            "保留当前对话上下文，并开始跟踪进展和交付结果。"
+            if conversation_goal
+            else "描述最终目标，系统会持续保留进展和交付结果。"
+        )
         subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         root.addWidget(subtitle)
 
@@ -160,6 +171,7 @@ class NewTaskDialog(QDialog):
         self.objective_input = QTextEdit()
         self.objective_input.setPlaceholderText("描述希望完成的目标、必要约束和验收标准")
         self.objective_input.setMinimumHeight(126)
+        self.objective_input.setPlainText(initial_objective)
         form.addRow("目标 *", self.objective_input)
 
         workspace_row = QHBoxLayout()
@@ -187,6 +199,7 @@ class NewTaskDialog(QDialog):
         optional_form.setSpacing(10)
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText("可留空，将根据目标自动生成")
+        self.title_input.setText(initial_title)
         optional_form.addRow("标题", self.title_input)
         self.deliverable_input = QLineEdit()
         self.deliverable_input.setPlaceholderText("例如：Markdown 报告、代码变更、数据表")
@@ -194,7 +207,7 @@ class NewTaskDialog(QDialog):
         self._optional_fields.hide()
         root.addWidget(self._optional_fields)
 
-        self.start_immediately = QCheckBox("创建后立即开始执行")
+        self.start_immediately = QCheckBox("设定后立即开始执行")
         self.start_immediately.setChecked(True)
         self.start_immediately.setToolTip("高风险操作仍会在执行过程中请求审批")
         root.addWidget(self.start_immediately)
@@ -202,7 +215,9 @@ class NewTaskDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("创建并继续")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "设定并继续" if conversation_goal else "创建并继续"
+        )
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
@@ -252,7 +267,7 @@ class TaskCenterSignals(QObject):
 
 
 class TaskCenterDialog(QDialog):
-    """面向用户的任务聚合视图；Run 细节保留在高级执行中心。"""
+    """跨对话工作概览；Run 细节保留在高级执行中心。"""
 
     def __init__(
         self,
@@ -284,7 +299,7 @@ class TaskCenterDialog(QDialog):
         if embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         else:
-            self.setWindowTitle("任务中心")
+            self.setWindowTitle("工作概览")
             self.resize(1120, 740)
             self.setMinimumSize(900, 580)
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -305,17 +320,17 @@ class TaskCenterDialog(QDialog):
 
         header = QHBoxLayout()
         heading = QVBoxLayout()
-        title = QLabel("任务" if self._embedded else "任务中心")
+        title = QLabel("工作概览")
         title.setStyleSheet(f"font-size: 17px; font-weight: 650; color: {Colors.TEXT_PRIMARY};")
         heading.addWidget(title)
         if not self._embedded:
-            subtitle = QLabel("围绕目标查看执行、审批和最终交付物。")
+            subtitle = QLabel("跨对话查看目标、执行、审批和最终交付物。")
             subtitle.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
             heading.addWidget(subtitle)
         header.addLayout(heading)
         header.addStretch()
 
-        self._new_button = QPushButton("＋ 新建")
+        self._new_button = QPushButton("＋ 新建目标")
         self._new_button.setObjectName("taskPrimaryAction")
         self._new_button.clicked.connect(self._new_task)
         header.addWidget(self._new_button)
@@ -348,7 +363,7 @@ class TaskCenterDialog(QDialog):
             f"font-size: 28px; color: {Colors.CHAT_ACCENT}; background: transparent;"
         )
         empty_layout.addWidget(empty_icon)
-        self._empty_title = QLabel("还没有任务")
+        self._empty_title = QLabel("还没有持续工作")
         self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_title.setStyleSheet("font-size: 18px; font-weight: 700;")
         empty_layout.addWidget(self._empty_title)
@@ -356,7 +371,7 @@ class TaskCenterDialog(QDialog):
         self._empty_description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_description.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         empty_layout.addWidget(self._empty_description)
-        self._empty_action = QPushButton("新建第一个任务")
+        self._empty_action = QPushButton("新建第一个目标")
         self._empty_action.clicked.connect(self._on_empty_action)
         empty_layout.addWidget(self._empty_action, alignment=Qt.AlignmentFlag.AlignCenter)
         empty_layout.addStretch()
@@ -367,12 +382,12 @@ class TaskCenterDialog(QDialog):
         filters.setContentsMargins(0, 0, 0, 0)
         filters.setSpacing(8)
         self._task_search_input = QLineEdit()
-        self._task_search_input.setPlaceholderText("搜索任务…")
+        self._task_search_input.setPlaceholderText("搜索工作…")
         self._task_search_input.setClearButtonEnabled(True)
         self._task_search_input.textChanged.connect(self.refresh)
         filters.addWidget(self._task_search_input, 1)
         self._scope_filter = QComboBox()
-        self._scope_filter.addItem("全部任务", TaskWorkspaceScope.ALL)
+        self._scope_filter.addItem("全部工作", TaskWorkspaceScope.ALL)
         self._scope_filter.addItem("进行中", TaskWorkspaceScope.ACTIVE)
         self._scope_filter.addItem("待你处理", TaskWorkspaceScope.ATTENTION)
         self._scope_filter.addItem("新结果", TaskWorkspaceScope.UPDATES)
@@ -397,7 +412,7 @@ class TaskCenterDialog(QDialog):
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(8, 0, 0, 0)
-        self._detail_title = QLabel("选择一个任务")
+        self._detail_title = QLabel("选择一项工作")
         self._detail_title.setStyleSheet("font-size: 16px; font-weight: 650;")
         detail_layout.addWidget(self._detail_title)
         self._detail_meta = QLabel("从左侧选择一项，查看当前进展和下一步。")
@@ -407,7 +422,7 @@ class TaskCenterDialog(QDialog):
         self._tabs = QTabWidget()
         self._timeline = QTextBrowser()
         self._timeline.setOpenExternalLinks(False)
-        self._timeline.setPlaceholderText("选择任务后，这里会显示目标、计划、执行进度和交付结果。")
+        self._timeline.setPlaceholderText("选择工作后，这里会显示目标、计划、执行进度和交付结果。")
         self._overview = QTextBrowser()
         self._runs_table = QTableWidget(0, 4)
         self._runs_table.setHorizontalHeaderLabels(["开始时间", "类型", "状态", "尝试"])
@@ -600,7 +615,7 @@ class TaskCenterDialog(QDialog):
         self._follow_up_input.setMaximumHeight(72)
         self._follow_up_input.textChanged.connect(self._update_continue_action)
         follow_up_layout.addWidget(self._follow_up_input, 1)
-        self._continue_button = QPushButton("继续任务")
+        self._continue_button = QPushButton("继续推进")
         self._continue_button.clicked.connect(self._continue_selected)
         follow_up_layout.addWidget(self._continue_button)
         detail_layout.addWidget(self._follow_up_panel)
@@ -613,13 +628,13 @@ class TaskCenterDialog(QDialog):
         self._pause_action = more_menu.addAction("暂停", self._pause_selected)
         self._resume_action = more_menu.addAction("恢复", self._resume_selected)
         self._retry_action = more_menu.addAction("重试", self._retry_selected)
-        self._cancel_action = more_menu.addAction("取消任务", self._cancel_selected)
+        self._cancel_action = more_menu.addAction("取消工作", self._cancel_selected)
         more_menu.addSeparator()
         more_menu.addAction("高级执行记录", self._open_execution_center)
         self._more_button.setMenu(more_menu)
         actions.addWidget(self._more_button)
         actions.addStretch()
-        self._primary_button = QPushButton("选择一个任务")
+        self._primary_button = QPushButton("选择一项工作")
         self._primary_button.clicked.connect(self._run_primary_action)
         self._primary_button.setStyleSheet(
             f"""
@@ -725,13 +740,13 @@ class TaskCenterDialog(QDialog):
         if has_items:
             return
         if filtered:
-            self._empty_title.setText("没有匹配的任务")
+            self._empty_title.setText("没有匹配的工作")
             self._empty_description.setText("调整筛选条件后再试。")
             self._empty_action.setText("清除筛选")
         else:
-            self._empty_title.setText("还没有任务")
+            self._empty_title.setText("还没有持续工作")
             self._empty_description.setText("把一个需要持续推进的目标交给这里。")
-            self._empty_action.setText("新建第一个任务")
+            self._empty_action.setText("新建第一个目标")
 
     def refresh(self) -> None:
         scope = self._scope_filter.currentData() or TaskWorkspaceScope.ALL
@@ -792,6 +807,29 @@ class TaskCenterDialog(QDialog):
         selected_work_item_id = views[selected_row].work_item_id
         self._selected_work_item_id = selected_work_item_id
         self._load_detail(selected_work_item_id)
+
+    def focus_work_item(self, work_item_id: str) -> None:
+        """从对话中的目标状态跳转到对应工作详情。"""
+
+        self._selected_work_item_id = work_item_id
+        self._scope_filter.blockSignals(True)
+        self._task_search_input.blockSignals(True)
+        try:
+            self._scope_filter.setCurrentIndex(0)
+            self._task_search_input.clear()
+        finally:
+            self._scope_filter.blockSignals(False)
+            self._task_search_input.blockSignals(False)
+        self.refresh()
+
+    def start_work_item(self, work_item_id: str) -> None:
+        """从统一对话入口启动目标，同时复用任务中心的线程与反馈机制。"""
+
+        self.focus_work_item(work_item_id)
+        self._run_background(
+            work_item_id,
+            lambda: self._app.execute_work_item(work_item_id),
+        )
 
     def _fallback_workspace_views(self, items, *, scope, query: str):
         normalized_query = query.casefold()
@@ -1115,13 +1153,21 @@ class TaskCenterDialog(QDialog):
         if dialog.expected_deliverable:
             metadata["expected_deliverable"] = dialog.expected_deliverable
         try:
-            item = self._app.create_work_item(
-                dialog.objective,
-                title=dialog.title or None,
-                kind=WorkItemKind.TASK,
-                workspace=dialog.workspace or None,
-                metadata=metadata,
-            )
+            if hasattr(self._app, "create_conversation_goal"):
+                item = self._app.create_conversation_goal(
+                    dialog.objective,
+                    title=dialog.title or None,
+                    workspace=dialog.workspace or None,
+                    expected_deliverable=dialog.expected_deliverable or None,
+                )
+            else:
+                item = self._app.create_work_item(
+                    dialog.objective,
+                    title=dialog.title or None,
+                    kind=WorkItemKind.TASK,
+                    workspace=dialog.workspace or None,
+                    metadata=metadata,
+                )
         except Exception as exc:
             QMessageBox.critical(self, "创建失败", str(exc))
             return
@@ -1435,7 +1481,7 @@ class TaskCenterDialog(QDialog):
 
     def _run_background(self, work_item_id: str, operation) -> None:
         if self._busy_work_item_id is not None:
-            QMessageBox.information(self, "任务执行中", "已有任务操作正在进行。")
+            QMessageBox.information(self, "工作执行中", "已有工作正在进行。")
             return
         self._busy_work_item_id = work_item_id
         self._update_actions(self._items_by_id.get(work_item_id))
@@ -1643,7 +1689,7 @@ class TaskCenterDialog(QDialog):
         )
 
         self._primary_action = None
-        primary_text = "选择一个任务"
+        primary_text = "选择一项工作"
         primary_enabled = False
         if item is not None:
             pending_approval = any(
@@ -1671,7 +1717,7 @@ class TaskCenterDialog(QDialog):
                 self._primary_action = "resume"
                 primary_enabled = True
             elif can_retry:
-                primary_text = "重试任务"
+                primary_text = "重试"
                 self._primary_action = "retry"
                 primary_enabled = True
             elif item.status == WorkItemStatus.COMPLETED and has_artifacts:
@@ -1679,7 +1725,7 @@ class TaskCenterDialog(QDialog):
                 self._primary_action = "artifacts"
                 primary_enabled = True
             elif item.status == WorkItemStatus.COMPLETED:
-                primary_text = "任务已完成"
+                primary_text = "已完成"
             elif item.status == WorkItemStatus.RUNNING:
                 primary_text = "执行中"
             elif item.status == WorkItemStatus.PAUSING:
@@ -1694,7 +1740,7 @@ class TaskCenterDialog(QDialog):
         self._update_approval_actions()
 
     def _clear_detail(self) -> None:
-        self._detail_title.setText("选择一个任务")
+        self._detail_title.setText("选择一项工作")
         self._detail_meta.setText("从左侧选择一项，查看当前进展和下一步。")
         self._timeline.clear()
         self._follow_up_input.clear()

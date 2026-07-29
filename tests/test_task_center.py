@@ -154,7 +154,7 @@ def test_empty_task_center_only_shows_the_next_step(qt_app):
     assert not dialog._empty_state.isHidden()
     assert dialog._splitter.isHidden()
     assert dialog._filters_bar.isHidden()
-    assert dialog._empty_action.text() == "新建第一个任务"
+    assert dialog._empty_action.text() == "新建第一个目标"
 
     dialog.close()
     qt_app.processEvents()
@@ -228,7 +228,7 @@ def test_task_workspace_filter_keeps_detail_in_sync(qt_app):
     dialog._task_search_input.setText("不存在的任务")
     qt_app.processEvents()
     assert dialog._selected_work_item_id is None
-    assert dialog._detail_title.text() == "选择一个任务"
+    assert dialog._detail_title.text() == "选择一项工作"
 
     dialog.close()
     qt_app.processEvents()
@@ -266,7 +266,7 @@ def test_failed_task_enables_retry(qt_app):
 
     assert dialog._retry_action.isEnabled()
     assert not dialog._cancel_action.isEnabled()
-    assert dialog._primary_button.text() == "重试任务"
+    assert dialog._primary_button.text() == "重试"
 
     dialog.close()
     qt_app.processEvents()
