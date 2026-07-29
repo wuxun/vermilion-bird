@@ -216,7 +216,21 @@ def test_conversation_goal_is_progressively_disclosed_in_chat(qt_app):
     qt_app.processEvents()
 
 
-def test_goal_turn_uses_workflow_run_and_materializes_result(qt_app):
+def test_goal_turn_uses_workflow_run_and_materializes_result(qt_app, monkeypatch):
+    class InlineThread:
+        """Run the worker inline so Qt teardown cannot race a test thread."""
+
+        def __init__(self, *, target, daemon):
+            self._target = target
+            self.daemon = daemon
+
+        def start(self):
+            self._target()
+
+        def join(self, timeout=None):
+            return None
+
+    monkeypatch.setattr("llm_chat.frontends.gui.threading.Thread", InlineThread)
     frontend = GUIFrontend(conversation_id="conv_goal")
     app = _fake_app()
     goal = WorkItem(
