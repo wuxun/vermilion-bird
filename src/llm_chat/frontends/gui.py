@@ -173,6 +173,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._streaming_label: Optional[QLabel] = None
         self._streaming_browser: Optional[QTextBrowser] = None
         self._messages: list = []
+        self._welcome_widgets: List[QWidget] = []
         self._current_tool_calls: list = []
         self._current_tool_call_widgets: Dict[str, CollapsibleToolCall] = {}
         self._is_streaming: bool = False
@@ -682,6 +683,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         self._conversation_list = QListWidget()
         self._conversation_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._conversation_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._conversation_list.itemClicked.connect(self._on_conversation_selected)
         layout.addWidget(self._conversation_list, stretch=1)
 
@@ -1019,8 +1023,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
         for conv in conversations:
             item = QListWidgetItem()
-            title = conv.get("title") or conv.get("id", "Untitled")
+            title = (conv.get("title") or "").strip() or "新对话"
             item.setText(title)
+            item.setToolTip(title)
             item.setData(Qt.ItemDataRole.UserRole, conv.get("id"))
 
             if conv.get("id") == self.conversation_id:
@@ -1262,25 +1267,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         browser.setFixedHeight(max(30, new_height))
 
     def _display_ai_prefix(self):
-        if self._chat_layout is None:
-            return
-
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%H:%M")
-
-        # AI 头部：头像 + 名称 + 时间
-        header = QLabel(
-            f"<span style='font-size:15px;'>🐦‍🔥</span> "
-            f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
-            f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
-        )
-        header.setTextFormat(Qt.TextFormat.RichText)
-        header.setStyleSheet("background: transparent; margin-left: 4px; margin-top: 8px;")
-        self._add_widget_to_chat(header)
-
+        """开始一条助手消息，不额外渲染重复的品牌头部。"""
+        self._dismiss_welcome_state()
         self._streaming_browser = None
-        self._scroll_to_bottom(force_layout=True)
 
     def _ensure_streaming_browser(self):
         if self._streaming_browser is not None:
@@ -1482,6 +1471,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
+        self._welcome_widgets.clear()
         while self._chat_layout.count() > 0:
             item = self._chat_layout.takeAt(0)
             if item.widget():
@@ -1533,21 +1523,6 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                         tool_widget.set_result(tc_result)
                         self._add_widget_to_chat(tool_widget)
 
-                # AI 头部
-                from datetime import datetime
-
-                ts = ""
-                ai_header = QLabel(
-                    f"<span style='font-size:15px;'>🐦‍🔥</span> "
-                    f"<b style='color:{Colors.AI_NAME};'>Vermilion Bird</b> "
-                    f"<span style='color:{Colors.TEXT_MUTED}; font-size:10px;'>{ts}</span>"
-                )
-                ai_header.setTextFormat(Qt.TextFormat.RichText)
-                ai_header.setStyleSheet(
-                    "background: transparent; margin-left: 4px; margin-top: 8px;"
-                )
-                self._add_widget_to_chat(ai_header)
-
                 html_content = self._render_markdown(msg["content"])
                 content_browser = self._create_message_browser(html_content)
                 self._add_widget_to_chat(content_browser)
@@ -1572,10 +1547,13 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
+        self._dismiss_welcome_state()
+
         logo = QLabel("🐦‍🔥")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet("font-size: 34px; background: transparent; margin-top: 56px;")
         self._add_widget_to_chat(logo)
+        self._welcome_widgets.append(logo)
 
         title = QLabel("想做什么？")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1588,6 +1566,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """
         )
         self._add_widget_to_chat(title)
+        self._welcome_widgets.append(title)
 
         subtitle = QLabel("直接描述目标，能力会在需要时出现。")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1600,6 +1579,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """
         )
         self._add_widget_to_chat(subtitle)
+        self._welcome_widgets.append(subtitle)
 
         # 仅保留三个轻量起点，避免把能力目录铺在主工作区。
         shortcuts = [
@@ -1638,7 +1618,19 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             row.addWidget(card)
 
         self._add_widget_to_chat(shortcut_row)
+        self._welcome_widgets.append(shortcut_row)
         self._scroll_to_bottom(force_layout=True)
+
+    def _dismiss_welcome_state(self):
+        """首条真实内容出现时，只移除空态，不扰动现有消息。"""
+        if self._chat_layout is None or not self._welcome_widgets:
+            return
+
+        for widget in self._welcome_widgets:
+            widget.hide()
+            self._chat_layout.removeWidget(widget)
+            widget.deleteLater()
+        self._welcome_widgets.clear()
 
     def _fill_prompt(self, text: str):
         """快捷卡片点击：填入输入框并聚焦。"""
@@ -1951,6 +1943,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
+        self._dismiss_welcome_state()
         if message.role == "user":
             self._display_user_message(message.content)
         elif message.role == "assistant":
@@ -1965,6 +1958,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._chat_layout is None:
             return
 
+        self._dismiss_welcome_state()
         error_label = QLabel(f"<span style='color: #8B0000;'>Error: {error}</span>")
         error_label.setWordWrap(True)
         error_label.setTextFormat(Qt.TextFormat.RichText)
@@ -1980,6 +1974,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 self._model_combo.setToolTip("服务已就绪")
             return
 
+        self._dismiss_welcome_state()
         info_label = QLabel(f"<span style='color: #6B4423; font-style: italic;'>[{info}]</span>")
         info_label.setWordWrap(True)
         info_label.setTextFormat(Qt.TextFormat.RichText)
@@ -1998,6 +1993,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._pending_card = card
         else:
             # ProactiveAgent 等无流场景：直接追加并渲染
+            self._dismiss_welcome_state()
             self._pending_card = None
             self._messages.append({"role": "card", "card": card})
             self._refresh_chat_display()

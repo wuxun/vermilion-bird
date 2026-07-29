@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QWidget  # noqa: E402
 
 from llm_chat.frontends.tasks import TaskCenterDialog  # noqa: E402
 from llm_chat.frontends.tasks.task_center import NewTaskDialog  # noqa: E402
@@ -279,6 +279,10 @@ def test_task_center_can_be_embedded_as_main_workspace(qt_app):
 
 def test_new_task_dialog_collects_execution_context(qt_app):
     dialog = NewTaskDialog()
+    cancel_button = dialog.findChild(QDialogButtonBox).button(
+        QDialogButtonBox.StandardButton.Cancel
+    )
+    assert cancel_button.text() == "取消"
     assert dialog._optional_fields.isHidden()
     dialog._more_options_button.setChecked(True)
     assert not dialog._optional_fields.isHidden()

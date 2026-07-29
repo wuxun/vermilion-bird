@@ -5,8 +5,10 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PyQt6.QtCore import Qt  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
+from llm_chat.frontends.base import Message, MessageType  # noqa: E402
 from llm_chat.frontends.gui import GUIFrontend  # noqa: E402
 from llm_chat.frontends.subagent_panel import SubAgentPanel  # noqa: E402
 
@@ -66,6 +68,53 @@ def test_chat_workspace_keeps_idle_runtime_details_out_of_view(qt_app):
     assert frontend._cost_label.isHidden()
     assert frontend._send_button.text() == "↑"
     assert frontend._input_field.maximumHeight() == 72
+    assert (
+        frontend._conversation_list.horizontalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_first_real_message_replaces_welcome_state(qt_app):
+    frontend = GUIFrontend()
+    frontend.set_app(_fake_app())
+    parent = QWidget()
+
+    frontend._setup_ui(parent)
+    frontend._show_welcome_state()
+    assert any(
+        label.text() == "想做什么？"
+        for label in frontend._chat_container.findChildren(QLabel)
+    )
+
+    frontend.display_message(
+        Message(content="后台任务已完成", role="assistant", msg_type=MessageType.TEXT)
+    )
+    qt_app.processEvents()
+
+    assert not any(
+        label.text() == "想做什么？"
+        for label in frontend._chat_container.findChildren(QLabel)
+        if not label.isHidden()
+    )
+    assert frontend._welcome_widgets == []
+
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_untitled_conversation_uses_human_label(qt_app):
+    frontend = GUIFrontend(conversation_id="conv_empty")
+    frontend.set_app(_fake_app())
+    parent = QWidget()
+
+    frontend._setup_ui(parent)
+    frontend.update_conversation_list([{"id": "conv_empty", "title": None}])
+
+    assert frontend._conversation_list.item(0).text() == "新对话"
+    assert frontend._conversation_list.item(0).data(Qt.ItemDataRole.UserRole) == "conv_empty"
 
     parent.close()
     qt_app.processEvents()

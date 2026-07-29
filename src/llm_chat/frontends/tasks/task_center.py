@@ -192,6 +192,7 @@ class NewTaskDialog(QDialog):
             QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
         )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("创建并继续")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
