@@ -6,6 +6,7 @@ from llm_chat.runtime import RecoveryPolicy, Run, RunManager, RunStatus, RunType
 from llm_chat.storage import Storage
 from llm_chat.work import (
     ArtifactKind,
+    ArtifactReviewPolicy,
     WorkItem,
     WorkItemKind,
     WorkItemService,
@@ -92,6 +93,33 @@ def test_work_item_tracks_primary_run_and_artifacts(storage):
     assert detail.artifacts == [artifact]
     assert duplicate_artifact.id == artifact.id
     assert detail.artifacts[0].content == "# Architecture"
+
+
+def test_work_item_series_reuses_one_product_task(storage):
+    runs = RunManager(repository=storage)
+    work_items = WorkItemService(repository=storage, runs=runs)
+
+    first = work_items.create(
+        title="每日摘要",
+        objective="生成今日摘要",
+        kind=WorkItemKind.AUTOMATION,
+        series_key="scheduler:daily-digest",
+        artifact_review_policy=ArtifactReviewPolicy.OPTIONAL,
+    )
+    second = work_items.create(
+        title="每日摘要（重复触发）",
+        objective="再次生成摘要",
+        kind=WorkItemKind.AUTOMATION,
+        series_key="scheduler:daily-digest",
+        artifact_review_policy=ArtifactReviewPolicy.OPTIONAL,
+    )
+
+    assert second.id == first.id
+    restored = work_items.get(first.id)
+    assert restored is not None
+    assert restored.series_key == "scheduler:daily-digest"
+    assert restored.artifact_review_policy == ArtifactReviewPolicy.OPTIONAL
+    assert len(work_items.list(limit=10)) == 1
 
 
 def test_only_primary_run_projects_work_item_status(storage):

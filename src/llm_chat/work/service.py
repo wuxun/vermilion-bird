@@ -17,6 +17,7 @@ from .models import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactReviewPolicy,
     PlanRevision,
     PlanStatus,
     PlanStep,
@@ -46,6 +47,9 @@ class WorkItemRepository(Protocol):
         ...
 
     def get_work_item_by_idempotency_key(self, idempotency_key: str) -> Optional[WorkItem]:
+        ...
+
+    def get_work_item_by_series_key(self, series_key: str) -> Optional[WorkItem]:
         ...
 
     def list_work_items(
@@ -159,6 +163,8 @@ class WorkItemService:
         kind: WorkItemKind = WorkItemKind.TASK,
         conversation_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
+        series_key: Optional[str] = None,
+        artifact_review_policy: ArtifactReviewPolicy = ArtifactReviewPolicy.REQUIRED,
         workspace: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -168,6 +174,13 @@ class WorkItemService:
             raise ValueError("work item objective cannot be empty")
         if not isinstance(kind, WorkItemKind):
             kind = WorkItemKind(kind)
+        if not isinstance(artifact_review_policy, ArtifactReviewPolicy):
+            artifact_review_policy = ArtifactReviewPolicy(artifact_review_policy)
+        series_key = (series_key or "").strip() or None
+        if series_key:
+            existing = self.repository.get_work_item_by_series_key(series_key)
+            if existing is not None:
+                return existing.model_copy(deep=True)
         if idempotency_key:
             existing = self.repository.get_work_item_by_idempotency_key(idempotency_key)
             if existing is not None:
@@ -181,6 +194,8 @@ class WorkItemService:
             kind=kind,
             conversation_id=conversation_id,
             workflow_id=workflow_id,
+            series_key=series_key,
+            artifact_review_policy=artifact_review_policy,
             workspace=workspace,
             idempotency_key=idempotency_key,
             metadata=metadata or {},
@@ -190,6 +205,10 @@ class WorkItemService:
             existing = self.repository.get_work_item_by_idempotency_key(idempotency_key)
             if existing is not None:
                 return existing
+        if not created and series_key:
+            existing = self.repository.get_work_item_by_series_key(series_key)
+            if existing is not None:
+                return existing.model_copy(deep=True)
         if not created:
             raise ValueError(f"work item already exists: {item.id}")
         self._notify(item)

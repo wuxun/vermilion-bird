@@ -55,6 +55,14 @@ class ArtifactKind(str, Enum):
     OTHER = "other"
 
 
+class ArtifactReviewPolicy(str, Enum):
+    """交付物是否需要进入用户的行动队列。"""
+
+    REQUIRED = "required"
+    OPTIONAL = "optional"
+    NONE = "none"
+
+
 class ArtifactFeedbackDecision(str, Enum):
     ACCEPTED = "accepted"
     NEEDS_REVISION = "needs_revision"
@@ -104,6 +112,8 @@ class WorkItem(BaseModel):
     status: WorkItemStatus = WorkItemStatus.READY
     conversation_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    series_key: Optional[str] = None
+    artifact_review_policy: ArtifactReviewPolicy = ArtifactReviewPolicy.REQUIRED
     workspace: Optional[str] = None
     root_run_id: Optional[str] = None
     latest_run_id: Optional[str] = None

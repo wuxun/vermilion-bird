@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 7
+    CURRENT_SCHEMA_VERSION = 8
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -166,6 +166,11 @@ class StorageCore:
             SchemaMigration(5, "plans_and_resource_grants", self._create_planning_tables_in),
             SchemaMigration(6, "artifact_feedback", self._create_artifact_feedback_table_in),
             SchemaMigration(7, "workflow_definitions", self._create_workflow_tables_in),
+            SchemaMigration(
+                8,
+                "automation_series_attention_policy",
+                self._migrate_automation_attention,
+            ),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -230,6 +235,7 @@ class StorageCore:
             },
             "action_proposals": {"execution_run_id"},
             "artifacts": {"content", "idempotency_key"},
+            "work_items": {"series_key", "artifact_review_policy"},
             "plan_revisions": {"work_item_id", "version", "status"},
             "plan_steps": {"plan_revision_id", "position", "depends_on_json"},
             "resource_grants": {
@@ -261,6 +267,7 @@ class StorageCore:
         self._create_decision_log_table_in(conn)
         self._create_runtime_tables_in(conn)
         self._create_work_tables_in(conn)
+        self._ensure_automation_attention_schema_in(conn)
         self._create_planning_tables_in(conn)
         self._create_artifact_feedback_table_in(conn)
         self._create_workflow_tables_in(conn)
@@ -804,6 +811,8 @@ class StorageCore:
                 status TEXT NOT NULL,
                 conversation_id TEXT,
                 workflow_id TEXT,
+                series_key TEXT,
+                artifact_review_policy TEXT NOT NULL DEFAULT 'required',
                 workspace TEXT,
                 root_run_id TEXT,
                 latest_run_id TEXT,
@@ -854,11 +863,96 @@ class StorageCore:
             conn.execute("ALTER TABLE artifacts ADD COLUMN content TEXT")
         if "idempotency_key" not in artifact_columns:
             conn.execute("ALTER TABLE artifacts ADD COLUMN idempotency_key TEXT")
+        work_item_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(work_items)").fetchall()
+        }
+        if "series_key" not in work_item_columns:
+            conn.execute("ALTER TABLE work_items ADD COLUMN series_key TEXT")
+        if "artifact_review_policy" not in work_item_columns:
+            conn.execute(
+                "ALTER TABLE work_items ADD COLUMN "
+                "artifact_review_policy TEXT NOT NULL DEFAULT 'required'"
+            )
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_idempotency
             ON artifacts(idempotency_key)
             WHERE idempotency_key IS NOT NULL
+            """
+        )
+
+    def _migrate_automation_attention(self, conn) -> None:
+        self._ensure_automation_attention_schema_in(
+            conn,
+            initialize_automation_defaults=True,
+        )
+
+    @staticmethod
+    def _ensure_automation_attention_schema_in(
+        conn,
+        *,
+        initialize_automation_defaults: bool = False,
+    ) -> None:
+        """补齐任务系列和验收策略，并为旧 Scheduler 任务选出系列主记录。"""
+
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(work_items)").fetchall()
+        }
+        policy_added = "artifact_review_policy" not in columns
+        if "series_key" not in columns:
+            conn.execute("ALTER TABLE work_items ADD COLUMN series_key TEXT")
+        if policy_added:
+            conn.execute(
+                "ALTER TABLE work_items ADD COLUMN "
+                "artifact_review_policy TEXT NOT NULL DEFAULT 'required'"
+            )
+        if policy_added or initialize_automation_defaults:
+            conn.execute(
+                """
+                UPDATE work_items
+                SET artifact_review_policy = 'optional'
+                WHERE kind = 'automation'
+                """
+            )
+
+        rows = conn.execute(
+            """
+            SELECT id, metadata_json, series_key, updated_at
+            FROM work_items
+            WHERE kind = 'automation'
+            ORDER BY updated_at DESC
+            """
+        ).fetchall()
+        groups: Dict[str, List[Any]] = {}
+        for row in rows:
+            series_key = row["series_key"]
+            if not series_key:
+                try:
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                except (TypeError, ValueError):
+                    metadata = {}
+                task_id = str(metadata.get("scheduled_task_id") or "").strip()
+                if task_id:
+                    series_key = f"scheduler:{task_id}"
+            if series_key:
+                groups.setdefault(series_key, []).append(row)
+
+        for series_key, members in groups.items():
+            canonical = members[0]
+            conn.execute(
+                "UPDATE work_items SET series_key = NULL "
+                "WHERE series_key = ? AND id != ?",
+                (series_key, canonical["id"]),
+            )
+            conn.execute(
+                "UPDATE work_items SET series_key = ? WHERE id = ?",
+                (series_key, canonical["id"]),
+            )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_series_key
+            ON work_items(series_key)
+            WHERE series_key IS NOT NULL
             """
         )
 

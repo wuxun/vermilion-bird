@@ -59,6 +59,66 @@ def test_legacy_database_is_backed_up_and_upgraded_without_data_loss(tmp_path):
         assert conn.execute("PRAGMA user_version").fetchone()[0] == Storage.CURRENT_SCHEMA_VERSION
 
 
+def test_v7_scheduler_items_gain_series_and_optional_review_policy(tmp_path):
+    db_path = tmp_path / "v7-automation.db"
+    Storage(str(db_path))
+    Storage.set_instance(None)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_work_items_series_key")
+        conn.execute("ALTER TABLE work_items DROP COLUMN series_key")
+        conn.execute("ALTER TABLE work_items DROP COLUMN artifact_review_policy")
+        rows = [
+            (
+                "work_old",
+                "每日摘要",
+                "生成摘要",
+                "automation",
+                "completed",
+                '{"source":"scheduler","scheduled_task_id":"daily"}',
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+            (
+                "work_latest",
+                "每日摘要",
+                "生成摘要",
+                "automation",
+                "completed",
+                '{"source":"scheduler","scheduled_task_id":"daily"}',
+                "2026-01-02T00:00:00+00:00",
+                "2026-01-02T00:00:00+00:00",
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO work_items(
+                id, title, objective, kind, status, metadata_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.execute("PRAGMA user_version=7")
+
+    storage = Storage(str(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        restored = conn.execute(
+            """
+            SELECT id, series_key, artifact_review_policy
+            FROM work_items
+            ORDER BY updated_at DESC
+            """
+        ).fetchall()
+        assert restored[0]["id"] == "work_latest"
+        assert restored[0]["series_key"] == "scheduler:daily"
+        assert restored[1]["series_key"] is None
+        assert {row["artifact_review_policy"] for row in restored} == {"optional"}
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert storage.get_work_item_by_series_key("scheduler:daily").id == "work_latest"
+
+
 def test_failed_migration_restores_upgrade_backup_and_writes_diagnostic(
     tmp_path,
     monkeypatch,

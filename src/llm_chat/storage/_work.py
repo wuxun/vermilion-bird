@@ -11,6 +11,7 @@ from llm_chat.work.models import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactReviewPolicy,
     GrantScope,
     GrantStatus,
     PlanRevision,
@@ -56,10 +57,10 @@ class StorageWorkMixin:
                 """
                 INSERT OR IGNORE INTO work_items (
                     id, title, objective, kind, status, conversation_id,
-                    workflow_id, workspace, root_run_id, latest_run_id,
-                    idempotency_key, metadata_json, created_at, updated_at,
-                    completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    workflow_id, series_key, artifact_review_policy, workspace,
+                    root_run_id, latest_run_id, idempotency_key, metadata_json,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._work_item_values(work_item),
             )
@@ -71,10 +72,10 @@ class StorageWorkMixin:
                 """
                 INSERT INTO work_items (
                     id, title, objective, kind, status, conversation_id,
-                    workflow_id, workspace, root_run_id, latest_run_id,
-                    idempotency_key, metadata_json, created_at, updated_at,
-                    completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    workflow_id, series_key, artifact_review_policy, workspace,
+                    root_run_id, latest_run_id, idempotency_key, metadata_json,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     objective = excluded.objective,
@@ -82,6 +83,8 @@ class StorageWorkMixin:
                     status = excluded.status,
                     conversation_id = excluded.conversation_id,
                     workflow_id = excluded.workflow_id,
+                    series_key = excluded.series_key,
+                    artifact_review_policy = excluded.artifact_review_policy,
                     workspace = excluded.workspace,
                     root_run_id = excluded.root_run_id,
                     latest_run_id = excluded.latest_run_id,
@@ -106,6 +109,19 @@ class StorageWorkMixin:
             row = conn.execute(
                 "SELECT * FROM work_items WHERE idempotency_key = ?",
                 (idempotency_key,),
+            ).fetchone()
+        return self._row_to_work_item(row) if row else None
+
+    def get_work_item_by_series_key(self, series_key: str) -> Optional[WorkItem]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM work_items
+                WHERE series_key = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (series_key,),
             ).fetchone()
         return self._row_to_work_item(row) if row else None
 
@@ -495,6 +511,8 @@ class StorageWorkMixin:
             work_item.status.value,
             work_item.conversation_id,
             work_item.workflow_id,
+            work_item.series_key,
+            work_item.artifact_review_policy.value,
             work_item.workspace,
             work_item.root_run_id,
             work_item.latest_run_id,
@@ -567,6 +585,10 @@ class StorageWorkMixin:
             status=WorkItemStatus(row["status"]),
             conversation_id=row["conversation_id"],
             workflow_id=row["workflow_id"],
+            series_key=row["series_key"],
+            artifact_review_policy=ArtifactReviewPolicy(
+                row["artifact_review_policy"] or ArtifactReviewPolicy.REQUIRED.value
+            ),
             workspace=row["workspace"],
             root_run_id=row["root_run_id"],
             latest_run_id=row["latest_run_id"],
