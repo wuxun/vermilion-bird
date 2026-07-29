@@ -14,7 +14,7 @@ from llm_chat.cli import (
     memory,
     schedule,
     skills,
-    task,
+    task_group,
     workflow_group,
 )
 from llm_chat.cli.ghost_cli import ghost_group
@@ -273,7 +273,7 @@ def feishu(config_path, background, log_file, log_level):
 cli.add_command(memory)
 cli.add_command(skills)
 cli.add_command(schedule)
-cli.add_command(task)
+cli.add_command(task_group)
 cli.add_command(database)
 cli.add_command(eval_group)
 cli.add_command(workflow_group)

@@ -148,7 +148,8 @@ open "dist/Vermilion Bird.app"
 ```
 
 发布依赖由 `requirements-build.in` 声明并固定在 `requirements-build.lock`。更新依赖时
-应使用 Python 3.12 按输入文件顶部命令重新生成锁文件，并将二者一同提交。
+应使用 CI 支持的最低版本 Python 3.10 按输入文件顶部命令重新生成锁文件，并将二者一同提交；
+发布应用仍使用 Python 3.12/3.13 构建。
 
 ## 支持的协议
 

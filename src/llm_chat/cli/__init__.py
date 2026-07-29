@@ -13,10 +13,12 @@
 from llm_chat.cli.memory import memory
 from llm_chat.cli.skills import skills
 from llm_chat.cli.schedule import schedule
-from llm_chat.cli.task import task
+from llm_chat.cli import task as task_module
 from llm_chat.cli.database import database
 from llm_chat.cli.eval import eval_group
 from llm_chat.cli.workflow import workflow_group
+
+task_group = task_module.task
 from llm_chat.cli.main import main, cli
 
 __all__ = [
@@ -25,7 +27,7 @@ __all__ = [
     "memory",
     "skills",
     "schedule",
-    "task",
+    "task_group",
     "database",
     "eval_group",
     "workflow_group",

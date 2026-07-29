@@ -246,8 +246,9 @@ requests-toolbelt==1.0.0
     # via
     #   langsmith
     #   lark-oapi
-rpds-py==2026.6.3
+rpds-py==0.30.0
     # via
+    #   -r requirements-build.in
     #   jsonschema
     #   referencing
 sgmllib3k==1.0.0
