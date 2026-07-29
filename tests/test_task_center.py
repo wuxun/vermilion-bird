@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QWidget  # noqa: E402
+from PyQt6.QtWidgets import QDialogButtonBox, QWidget  # noqa: E402
 
 from llm_chat.frontends.tasks import TaskCenterDialog  # noqa: E402
 from llm_chat.frontends.tasks.task_center import NewTaskDialog  # noqa: E402
@@ -33,13 +33,6 @@ from llm_chat.work import (  # noqa: E402
     WorkItemKind,
     WorkItemStatus,
 )
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
 
 def _detail(
     status=WorkItemStatus.COMPLETED,

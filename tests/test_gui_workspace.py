@@ -6,20 +6,13 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import Qt  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QWidget  # noqa: E402
+from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget  # noqa: E402
 
 from llm_chat.frontends.base import Message, MessageType  # noqa: E402
 from llm_chat.frontends.gui import GUIFrontend  # noqa: E402
 from llm_chat.frontends.subagent_panel import SubAgentPanel  # noqa: E402
 from llm_chat.runtime import RunType  # noqa: E402
 from llm_chat.work import WorkItem, WorkItemStatus  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
 
 def _fake_app():
     work_items = MagicMock()

@@ -4,13 +4,29 @@ import pytest
 import sys
 import os
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if not os.environ.get("DISPLAY"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Ensure ember packages are on path
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_base, "packages", "ember-core", "src"))
 sys.path.insert(0, os.path.join(_base, "packages", "ember-agent", "src"))
 sys.path.insert(0, os.path.join(_base, "src"))
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    """整套 GUI 测试共享唯一 QApplication，避免原生 Qt 重建竞态。"""
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        pytest.skip("PyQt6 is not installed")
+
+    app = QApplication.instance() or QApplication([])
+    yield app
+    app.closeAllWindows()
+    app.processEvents()
 
 
 @pytest.fixture(scope="session", autouse=True)

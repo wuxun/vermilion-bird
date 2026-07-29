@@ -4,8 +4,6 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
-
 from llm_chat.frontends.execution_center import ExecutionCenterDialog  # noqa: E402
 from llm_chat.runtime import (  # noqa: E402
     ActionProposalManager,
@@ -16,13 +14,6 @@ from llm_chat.runtime import (  # noqa: E402
     RunManager,
     RunType,
 )
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
 
 def test_execution_center_lists_runs_and_pending_approvals(qt_app):
     runs = RunManager()
