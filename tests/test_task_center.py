@@ -117,6 +117,7 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     assert "1 待处理" in dialog._table.item(0, 0).text()
     assert dialog._runs_table.rowCount() == 1
     assert dialog._artifacts_table.rowCount() == 1
+    assert "v1" in dialog._artifacts_table.item(0, 0).text()
     assert dialog._tabs.count() == 3
     assert dialog._tabs.tabText(1) == "交付物 (1)"
     assert "生成一份完整的产品规划文档" in dialog._timeline.toPlainText()

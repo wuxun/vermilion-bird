@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 10
+    CURRENT_SCHEMA_VERSION = 11
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -173,6 +173,7 @@ class StorageCore:
             ),
             SchemaMigration(9, "local_product_events", self._create_product_events_table_in),
             SchemaMigration(10, "context_resources", self._create_context_resources_table_in),
+            SchemaMigration(11, "artifact_versions", self._ensure_artifact_version_schema_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -236,7 +237,15 @@ class StorageCore:
                 "lease_expires_at",
             },
             "action_proposals": {"execution_run_id"},
-            "artifacts": {"content", "idempotency_key"},
+            "artifacts": {
+                "content",
+                "idempotency_key",
+                "lineage_id",
+                "version",
+                "parent_artifact_id",
+                "source_feedback_id",
+                "relation",
+            },
             "work_items": {"series_key", "artifact_review_policy"},
             "plan_revisions": {"work_item_id", "version", "status"},
             "plan_steps": {"plan_revision_id", "position", "depends_on_json"},
@@ -856,6 +865,11 @@ class StorageCore:
                 content_preview TEXT,
                 checksum TEXT,
                 idempotency_key TEXT,
+                lineage_id TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                parent_artifact_id TEXT,
+                source_feedback_id TEXT,
+                relation TEXT NOT NULL DEFAULT 'original',
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (work_item_id)
@@ -876,6 +890,7 @@ class StorageCore:
             conn.execute("ALTER TABLE artifacts ADD COLUMN content TEXT")
         if "idempotency_key" not in artifact_columns:
             conn.execute("ALTER TABLE artifacts ADD COLUMN idempotency_key TEXT")
+        self._ensure_artifact_version_schema_in(conn)
         work_item_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(work_items)").fetchall()
         }
@@ -891,6 +906,38 @@ class StorageCore:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_idempotency
             ON artifacts(idempotency_key)
             WHERE idempotency_key IS NOT NULL
+            """
+        )
+
+    @staticmethod
+    def _ensure_artifact_version_schema_in(conn) -> None:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
+        }
+        additions = {
+            "lineage_id": "TEXT",
+            "version": "INTEGER NOT NULL DEFAULT 1",
+            "parent_artifact_id": "TEXT",
+            "source_feedback_id": "TEXT",
+            "relation": "TEXT NOT NULL DEFAULT 'original'",
+        }
+        for column, definition in additions.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE artifacts ADD COLUMN {column} {definition}")
+        conn.execute(
+            "UPDATE artifacts SET lineage_id = id WHERE lineage_id IS NULL OR lineage_id = ''"
+        )
+        conn.execute(
+            "UPDATE artifacts SET relation = 'original' WHERE relation IS NULL OR relation = ''"
+        )
+        conn.executescript(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_lineage_version
+                ON artifacts(lineage_id, version);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_parent
+                ON artifacts(parent_artifact_id);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_source_feedback
+                ON artifacts(source_feedback_id);
             """
         )
 

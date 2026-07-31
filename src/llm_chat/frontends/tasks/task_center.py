@@ -967,7 +967,7 @@ class TaskCenterDialog(QDialog):
             self._artifact_feedback_by_id.setdefault(feedback.artifact_id, feedback)
         self._artifacts_table.setRowCount(len(detail.artifacts))
         for row, artifact in enumerate(detail.artifacts):
-            name_item = QTableWidgetItem(artifact.name)
+            name_item = QTableWidgetItem(f"{artifact.name} · v{artifact.version}")
             name_item.setData(Qt.ItemDataRole.UserRole, artifact.id)
             self._artifacts_table.setItem(row, 0, name_item)
             self._artifacts_table.setItem(

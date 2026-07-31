@@ -8,7 +8,11 @@ from typing import Any, Iterable, List, Sequence
 import yaml
 
 from llm_chat.runtime import ActionStatus, EffectStatus
-from llm_chat.work import ArtifactFeedbackDecision, WorkItemDetail
+from llm_chat.work import (
+    ArtifactFeedbackDecision,
+    WorkItemDetail,
+    latest_artifact_versions,
+)
 
 from .models import EvalReport, EvalResult, EvalScenario
 
@@ -33,6 +37,7 @@ class EvalRunner:
         item = detail.work_item
         failures: List[str] = []
         checks = {}
+        current_artifacts = latest_artifact_versions(detail.artifacts)
 
         checks["status"] = item.status == scenario.expected_status
         if not checks["status"]:
@@ -40,16 +45,16 @@ class EvalRunner:
                 f"status={item.status.value}, expected={scenario.expected_status.value}"
             )
 
-        checks["artifact_count"] = len(detail.artifacts) >= scenario.minimum_artifacts
+        checks["artifact_count"] = len(current_artifacts) >= scenario.minimum_artifacts
         if not checks["artifact_count"]:
             failures.append(
-                f"artifacts={len(detail.artifacts)}, " f"minimum={scenario.minimum_artifacts}"
+                f"artifacts={len(current_artifacts)}, " f"minimum={scenario.minimum_artifacts}"
             )
 
         if scenario.accepted_artifact_kinds:
             accepted = set(scenario.accepted_artifact_kinds)
             checks["artifact_kind"] = any(
-                artifact.kind in accepted for artifact in detail.artifacts
+                artifact.kind in accepted for artifact in current_artifacts
             )
             if not checks["artifact_kind"]:
                 failures.append(
@@ -82,9 +87,13 @@ class EvalRunner:
         else:
             checks["duration"] = True
 
+        current_artifact_ids = {artifact.id for artifact in current_artifacts}
         latest_feedback = {}
         for feedback in detail.artifact_feedback:
-            latest_feedback.setdefault(feedback.artifact_id, feedback)
+            if feedback.artifact_id in current_artifact_ids:
+                previous = latest_feedback.get(feedback.artifact_id)
+                if previous is None or feedback.created_at > previous.created_at:
+                    latest_feedback[feedback.artifact_id] = feedback
         accepted_artifacts = sum(
             feedback.decision == ArtifactFeedbackDecision.ACCEPTED
             for feedback in latest_feedback.values()
@@ -97,7 +106,7 @@ class EvalRunner:
             checks=checks,
             failures=failures,
             duration_seconds=duration,
-            artifact_count=len(detail.artifacts),
+            artifact_count=len(current_artifacts),
             approval_count=len(decided_actions),
             uncertain_effect_count=len(uncertain_effects),
             reviewed_artifact_count=len(latest_feedback),

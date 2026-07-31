@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from llm_chat.app import App
-from llm_chat.runtime import RunType
-from llm_chat.work import WorkItem, WorkItemKind, WorkItemStatus
+from llm_chat.runtime import RunStatus, RunType
+from llm_chat.work import Artifact, ArtifactRelation, WorkItem, WorkItemKind, WorkItemStatus
 
 
 def _app_for_item(item):
@@ -160,3 +160,32 @@ def test_create_conversation_goal_binds_new_chat_before_execution():
         expected_deliverable=None,
     )
     app.current_frontend.request_conversation_list_refresh.assert_called_once_with()
+
+
+def test_materialized_follow_up_result_revises_previous_primary_artifact():
+    app = App.__new__(App)
+    app.work_items = MagicMock()
+    item = WorkItem(
+        id="work_revision",
+        title="规划",
+        objective="生成规划",
+        latest_run_id="run_2",
+    )
+    previous = Artifact(
+        id="artifact_v1",
+        work_item_id=item.id,
+        run_id="run_1",
+        name="规划 - 结果",
+        content="version one",
+        metadata={"role": "primary_result"},
+    )
+    run = SimpleNamespace(id="run_2", status=RunStatus.COMPLETED, result="version two")
+    detail = SimpleNamespace(work_item=item, runs=[run], artifacts=[previous])
+    app.work_items.detail.side_effect = [detail, detail]
+
+    app._materialize_work_item_result(item.id)
+
+    call = app.work_items.add_artifact.call_args
+    assert call.kwargs["parent_artifact_id"] == previous.id
+    assert call.kwargs["relation"] == ArtifactRelation.REVISION
+    assert call.kwargs["content"] == "version two"

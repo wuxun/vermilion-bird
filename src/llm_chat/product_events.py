@@ -85,6 +85,8 @@ class ProductEventService:
     # could contain user content are intentionally absent.
     SAFE_PROPERTY_KEYS = {
         "artifact_kind",
+        "artifact_relation",
+        "artifact_version",
         "decision",
         "entrypoint",
         "export_kind",

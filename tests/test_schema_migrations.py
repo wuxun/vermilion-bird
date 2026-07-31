@@ -10,6 +10,7 @@ from llm_chat.cli import cli
 from llm_chat.storage import Storage
 from llm_chat.storage._core import StorageCore
 from llm_chat.storage.migrations import SchemaMigration, SchemaMigrationError
+from llm_chat.work import Artifact, ArtifactRelation, WorkItem
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +121,45 @@ def test_v7_scheduler_items_gain_series_and_optional_review_policy(tmp_path):
             == Storage.CURRENT_SCHEMA_VERSION
         )
     assert storage.get_work_item_by_series_key("scheduler:daily").id == "work_latest"
+
+
+def test_v10_artifacts_gain_immutable_lineage_without_data_loss(tmp_path):
+    db_path = tmp_path / "v10-artifacts.db"
+    storage = Storage(str(db_path))
+    item = WorkItem(id="work_legacy_artifact", title="报告", objective="生成报告")
+    artifact = Artifact(
+        id="artifact_legacy",
+        work_item_id=item.id,
+        name="report.md",
+        content="legacy content",
+    )
+    assert storage.create_work_item(item)
+    assert storage.create_artifact(artifact)
+    Storage.set_instance(None)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_artifacts_lineage_version")
+        conn.execute("DROP INDEX idx_artifacts_parent")
+        conn.execute("DROP INDEX idx_artifacts_source_feedback")
+        for column in (
+            "source_feedback_id",
+            "parent_artifact_id",
+            "relation",
+            "version",
+            "lineage_id",
+        ):
+            conn.execute(f"ALTER TABLE artifacts DROP COLUMN {column}")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 11")
+        conn.execute("PRAGMA user_version=10")
+
+    restored = Storage(str(db_path))
+    restored_artifact = restored.get_artifact(artifact.id)
+
+    assert restored.get_schema_info()["current_version"] == Storage.CURRENT_SCHEMA_VERSION
+    assert restored_artifact.content == "legacy content"
+    assert restored_artifact.lineage_id == artifact.id
+    assert restored_artifact.version == 1
+    assert restored_artifact.relation == ArtifactRelation.ORIGINAL
 
 
 def test_failed_migration_restores_upgrade_backup_and_writes_diagnostic(

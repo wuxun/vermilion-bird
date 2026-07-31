@@ -137,7 +137,7 @@ def test_v9_database_is_upgraded_with_context_resource_schema(tmp_path):
 
     restored = Storage(str(db_path))
 
-    assert restored.get_schema_info()["current_version"] == 10
+    assert restored.get_schema_info()["current_version"] == Storage.CURRENT_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(context_resources)").fetchall()

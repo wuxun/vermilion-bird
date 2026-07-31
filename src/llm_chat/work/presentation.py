@@ -20,6 +20,7 @@ from .models import (
     WorkItemDetail,
     WorkItemKind,
     WorkItemStatus,
+    latest_artifact_versions,
 )
 
 
@@ -231,9 +232,10 @@ class TaskWorkspaceProjector:
     ) -> TaskWorkspaceView:
         item = detail.work_item
         feedback = self._latest_feedback(detail.artifact_feedback)
+        current_artifacts = latest_artifact_versions(detail.artifacts)
         pending = [proposal for proposal in proposals if proposal.status == ActionStatus.PENDING]
         unreviewed = [
-            artifact for artifact in detail.artifacts if artifact.id not in feedback
+            artifact for artifact in current_artifacts if artifact.id not in feedback
         ]
         required_review = [
             artifact
@@ -269,7 +271,7 @@ class TaskWorkspaceProjector:
             expected_deliverable=expected,
             attention=tuple(attention),
             timeline=tuple(timeline),
-            artifact_count=len(detail.artifacts),
+            artifact_count=len(current_artifacts),
             unreviewed_artifact_count=len(unreviewed),
             required_review_count=len(required_review),
             optional_review_count=len(optional_review),
@@ -279,7 +281,7 @@ class TaskWorkspaceProjector:
                 has_draft_plan=bool(
                     detail.plan is not None and detail.plan.status == PlanStatus.DRAFT
                 ),
-                artifact_count=len(detail.artifacts),
+                artifact_count=len(current_artifacts),
             ),
         )
 
@@ -505,7 +507,7 @@ class TaskWorkspaceProjector:
         feedback: Optional[ArtifactFeedback],
     ) -> str:
         return (
-            f"{artifact.name} · {_ARTIFACT_KIND_LABELS[artifact.kind]}"
+            f"{artifact.name} · v{artifact.version} · {_ARTIFACT_KIND_LABELS[artifact.kind]}"
             f" · {self._feedback_label(feedback, self._review_policy(item, artifact))}"
         )
 

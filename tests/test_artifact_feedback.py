@@ -8,6 +8,7 @@ from llm_chat.storage import Storage
 from llm_chat.work import (
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactRelation,
     WorkItemService,
 )
 
@@ -111,6 +112,78 @@ def test_feedback_rejects_artifact_from_another_work_item(services):
         )
 
 
+def test_artifact_revision_preserves_parent_and_feedback_lineage(services):
+    storage, service = services
+    item = service.create(objective="生成报告")
+    original = service.add_artifact(
+        item.id,
+        name="report.md",
+        kind=ArtifactKind.REPORT,
+        content="# Version one",
+    )
+    feedback = service.submit_artifact_feedback(
+        item.id,
+        original.id,
+        decision=ArtifactFeedbackDecision.NEEDS_REVISION,
+        note="补充风险",
+    )
+
+    revision = service.revise_artifact(
+        original.id,
+        content="# Version two\n\nRisks",
+        source_feedback_id=feedback.id,
+    )
+
+    assert revision.id != original.id
+    assert revision.lineage_id == original.lineage_id
+    assert revision.version == 2
+    assert revision.parent_artifact_id == original.id
+    assert revision.source_feedback_id == feedback.id
+    assert revision.relation == ArtifactRelation.REVISION
+    assert revision.checksum != original.checksum
+    assert storage.get_artifact(original.id).content == "# Version one"
+    assert [artifact.id for artifact in service.list_artifact_versions(revision.id)] == [
+        revision.id,
+        original.id,
+    ]
+
+
+def test_artifact_storage_rejects_in_place_mutation(services):
+    storage, service = services
+    item = service.create(objective="生成报告")
+    artifact = service.add_artifact(item.id, name="report.md", content="original")
+
+    mutated = artifact.model_copy(update={"content": "overwritten"})
+
+    with pytest.raises(ValueError, match="immutable"):
+        storage.save_artifact(mutated)
+    assert storage.get_artifact(artifact.id).content == "original"
+
+
+def test_artifact_revision_validates_parent_and_feedback_scope(services):
+    _, service = services
+    first = service.create(objective="任务一")
+    second = service.create(objective="任务二")
+    parent = service.add_artifact(first.id, name="first.md", content="first")
+    other = service.add_artifact(second.id, name="second.md", content="second")
+    feedback = service.submit_artifact_feedback(
+        second.id,
+        other.id,
+        decision=ArtifactFeedbackDecision.NEEDS_REVISION,
+    )
+
+    with pytest.raises(KeyError, match="parent artifact"):
+        service.add_artifact(
+            second.id,
+            name="invalid.md",
+            content="invalid",
+            parent_artifact_id=parent.id,
+            relation=ArtifactRelation.REVISION,
+        )
+    with pytest.raises(KeyError, match="source feedback"):
+        service.revise_artifact(parent.id, content="invalid", source_feedback_id=feedback.id)
+
+
 def test_eval_report_calculates_latest_artifact_acceptance_rate(services):
     _, service = services
     item = service.create(objective="生成报告")
@@ -143,3 +216,38 @@ def test_eval_report_calculates_latest_artifact_acceptance_rate(services):
     assert result.reviewed_artifact_count == 1
     assert result.accepted_artifact_count == 1
     assert report.artifact_acceptance_rate == 1.0
+
+
+def test_eval_acceptance_uses_latest_version_in_each_lineage(services):
+    _, service = services
+    item = service.create(objective="生成报告")
+    run = service.start(item.id)
+    original = service.add_artifact(
+        item.id,
+        run_id=run.id,
+        name="report.md",
+        kind=ArtifactKind.REPORT,
+        content="# Draft",
+    )
+    feedback = service.submit_artifact_feedback(
+        item.id,
+        original.id,
+        decision=ArtifactFeedbackDecision.NEEDS_REVISION,
+    )
+    revision = service.revise_artifact(
+        original.id,
+        content="# Final",
+        source_feedback_id=feedback.id,
+    )
+    service.submit_artifact_feedback(
+        item.id,
+        revision.id,
+        decision=ArtifactFeedbackDecision.ACCEPTED,
+    )
+    service.runs.complete(run.id, "done")
+
+    result = EvalRunner().evaluate(load_core_scenarios()[0], service.detail(item.id))
+
+    assert result.artifact_count == 1
+    assert result.reviewed_artifact_count == 1
+    assert result.accepted_artifact_count == 1

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from llm_chat.runtime.models import Run
 
@@ -61,6 +61,14 @@ class ArtifactReviewPolicy(str, Enum):
     REQUIRED = "required"
     OPTIONAL = "optional"
     NONE = "none"
+
+
+class ArtifactRelation(str, Enum):
+    """How an immutable artifact version relates to its parent."""
+
+    ORIGINAL = "original"
+    REVISION = "revision"
+    DERIVED = "derived"
 
 
 class ArtifactFeedbackDecision(str, Enum):
@@ -125,7 +133,7 @@ class WorkItem(BaseModel):
 
 
 class Artifact(BaseModel):
-    """任务执行产生的可独立查询与交付的结果。"""
+    """任务执行产生的不可变、可版本化交付结果。"""
 
     id: str = Field(default_factory=lambda: f"artifact_{uuid4().hex}")
     work_item_id: str
@@ -137,8 +145,25 @@ class Artifact(BaseModel):
     content_preview: Optional[str] = None
     checksum: Optional[str] = None
     idempotency_key: Optional[str] = None
+    lineage_id: Optional[str] = None
+    version: int = Field(default=1, ge=1)
+    parent_artifact_id: Optional[str] = None
+    source_feedback_id: Optional[str] = None
+    relation: ArtifactRelation = ArtifactRelation.ORIGINAL
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def _default_lineage_to_artifact_id(self):
+        if not self.lineage_id:
+            self.lineage_id = self.id
+        if self.relation != ArtifactRelation.ORIGINAL and not self.parent_artifact_id:
+            raise ValueError("derived artifacts require a parent artifact")
+        if self.parent_artifact_id and self.relation == ArtifactRelation.ORIGINAL:
+            raise ValueError("artifact versions with a parent require a derived relation")
+        if self.parent_artifact_id and self.version == 1:
+            raise ValueError("artifact versions with a parent must be greater than one")
+        return self
 
 
 class ArtifactFeedback(BaseModel):
@@ -151,6 +176,21 @@ class ArtifactFeedback(BaseModel):
     note: str = ""
     created_by: str = "local-user"
     created_at: datetime = Field(default_factory=utc_now)
+
+
+def latest_artifact_versions(artifacts: Iterable[Artifact]) -> List[Artifact]:
+    """Return the current immutable version of each logical artifact lineage."""
+
+    latest: Dict[str, Artifact] = {}
+    for artifact in artifacts:
+        lineage_id = artifact.lineage_id or artifact.id
+        previous = latest.get(lineage_id)
+        if previous is None or (artifact.version, artifact.created_at) > (
+            previous.version,
+            previous.created_at,
+        ):
+            latest[lineage_id] = artifact
+    return list(latest.values())
 
 
 class PlanStep(BaseModel):

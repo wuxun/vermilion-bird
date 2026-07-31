@@ -39,6 +39,7 @@ from llm_chat.runtime import (
 from llm_chat.work import (
     ArtifactKind,
     ArtifactFeedbackDecision,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     GrantScope,
     PlanStepStatus,
@@ -692,6 +693,15 @@ class App:
             None,
         )
         if latest and latest.status == RunStatus.COMPLETED and isinstance(latest.result, str):
+            parent = next(
+                (
+                    artifact
+                    for artifact in detail.artifacts
+                    if artifact.metadata.get("role") == "primary_result"
+                    and artifact.run_id != latest.id
+                ),
+                None,
+            )
             self.work_items.add_artifact(
                 work_item_id,
                 run_id=latest.id,
@@ -700,6 +710,10 @@ class App:
                 content=latest.result,
                 content_preview=latest.result[:500],
                 idempotency_key=f"{latest.id}:primary-result",
+                parent_artifact_id=parent.id if parent else None,
+                relation=(
+                    ArtifactRelation.REVISION if parent else ArtifactRelation.ORIGINAL
+                ),
                 metadata={"role": "primary_result"},
             )
             detail = self.work_items.detail(work_item_id)
@@ -810,6 +824,9 @@ class App:
         content_preview: Optional[str] = None,
         checksum: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        parent_artifact_id: Optional[str] = None,
+        source_feedback_id: Optional[str] = None,
+        relation: ArtifactRelation = ArtifactRelation.ORIGINAL,
         metadata: Optional[Dict[str, Any]] = None,
     ):
         return self.work_items.add_artifact(
@@ -822,8 +839,17 @@ class App:
             content_preview=content_preview,
             checksum=checksum,
             idempotency_key=idempotency_key,
+            parent_artifact_id=parent_artifact_id,
+            source_feedback_id=source_feedback_id,
+            relation=relation,
             metadata=metadata,
         )
+
+    def revise_work_item_artifact(self, artifact_id: str, **kwargs):
+        return self.work_items.revise_artifact(artifact_id, **kwargs)
+
+    def list_artifact_versions(self, artifact_id: str):
+        return self.work_items.list_artifact_versions(artifact_id)
 
     def reject_action(
         self,

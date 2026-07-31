@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -18,6 +19,7 @@ from .models import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     PlanRevision,
     PlanStatus,
@@ -76,6 +78,17 @@ class WorkItemRepository(Protocol):
     def get_artifact_by_idempotency_key(self, idempotency_key: str) -> Optional[Artifact]:
         ...
 
+    def get_latest_artifact_in_lineage(self, lineage_id: str) -> Optional[Artifact]:
+        ...
+
+    def list_artifact_versions(
+        self,
+        lineage_id: str,
+        *,
+        limit: int = 200,
+    ) -> List[Artifact]:
+        ...
+
     def list_artifacts(
         self,
         work_item_id: str,
@@ -85,6 +98,9 @@ class WorkItemRepository(Protocol):
         ...
 
     def create_artifact_feedback(self, feedback: ArtifactFeedback) -> bool:
+        ...
+
+    def get_artifact_feedback(self, feedback_id: str) -> Optional[ArtifactFeedback]:
         ...
 
     def list_artifact_feedback(
@@ -327,6 +343,9 @@ class WorkItemService:
         content_preview: Optional[str] = None,
         checksum: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        parent_artifact_id: Optional[str] = None,
+        source_feedback_id: Optional[str] = None,
+        relation: ArtifactRelation = ArtifactRelation.ORIGINAL,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Artifact:
         self._require(work_item_id)
@@ -335,6 +354,8 @@ class WorkItemService:
             raise ValueError("artifact name cannot be empty")
         if not isinstance(kind, ArtifactKind):
             kind = ArtifactKind(kind)
+        if not isinstance(relation, ArtifactRelation):
+            relation = ArtifactRelation(relation)
         if idempotency_key:
             existing = self.repository.get_artifact_by_idempotency_key(idempotency_key)
             if existing is not None:
@@ -347,6 +368,31 @@ class WorkItemService:
                 raise KeyError(f"Unknown run: {run_id}")
             if run.work_item_id != work_item_id:
                 raise ValueError(f"Run {run_id} does not belong to work item {work_item_id}")
+        parent = None
+        lineage_id = None
+        version = 1
+        if parent_artifact_id:
+            parent = self.repository.get_artifact(parent_artifact_id)
+            if parent is None or parent.work_item_id != work_item_id:
+                raise KeyError(f"Unknown parent artifact: {parent_artifact_id}")
+            if relation == ArtifactRelation.ORIGINAL:
+                relation = ArtifactRelation.REVISION
+            lineage_id = parent.lineage_id or parent.id
+            latest = self.repository.get_latest_artifact_in_lineage(lineage_id)
+            version = (latest.version if latest else parent.version) + 1
+        elif relation != ArtifactRelation.ORIGINAL:
+            raise ValueError("derived artifacts require a parent artifact")
+        if source_feedback_id:
+            feedback = self.repository.get_artifact_feedback(source_feedback_id)
+            if (
+                feedback is None
+                or parent is None
+                or feedback.artifact_id != parent.id
+                or feedback.work_item_id != work_item_id
+            ):
+                raise KeyError(f"Unknown source feedback: {source_feedback_id}")
+        if checksum is None and content is not None:
+            checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
         artifact = Artifact(
             work_item_id=work_item_id,
             run_id=run_id,
@@ -357,13 +403,31 @@ class WorkItemService:
             content_preview=content_preview,
             checksum=checksum,
             idempotency_key=idempotency_key,
+            lineage_id=lineage_id,
+            version=version,
+            parent_artifact_id=parent.id if parent else None,
+            source_feedback_id=source_feedback_id,
+            relation=relation,
             metadata=metadata or {},
         )
         created = self.repository.create_artifact(artifact)
         if not created and idempotency_key:
             existing = self.repository.get_artifact_by_idempotency_key(idempotency_key)
             if existing is not None:
+                if existing.work_item_id != work_item_id:
+                    raise ValueError("artifact idempotency key belongs to another work item")
                 return existing
+        if not created and parent is not None and not idempotency_key:
+            # A concurrent revision may have claimed the same lineage version.
+            # Retry with the latest durable version while retaining this new ID.
+            for _ in range(3):
+                latest = self.repository.get_latest_artifact_in_lineage(
+                    artifact.lineage_id or parent.id
+                )
+                artifact.version = (latest.version if latest else artifact.version) + 1
+                if self.repository.create_artifact(artifact):
+                    created = True
+                    break
         if not created:
             raise ValueError(f"artifact already exists: {artifact.id}")
         item = self._require(work_item_id)
@@ -373,10 +437,63 @@ class WorkItemService:
             subject_id=artifact.id,
             work_item_id=work_item_id,
             conversation_id=item.conversation_id,
-            properties={"artifact_kind": artifact.kind.value},
+            properties={
+                "artifact_kind": artifact.kind.value,
+                "artifact_relation": artifact.relation.value,
+                "artifact_version": artifact.version,
+            },
             deduplication_key=f"artifact:{artifact.id}:created",
         )
         return artifact.model_copy(deep=True)
+
+    def revise_artifact(
+        self,
+        artifact_id: str,
+        *,
+        run_id: Optional[str] = None,
+        name: Optional[str] = None,
+        kind: Optional[ArtifactKind] = None,
+        uri: Optional[str] = None,
+        content: Optional[str] = None,
+        content_preview: Optional[str] = None,
+        checksum: Optional[str] = None,
+        source_feedback_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        relation: ArtifactRelation = ArtifactRelation.REVISION,
+    ) -> Artifact:
+        """Create a new immutable version without modifying the parent artifact."""
+
+        parent = self.repository.get_artifact(artifact_id)
+        if parent is None:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        merged_metadata = dict(parent.metadata)
+        merged_metadata.update(metadata or {})
+        return self.add_artifact(
+            parent.work_item_id,
+            run_id=run_id,
+            name=name or parent.name,
+            kind=kind or parent.kind,
+            uri=uri if uri is not None else parent.uri,
+            content=content if content is not None else parent.content,
+            content_preview=(
+                content_preview
+                if content_preview is not None
+                else parent.content_preview
+            ),
+            checksum=checksum,
+            idempotency_key=idempotency_key,
+            parent_artifact_id=parent.id,
+            source_feedback_id=source_feedback_id,
+            relation=relation,
+            metadata=merged_metadata,
+        )
+
+    def list_artifact_versions(self, artifact_id: str) -> List[Artifact]:
+        artifact = self.repository.get_artifact(artifact_id)
+        if artifact is None:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        return self.repository.list_artifact_versions(artifact.lineage_id or artifact.id)
 
     def bind_conversation(self, work_item_id: str, conversation_id: str) -> WorkItem:
         conversation_id = conversation_id.strip()

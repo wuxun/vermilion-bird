@@ -299,7 +299,15 @@ def test_existing_artifact_table_gets_content_and_idempotency_columns(tmp_path):
             row[1] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
         }
 
-    assert {"content", "idempotency_key"} <= columns
+    assert {
+        "content",
+        "idempotency_key",
+        "lineage_id",
+        "version",
+        "parent_artifact_id",
+        "source_feedback_id",
+        "relation",
+    } <= columns
     Storage.set_instance(None)
 
 

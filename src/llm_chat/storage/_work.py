@@ -11,6 +11,7 @@ from llm_chat.work.models import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     GrantScope,
     GrantStatus,
@@ -160,28 +161,25 @@ class StorageWorkMixin:
         return [self._row_to_work_item(row) for row in rows]
 
     def save_artifact(self, artifact: Artifact) -> None:
+        """Compatibility entrypoint that preserves Artifact immutability."""
+
         with self._get_connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
-                INSERT INTO artifacts (
+                INSERT OR IGNORE INTO artifacts (
                     id, work_item_id, run_id, kind, name, uri, content,
-                    content_preview, checksum, idempotency_key, metadata_json,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    work_item_id = excluded.work_item_id,
-                    run_id = excluded.run_id,
-                    kind = excluded.kind,
-                    name = excluded.name,
-                    uri = excluded.uri,
-                    content = excluded.content,
-                    content_preview = excluded.content_preview,
-                    checksum = excluded.checksum,
-                    idempotency_key = excluded.idempotency_key,
-                    metadata_json = excluded.metadata_json
+                    content_preview, checksum, idempotency_key, lineage_id,
+                    version, parent_artifact_id, source_feedback_id, relation,
+                    metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._artifact_values(artifact),
             )
+        if cursor.rowcount == 1:
+            return
+        existing = self.get_artifact(artifact.id)
+        if existing != artifact:
+            raise ValueError(f"artifact is immutable: {artifact.id}")
 
     def create_artifact(self, artifact: Artifact) -> bool:
         with self._get_connection() as conn:
@@ -189,9 +187,10 @@ class StorageWorkMixin:
                 """
                 INSERT OR IGNORE INTO artifacts (
                     id, work_item_id, run_id, kind, name, uri, content,
-                    content_preview, checksum, idempotency_key, metadata_json,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_preview, checksum, idempotency_key, lineage_id,
+                    version, parent_artifact_id, source_feedback_id, relation,
+                    metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._artifact_values(artifact),
             )
@@ -212,6 +211,37 @@ class StorageWorkMixin:
                 (idempotency_key,),
             ).fetchone()
         return self._row_to_artifact(row) if row else None
+
+    def get_latest_artifact_in_lineage(self, lineage_id: str) -> Optional[Artifact]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM artifacts
+                WHERE lineage_id = ?
+                ORDER BY version DESC, created_at DESC
+                LIMIT 1
+                """,
+                (lineage_id,),
+            ).fetchone()
+        return self._row_to_artifact(row) if row else None
+
+    def list_artifact_versions(
+        self,
+        lineage_id: str,
+        *,
+        limit: int = 200,
+    ) -> List[Artifact]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM artifacts
+                WHERE lineage_id = ?
+                ORDER BY version DESC, created_at DESC
+                LIMIT ?
+                """,
+                (lineage_id, max(1, limit)),
+            ).fetchall()
+        return [self._row_to_artifact(row) for row in rows]
 
     def list_artifacts(
         self,
@@ -251,6 +281,14 @@ class StorageWorkMixin:
                 ),
             )
             return cursor.rowcount == 1
+
+    def get_artifact_feedback(self, feedback_id: str) -> Optional[ArtifactFeedback]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact_feedback WHERE id = ?",
+                (feedback_id,),
+            ).fetchone()
+        return self._row_to_artifact_feedback(row) if row else None
 
     def list_artifact_feedback(
         self,
@@ -536,6 +574,11 @@ class StorageWorkMixin:
             artifact.content_preview,
             artifact.checksum,
             artifact.idempotency_key,
+            artifact.lineage_id or artifact.id,
+            artifact.version,
+            artifact.parent_artifact_id,
+            artifact.source_feedback_id,
+            artifact.relation.value,
             _dump_json(artifact.metadata),
             artifact.created_at.isoformat(),
         )
@@ -612,6 +655,11 @@ class StorageWorkMixin:
             content_preview=row["content_preview"],
             checksum=row["checksum"],
             idempotency_key=row["idempotency_key"],
+            lineage_id=row["lineage_id"] or row["id"],
+            version=row["version"] or 1,
+            parent_artifact_id=row["parent_artifact_id"],
+            source_feedback_id=row["source_feedback_id"],
+            relation=ArtifactRelation(row["relation"] or ArtifactRelation.ORIGINAL.value),
             metadata=_load_json(row["metadata_json"], {}),
             created_at=_parse_datetime(row["created_at"]) or datetime.now(timezone.utc),
         )

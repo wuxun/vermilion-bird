@@ -5,6 +5,7 @@ from .models import (
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     GrantScope,
     GrantStatus,
@@ -18,6 +19,7 @@ from .models import (
     WorkItemDetail,
     WorkItemKind,
     WorkItemStatus,
+    latest_artifact_versions,
 )
 from .grants import ResourceGrantService
 from .presentation import (
@@ -39,6 +41,7 @@ __all__ = [
     "ArtifactFeedback",
     "ArtifactFeedbackDecision",
     "ArtifactKind",
+    "ArtifactRelation",
     "ArtifactReviewPolicy",
     "AttentionItemView",
     "AttentionKind",
@@ -65,4 +68,5 @@ __all__ = [
     "WorkItemRepository",
     "WorkItemService",
     "WorkItemStatus",
+    "latest_artifact_versions",
 ]

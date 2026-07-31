@@ -14,6 +14,7 @@ from llm_chat.work import (
     ArtifactFeedbackDecision,
     ArtifactKind,
     ArtifactReviewPolicy,
+    ArtifactRelation,
     AttentionKind,
     AttentionLevel,
     PlanRevision,
@@ -168,6 +169,39 @@ def test_feedback_removes_artifact_from_attention():
         entry for entry in view.timeline if entry.kind == TimelineKind.ARTIFACT
     )
     assert any("已接受" in line for line in artifact_entry.details)
+
+
+def test_projector_only_requires_review_for_latest_artifact_version():
+    detail = _detail()
+    original = detail.artifacts[0]
+    revision = Artifact(
+        id="artifact_revision_v2",
+        work_item_id=detail.work_item.id,
+        name=original.name,
+        lineage_id=original.lineage_id,
+        version=2,
+        parent_artifact_id=original.id,
+        relation=ArtifactRelation.REVISION,
+    )
+    detail.artifacts = [revision, original]
+    detail.artifact_feedback = [
+        ArtifactFeedback(
+            artifact_id=original.id,
+            work_item_id=detail.work_item.id,
+            decision=ArtifactFeedbackDecision.NEEDS_REVISION,
+        ),
+        ArtifactFeedback(
+            artifact_id=revision.id,
+            work_item_id=detail.work_item.id,
+            decision=ArtifactFeedbackDecision.ACCEPTED,
+        ),
+    ]
+
+    view = TaskWorkspaceProjector().project(detail)
+
+    assert view.artifact_count == 1
+    assert view.unreviewed_artifact_count == 0
+    assert not view.requires_attention
 
 
 def test_optional_automation_result_is_an_update_not_a_todo():
