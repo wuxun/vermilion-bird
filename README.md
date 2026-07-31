@@ -1,8 +1,19 @@
 # Vermilion Bird
 
-[![Build & Package](https://github.com/your-username/vermilion-bird/actions/workflows/build.yml/badge.svg)](https://github.com/your-username/vermilion-bird/actions/workflows/build.yml)
+[![Build & Package](https://github.com/wuxun/vermilion-bird/actions/workflows/build.yml/badge.svg)](https://github.com/wuxun/vermilion-bird/actions/workflows/build.yml)
 
-大模型对话客户端，支持多协议（OpenAI/Anthropic/Gemini）、MCP 工具调用、容器化沙箱执行、意图识别路由、事件驱动触发器、多层记忆系统。
+Vermilion Bird 是面向技术型知识工作者的、本地优先、可审计、可恢复的 AI 工作执行台。
+它从统一对话开始，将复杂目标升级为持久任务，在明确的资源边界内执行，并把被用户验收的
+交付物沉淀为可重复、可定时运行的 Workflow。
+
+项目不以支持多少模型、工具或 Agent 模式衡量进展，核心闭环是：
+
+```text
+对话 → 目标 → 计划与授权 → 持久化执行 → Artifact 验收 → Workflow 复用
+```
+
+产品方向和阶段门槛见 [产品战略 2026](docs/product-strategy-2026.md) 与
+[产品和架构路线图](docs/product-architecture-roadmap.md)。
 
 ## 功能特性
 
@@ -28,7 +39,7 @@
 
 ```bash
 # 方式一：Poetry（推荐开发）
-git clone https://github.com/your-username/vermilion-bird.git
+git clone https://github.com/wuxun/vermilion-bird.git
 cd vermilion-bird
 poetry install -E all
 

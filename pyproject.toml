@@ -1,10 +1,15 @@
 [tool.poetry]
 name = "vermilion-bird"
-version = "0.2.1"
-description = "A simple LLM chat client with configurable settings and multi-protocol support"
-authors = ["Your Name <your.email@example.com>"]
+version = "0.3.0"
+description = "A local-first, auditable and recoverable AI work execution desktop"
+authors = ["Xun Wu"]
 readme = "README.md"
 packages = [{include = "llm_chat", from = "src"}]
+
+[tool.poetry.urls]
+Homepage = "https://github.com/wuxun/vermilion-bird"
+Repository = "https://github.com/wuxun/vermilion-bird"
+Issues = "https://github.com/wuxun/vermilion-bird/issues"
 
 [tool.poetry.scripts]
 vermilion-bird = "llm_chat.cli:main"
