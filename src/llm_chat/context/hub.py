@@ -26,6 +26,7 @@ class ContextKind(str, Enum):
     PROMPT_SKILL = "prompt_skill"
     STYLE = "style"
     SUMMARY = "summary"
+    RESOURCE = "resource"
 
 
 class ContextScope(str, Enum):
@@ -276,11 +277,57 @@ class HistoryContextProvider:
         ]
 
 
-def build_default_context_hub(conversation_manager) -> ContextHub:
-    return ContextHub(
-        [
-            MemoryContextProvider(conversation_manager),
-            KnowledgeContextProvider(conversation_manager),
-            HistoryContextProvider(conversation_manager),
-        ]
-    )
+class ResourceContextProvider:
+    name = "context_resources"
+
+    def __init__(self, resource_service):
+        self._resource_service = resource_service
+
+    def retrieve(self, query: ContextQuery) -> List[ContextItem]:
+        if not query.conversation_id:
+            return []
+        resources = self._resource_service.list(
+            conversation_id=query.conversation_id,
+            active_only=True,
+        )
+        items = []
+        for resource in resources:
+            try:
+                content, changed = self._resource_service.read_for_context(resource)
+            except Exception:
+                logger.warning(
+                    "Context resource read failed: %s",
+                    resource.id,
+                    exc_info=True,
+                )
+                continue
+            if not content:
+                continue
+            items.append(
+                ContextItem(
+                    kind=ContextKind.RESOURCE,
+                    scope=ContextScope.CONVERSATION,
+                    content=content,
+                    source=f"context_resource:{resource.id}",
+                    priority=92,
+                    sensitivity=Sensitivity(resource.sensitivity.value),
+                    conversation_id=query.conversation_id,
+                    metadata={
+                        "context_resource_id": resource.id,
+                        "changed_since_attachment": changed,
+                        "resource_kind": resource.kind.value,
+                    },
+                )
+            )
+        return items
+
+
+def build_default_context_hub(conversation_manager, *, resource_service=None) -> ContextHub:
+    providers = [
+        MemoryContextProvider(conversation_manager),
+        KnowledgeContextProvider(conversation_manager),
+        HistoryContextProvider(conversation_manager),
+    ]
+    if resource_service is not None:
+        providers.append(ResourceContextProvider(resource_service))
+    return ContextHub(providers)

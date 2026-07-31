@@ -23,6 +23,9 @@ def _fake_app():
         work_items=work_items,
         action_proposals=action_proposals,
         list_work_items=lambda **_kwargs: [],
+        list_context_resources=lambda _conversation_id: [],
+        attach_context_resource=MagicMock(),
+        remove_context_resource=MagicMock(),
     )
 
 
@@ -164,6 +167,36 @@ def test_codex_like_shell_uses_single_sidebar_and_contextual_composer(qt_app):
     frontend._toggle_sidebar()
     assert frontend._sidebar.width() == 260
     assert frontend._task_nav_button.text() == "◎  工作概览"
+
+    parent.close()
+    qt_app.processEvents()
+
+
+def test_composer_renders_and_removes_attached_context_resources(qt_app, tmp_path):
+    frontend = GUIFrontend(conversation_id="conv_resources")
+    app = _fake_app()
+    resource = SimpleNamespace(
+        id="context_resource_1",
+        display_name="brief.md",
+        source_path=str(tmp_path / "brief.md"),
+        kind=SimpleNamespace(value="file"),
+    )
+    app.list_context_resources = lambda _conversation_id: [resource]
+    frontend.set_app(app)
+    parent = QWidget()
+    frontend._setup_ui(parent)
+
+    frontend._refresh_context_resources()
+    qt_app.processEvents()
+
+    assert not frontend._attachment_frame.isHidden()
+    assert frontend._attachment_layout.count() == 2  # chip + stretch
+    chip = frontend._attachment_layout.itemAt(0).widget()
+    assert "brief.md" in chip.text()
+    assert "提供给所选模型" in chip.toolTip()
+
+    chip.click()
+    app.remove_context_resource.assert_called_once_with("context_resource_1")
 
     parent.close()
     qt_app.processEvents()

@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 9
+    CURRENT_SCHEMA_VERSION = 10
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -172,6 +172,7 @@ class StorageCore:
                 self._migrate_automation_attention,
             ),
             SchemaMigration(9, "local_product_events", self._create_product_events_table_in),
+            SchemaMigration(10, "context_resources", self._create_context_resources_table_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -250,6 +251,14 @@ class StorageCore:
             "workflow_definitions": {"latest_version", "status"},
             "workflow_versions": {"workflow_id", "version", "objective_template"},
             "product_events": {"event_type", "subject_type", "subject_id", "occurred_at"},
+            "context_resources": {
+                "conversation_id",
+                "source_path",
+                "snapshot_hash",
+                "sensitivity",
+                "transfer_policy",
+                "status",
+            },
         }
         with sqlite3.connect(self._db_path) as conn:
             for table, columns in required.items():
@@ -274,6 +283,7 @@ class StorageCore:
         self._create_artifact_feedback_table_in(conn)
         self._create_workflow_tables_in(conn)
         self._create_product_events_table_in(conn)
+        self._create_context_resources_table_in(conn)
         self._migrate_run_control(conn)
 
     def _create_upgrade_backup(self, from_version: int) -> str:
@@ -1129,5 +1139,40 @@ class StorageCore:
                 ON product_events(work_item_id, occurred_at DESC);
             CREATE INDEX IF NOT EXISTS idx_product_events_subject_time
                 ON product_events(subject_type, subject_id, occurred_at DESC);
+            """
+        )
+
+    @staticmethod
+    def _create_context_resources_table_in(conn):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS context_resources (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                work_item_id TEXT,
+                kind TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                snapshot_hash TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                modified_at TEXT,
+                sensitivity TEXT NOT NULL DEFAULT 'private',
+                transfer_policy TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                removed_at TEXT,
+                FOREIGN KEY (conversation_id)
+                    REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE SET NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_context_resources_active_path
+                ON context_resources(conversation_id, source_path)
+                WHERE status = 'active';
+            CREATE INDEX IF NOT EXISTS idx_context_resources_conversation
+                ON context_resources(conversation_id, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_context_resources_work_item
+                ON context_resources(work_item_id, status, created_at);
             """
         )

@@ -18,6 +18,7 @@ from llm_chat.storage._runtime import StorageRuntimeMixin
 from llm_chat.storage._work import StorageWorkMixin
 from llm_chat.storage._workflow import StorageWorkflowMixin
 from llm_chat.storage._product_event import StorageProductEventMixin
+from llm_chat.storage._context_resource import StorageContextResourceMixin
 
 
 class Storage(
@@ -29,6 +30,7 @@ class Storage(
     StorageWorkMixin,
     StorageWorkflowMixin,
     StorageProductEventMixin,
+    StorageContextResourceMixin,
     StorageCore,
 ):
     """SQLite 持久化存储 (单例)
@@ -43,4 +45,5 @@ class Storage(
     - action_proposals                   高风险动作审批
     - work_items / artifacts             用户任务和交付物
     - product_events                     本地、无内容的产品交互事件
+    - context_resources                  对话和任务附加的本地上下文资源
     """

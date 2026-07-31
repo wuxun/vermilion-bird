@@ -89,6 +89,7 @@ try:
         QComboBox,
         QDialog,
         QStackedWidget,
+        QFileDialog,
     )
     from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent, QIcon, QPixmap
@@ -119,6 +120,7 @@ except ImportError:
     QComboBox = None
     QDialog = None
     QStackedWidget = None
+    QFileDialog = None
     Qt = None
     QTimer = None
     QSize = None
@@ -172,6 +174,9 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._goal_menu_action = None
         self._current_work_item = None
         self._composer_add_button: Optional[QPushButton] = None
+        self._attachment_frame: Optional[QFrame] = None
+        self._attachment_layout: Optional[QHBoxLayout] = None
+        self._context_resources: List[Any] = []
         self._sidebar_search_button: Optional[QPushButton] = None
         self._shortcuts: Dict[str, Any] = {}
         self._conversation_menu_button: Optional[QPushButton] = None
@@ -220,6 +225,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def set_app(self, app: Any):
         self._app_instance = app
+        self._refresh_context_resources()
 
     def set_chat_core(self, chat_core: Any):
         """注入 ChatCore — GUI 通过它进行流式对话，不再直接访问 client。"""
@@ -340,7 +346,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         if self._composer_add_button is None:
             return
         menu = QMenu(self._main_window)
-        menu.addAction("添加文件上下文…", lambda: self._fill_prompt("/file "))
+        menu.addAction("添加文件…", self._choose_context_files)
+        menu.addAction("添加文件夹…", self._choose_context_directory)
         menu.addAction("搜索历史对话", self._focus_search)
         menu.addSeparator()
         menu.addAction("选择技能…", self._on_skills_config)
@@ -349,6 +356,82 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._composer_add_button.rect().topLeft()
         )
         menu.exec(pos)
+
+    def _choose_context_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self._main_window,
+            "添加文件上下文",
+        )
+        self._attach_context_paths(paths)
+
+    def _choose_context_directory(self):
+        path = QFileDialog.getExistingDirectory(
+            self._main_window,
+            "添加文件夹上下文",
+        )
+        if path:
+            self._attach_context_paths([path])
+
+    def _attach_context_paths(self, paths: List[str]):
+        if not paths or self._app_instance is None:
+            return
+        failures = []
+        for path in paths:
+            try:
+                self._app_instance.attach_context_resource(self.conversation_id, path)
+            except Exception as exc:
+                failures.append(f"{path}: {exc}")
+        self._refresh_context_resources()
+        if failures:
+            QMessageBox.warning(
+                self._main_window,
+                "部分上下文添加失败",
+                "\n".join(failures),
+            )
+
+    def _remove_context_resource(self, resource_id: str):
+        if self._app_instance is None:
+            return
+        try:
+            self._app_instance.remove_context_resource(resource_id)
+        except Exception as exc:
+            QMessageBox.warning(self._main_window, "移除上下文失败", str(exc))
+        self._refresh_context_resources()
+
+    def _refresh_context_resources(self):
+        if self._attachment_frame is None or self._attachment_layout is None:
+            return
+        while self._attachment_layout.count():
+            item = self._attachment_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        if self._app_instance is None:
+            self._context_resources = []
+        else:
+            try:
+                self._context_resources = list(
+                    self._app_instance.list_context_resources(self.conversation_id)
+                )
+            except Exception:
+                logger.debug("Failed to load context resources", exc_info=True)
+                self._context_resources = []
+        for resource in self._context_resources:
+            marker = "▣" if resource.kind.value == "directory" else "▤"
+            chip = QPushButton(f"{marker} {resource.display_name}  ×")
+            chip.setObjectName("contextResourceChip")
+            chip.setToolTip(
+                f"{resource.source_path}\n"
+                "该资源会作为当前对话上下文提供给所选模型；点击移除。"
+            )
+            chip.clicked.connect(
+                lambda _checked=False, resource_id=resource.id: self._remove_context_resource(
+                    resource_id
+                )
+            )
+            self._attachment_layout.addWidget(chip)
+        self._attachment_layout.addStretch(1)
+        self._attachment_frame.setVisible(bool(self._context_resources))
 
     def _show_shortcuts_help(self):
         """显示快捷键帮助弹窗。"""
@@ -941,7 +1024,16 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         """
         )
         self._input_field.send_requested.connect(self._on_send)
+        self._input_field.files_dropped.connect(self._attach_context_paths)
         bottom_layout.addWidget(self._input_field)
+
+        self._attachment_frame = QFrame()
+        self._attachment_frame.setObjectName("contextResources")
+        self._attachment_layout = QHBoxLayout(self._attachment_frame)
+        self._attachment_layout.setContentsMargins(3, 0, 3, 2)
+        self._attachment_layout.setSpacing(5)
+        self._attachment_frame.hide()
+        bottom_layout.addWidget(self._attachment_frame)
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
@@ -1107,6 +1199,22 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
                 padding: 0;
             }}
             QPushButton#composerIconButton:hover {{ background: {Colors.SURFACE_HOVER}; }}
+            QFrame#contextResources {{
+                background: transparent;
+                border: none;
+            }}
+            QPushButton#contextResourceChip {{
+                background: {Colors.PRIMARY_SUBTLE};
+                color: {Colors.TEXT_SECONDARY};
+                border: 1px solid {Colors.BORDER_STRONG};
+                border-radius: 8px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }}
+            QPushButton#contextResourceChip:hover {{
+                color: {Colors.PRIMARY_DARK};
+                background: {Colors.SURFACE_HOVER};
+            }}
             QComboBox#composerModelCombo {{
                 background: transparent;
                 border: none;
@@ -1377,6 +1485,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._refresh_chat_display()
         self._refresh_conversation_list()
         self._refresh_goal_state()
+        self._refresh_context_resources()
 
     def is_current_conversation_empty(self) -> bool:
         return len(self._messages) == 0

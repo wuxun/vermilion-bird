@@ -73,6 +73,7 @@ if PYQT_AVAILABLE:
         """
 
         send_requested = pyqtSignal()
+        files_dropped = pyqtSignal(list)
 
         _SLASH_COMMANDS = [
             ("/help", "显示帮助信息"),
@@ -95,12 +96,30 @@ if PYQT_AVAILABLE:
 
         def __init__(self, parent=None):
             super().__init__(parent)
+            self.setAcceptDrops(True)
             self._min_height = 36
             self._max_height = 150
             self._popup: Optional[QListWidget] = None
             self._completing = False
             self.document().documentLayout().documentSizeChanged.connect(self._adjust_height)
             self._adjust_height()
+
+        def dragEnterEvent(self, event):
+            mime_data = event.mimeData()
+            if mime_data.hasUrls() and any(url.isLocalFile() for url in mime_data.urls()):
+                event.acceptProposedAction()
+                return
+            super().dragEnterEvent(event)
+
+        def dropEvent(self, event):
+            mime_data = event.mimeData()
+            if mime_data.hasUrls():
+                paths = [url.toLocalFile() for url in mime_data.urls() if url.isLocalFile()]
+                if paths:
+                    self.files_dropped.emit(paths)
+                    event.acceptProposedAction()
+                    return
+            super().dropEvent(event)
 
         def _adjust_height(self):
             doc_height = int(self.document().size().height())

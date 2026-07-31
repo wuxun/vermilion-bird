@@ -20,6 +20,15 @@ from .hub import (
     ContextScope,
     Sensitivity,
     build_default_context_hub,
+    ResourceContextProvider,
+)
+from .resources import (
+    ContextResource,
+    ContextResourceKind,
+    ContextResourceService,
+    ContextResourceSensitivity,
+    ContextResourceStatus,
+    ExternalTransferPolicy,
 )
 
 __all__ = [
@@ -37,4 +46,11 @@ __all__ = [
     "ContextScope",
     "Sensitivity",
     "build_default_context_hub",
+    "ResourceContextProvider",
+    "ContextResource",
+    "ContextResourceKind",
+    "ContextResourceService",
+    "ContextResourceSensitivity",
+    "ContextResourceStatus",
+    "ExternalTransferPolicy",
 ]

@@ -34,6 +34,8 @@ class ProductEventType(str, Enum):
     WORKFLOW_CREATED = "workflow.created"
     WORKFLOW_REVISED = "workflow.revised"
     WORKFLOW_RUN_STARTED = "workflow.run_started"
+    CONTEXT_RESOURCE_ATTACHED = "context_resource.attached"
+    CONTEXT_RESOURCE_REMOVED = "context_resource.removed"
 
 
 class ProductEvent(BaseModel):
@@ -88,9 +90,11 @@ class ProductEventService:
         "export_kind",
         "kind",
         "review_policy",
+        "resource_kind",
         "run_type",
         "source",
         "status",
+        "transfer_policy",
         "workflow_version",
     }
 

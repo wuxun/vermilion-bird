@@ -52,6 +52,7 @@ from llm_chat.work import (
 )
 from llm_chat.workflows import WorkflowParameter, WorkflowService
 from llm_chat.product_events import ProductEventService, ProductEventType
+from llm_chat.context import ContextResourceService, build_default_context_hub
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -113,6 +114,10 @@ class App:
         logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.run_manager = RunManager(repository=self.storage)
         self.product_events = ProductEventService(self.storage)
+        self.context_resources = ContextResourceService(
+            self.storage,
+            product_events=self.product_events,
+        )
         self.work_items = WorkItemService(
             repository=self.storage,
             runs=self.run_manager,
@@ -236,7 +241,7 @@ class App:
     ):
         """创建用户可见任务；执行由具体应用用例随后启动。"""
 
-        return self.work_items.create(
+        item = self.work_items.create(
             objective=objective,
             title=title,
             kind=kind,
@@ -247,6 +252,35 @@ class App:
             idempotency_key=idempotency_key,
             metadata=metadata,
         )
+        resource_service = getattr(self, "context_resources", None)
+        if item.conversation_id and resource_service is not None:
+            try:
+                resource_service.bind_work_item(item.conversation_id, item.id)
+            except Exception:
+                # The WorkItem is already durable. Resource linkage is recoverable
+                # metadata and must not turn a successful promotion into a failure.
+                logger.warning(
+                    "Failed to bind conversation context resources to work item %s",
+                    item.id,
+                    exc_info=True,
+                )
+        return item
+
+    def attach_context_resource(self, conversation_id: str, path: str):
+        if self.storage.get_conversation(conversation_id) is None:
+            raise KeyError(f"Unknown conversation: {conversation_id}")
+        goal = self.get_conversation_work_item(conversation_id)
+        return self.context_resources.attach_path(
+            conversation_id,
+            path,
+            work_item_id=goal.id if goal else None,
+        )
+
+    def list_context_resources(self, conversation_id: str):
+        return self.context_resources.list(conversation_id=conversation_id)
+
+    def remove_context_resource(self, resource_id: str):
+        return self.context_resources.remove(resource_id)
 
     def get_conversation_work_item(self, conversation_id: str):
         """返回当前对话承载的产品目标；普通对话没有 WorkItem。"""
@@ -1014,6 +1048,10 @@ class App:
             return None
 
     def _init_chat_core(self):
+        context_hub = build_default_context_hub(
+            self.conversation_manager,
+            resource_service=self.context_resources,
+        )
         chat_core = ChatCore(
             client=self.client,
             conversation_manager=self.conversation_manager,
@@ -1025,6 +1063,7 @@ class App:
             action_prepare=self.prepare_action,
             action_approve=self.approve_action,
             action_reject=self.reject_action,
+            context_hub=context_hub,
             graph_runtime=self.graph_runtime,
         )
         logger.info("ChatCore initialized")
