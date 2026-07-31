@@ -8,8 +8,7 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -1534,19 +1533,9 @@ class TaskCenterDialog(QDialog):
         record_view = getattr(self._app, "record_artifact_viewed", None)
         if callable(record_view):
             record_view(artifact.id, entrypoint="gui")
-        if artifact.uri:
-            url = (
-                QUrl(artifact.uri)
-                if artifact.uri.startswith(("http://", "https://"))
-                else QUrl.fromLocalFile(artifact.uri)
-            )
-            QDesktopServices.openUrl(url)
-            return
-        QMessageBox.information(
-            self,
-            artifact.name,
-            artifact.content or artifact.content_preview or "该产物没有可显示内容。",
-        )
+        from llm_chat.frontends.tasks.artifact_preview import ArtifactPreviewDialog
+
+        ArtifactPreviewDialog(self._app, artifact, self).exec()
 
     def _export_selected_artifact(self) -> None:
         artifact = self._selected_artifact()

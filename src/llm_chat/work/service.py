@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import logging
 import os
@@ -16,9 +17,11 @@ from llm_chat.product_events import ProductEventService, ProductEventType
 
 from .models import (
     Artifact,
+    ArtifactDiff,
     ArtifactFeedback,
     ArtifactFeedbackDecision,
     ArtifactKind,
+    ArtifactPreview,
     ArtifactRelation,
     ArtifactReviewPolicy,
     PlanRevision,
@@ -158,6 +161,15 @@ class WorkItemRepository(Protocol):
 
 class WorkItemService:
     """产品任务的唯一写入口，并把主 Run 生命周期投影为任务状态。"""
+
+    PREVIEW_TEXT_EXTENSIONS = {
+        ".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".hpp",
+        ".html", ".ini", ".java", ".js", ".json", ".jsx", ".log",
+        ".md", ".py", ".rb", ".rs", ".sh", ".sql", ".toml", ".ts",
+        ".tsx", ".txt", ".xml", ".yaml", ".yml",
+    }
+    MAX_ARTIFACT_PREVIEW_CHARS = 200_000
+    MAX_ARTIFACT_DIFF_CHARS = 240_000
 
     def __init__(
         self,
@@ -494,6 +506,103 @@ class WorkItemService:
         if artifact is None:
             raise KeyError(f"Unknown artifact: {artifact_id}")
         return self.repository.list_artifact_versions(artifact.lineage_id or artifact.id)
+
+    def preview_artifact(
+        self,
+        artifact_id: str,
+        *,
+        max_chars: int = MAX_ARTIFACT_PREVIEW_CHARS,
+    ) -> ArtifactPreview:
+        """Return bounded, local-only display content for the Artifact viewer."""
+
+        artifact = self.repository.get_artifact(artifact_id)
+        if artifact is None:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        limit = max(1, min(max_chars, self.MAX_ARTIFACT_PREVIEW_CHARS))
+        content = artifact.content
+        source = "embedded"
+        truncated = False
+        if content is None and artifact.uri:
+            if artifact.uri.startswith(("http://", "https://")):
+                content = artifact.uri
+                source = "link"
+            else:
+                path = Path(artifact.uri).expanduser().resolve(strict=False)
+                source = "file"
+                if not path.is_file():
+                    content = f"源文件不存在：{path.name}"
+                elif path.suffix.lower() not in self.PREVIEW_TEXT_EXTENSIONS:
+                    content = (
+                        f"{path.name}\n\n"
+                        f"当前版本暂不支持内嵌预览该文件类型。\n"
+                        f"大小：{path.stat().st_size} bytes"
+                    )
+                else:
+                    content, truncated = self._read_text_bounded(path, limit)
+        if content is None:
+            content = artifact.content_preview or "该交付物没有可预览内容。"
+            source = "preview" if artifact.content_preview else "empty"
+        if len(content) > limit:
+            content = content[:limit]
+            truncated = True
+        if truncated:
+            content += "\n\n[预览已按安全上限截断]"
+        return ArtifactPreview(
+            artifact_id=artifact.id,
+            version=artifact.version,
+            content=content,
+            source=source,
+            truncated=truncated,
+        )
+
+    def diff_artifact_versions(
+        self,
+        left_artifact_id: str,
+        right_artifact_id: str,
+        *,
+        context_lines: int = 3,
+    ) -> ArtifactDiff:
+        """Build a bounded unified diff for two versions of one lineage."""
+
+        left = self.repository.get_artifact(left_artifact_id)
+        right = self.repository.get_artifact(right_artifact_id)
+        if left is None:
+            raise KeyError(f"Unknown artifact: {left_artifact_id}")
+        if right is None:
+            raise KeyError(f"Unknown artifact: {right_artifact_id}")
+        if (left.lineage_id or left.id) != (right.lineage_id or right.id):
+            raise ValueError("artifact diff requires versions from the same lineage")
+        left_preview = self.preview_artifact(left.id)
+        right_preview = self.preview_artifact(right.id)
+        lines = difflib.unified_diff(
+            left_preview.content.splitlines(),
+            right_preview.content.splitlines(),
+            fromfile=f"{left.name} v{left.version}",
+            tofile=f"{right.name} v{right.version}",
+            n=max(0, min(context_lines, 20)),
+            lineterm="",
+        )
+        content = "\n".join(lines) or "版本内容没有差异。"
+        truncated = len(content) > self.MAX_ARTIFACT_DIFF_CHARS
+        if truncated:
+            content = (
+                content[: self.MAX_ARTIFACT_DIFF_CHARS]
+                + "\n\n[差异已按安全上限截断]"
+            )
+        return ArtifactDiff(
+            left_artifact_id=left.id,
+            right_artifact_id=right.id,
+            left_version=left.version,
+            right_version=right.version,
+            content=content,
+            truncated=truncated,
+        )
+
+    @staticmethod
+    def _read_text_bounded(path: Path, max_chars: int):
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read(max_chars + 1)
+        return content[:max_chars], len(content) > max_chars
 
     def bind_conversation(self, work_item_id: str, conversation_id: str) -> WorkItem:
         conversation_id = conversation_id.strip()

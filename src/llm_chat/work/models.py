@@ -178,6 +178,23 @@ class ArtifactFeedback(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ArtifactPreview(BaseModel):
+    artifact_id: str
+    version: int = Field(ge=1)
+    content: str
+    source: str
+    truncated: bool = False
+
+
+class ArtifactDiff(BaseModel):
+    left_artifact_id: str
+    right_artifact_id: str
+    left_version: int = Field(ge=1)
+    right_version: int = Field(ge=1)
+    content: str
+    truncated: bool = False
+
+
 def latest_artifact_versions(artifacts: Iterable[Artifact]) -> List[Artifact]:
     """Return the current immutable version of each logical artifact lineage."""
 

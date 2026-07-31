@@ -8,7 +8,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QDialogButtonBox, QWidget  # noqa: E402
 
-from llm_chat.frontends.tasks import TaskCenterDialog  # noqa: E402
+from llm_chat.frontends.tasks import ArtifactPreviewDialog, TaskCenterDialog  # noqa: E402
 from llm_chat.frontends.tasks.task_center import NewTaskDialog  # noqa: E402
 from llm_chat.runtime import (  # noqa: E402
     ActionProposal,
@@ -20,7 +20,10 @@ from llm_chat.runtime import (  # noqa: E402
 )
 from llm_chat.work import (  # noqa: E402
     Artifact,
+    ArtifactDiff,
     ArtifactKind,
+    ArtifactPreview,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     GrantStatus,
     PlanRevision,
@@ -129,6 +132,50 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     assert dialog._follow_up_input.isEnabled()
     dialog._follow_up_input.setPlainText("增加一份风险清单")
     assert dialog._continue_button.isEnabled()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_artifact_preview_dialog_switches_versions_and_renders_diff(qt_app):
+    detail = _detail()
+    original = detail.artifacts[0].model_copy(
+        update={"uri": None, "content": "version one"}
+    )
+    revision = Artifact(
+        id="artifact_gui_v2",
+        work_item_id=original.work_item_id,
+        name=original.name,
+        content="version two",
+        lineage_id=original.lineage_id,
+        version=2,
+        parent_artifact_id=original.id,
+        relation=ArtifactRelation.REVISION,
+    )
+    app = SimpleNamespace(
+        list_artifact_versions=lambda _artifact_id: [revision, original],
+        preview_artifact=lambda artifact_id: ArtifactPreview(
+            artifact_id=artifact_id,
+            version=2 if artifact_id == revision.id else 1,
+            content="version two" if artifact_id == revision.id else "version one",
+            source="embedded",
+        ),
+        diff_artifact_versions=lambda left_id, right_id: ArtifactDiff(
+            left_artifact_id=left_id,
+            right_artifact_id=right_id,
+            left_version=1,
+            right_version=2,
+            content="-version one\n+version two",
+        ),
+    )
+
+    dialog = ArtifactPreviewDialog(app, revision)
+    qt_app.processEvents()
+
+    assert dialog.version_combo.count() == 2
+    assert "version two" in dialog.preview.toPlainText()
+    assert "+version two" in dialog.diff.toPlainText()
+    assert dialog.tabs.isTabEnabled(1)
 
     dialog.close()
     qt_app.processEvents()

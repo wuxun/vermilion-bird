@@ -184,6 +184,60 @@ def test_artifact_revision_validates_parent_and_feedback_scope(services):
         service.revise_artifact(parent.id, content="invalid", source_feedback_id=feedback.id)
 
 
+def test_artifact_preview_and_diff_are_bounded_and_lineage_safe(services):
+    _, service = services
+    item = service.create(objective="生成报告")
+    original = service.add_artifact(
+        item.id,
+        name="report.md",
+        content="line one\nline two\n",
+    )
+    revision = service.revise_artifact(
+        original.id,
+        content="line one\nline changed\n",
+    )
+
+    preview = service.preview_artifact(revision.id, max_chars=8)
+    diff = service.diff_artifact_versions(original.id, revision.id)
+
+    assert preview.truncated is True
+    assert "预览已按安全上限截断" in preview.content
+    assert "-line two" in diff.content
+    assert "+line changed" in diff.content
+    assert diff.left_version == 1
+    assert diff.right_version == 2
+
+    other = service.add_artifact(item.id, name="other.md", content="other")
+    with pytest.raises(ValueError, match="same lineage"):
+        service.diff_artifact_versions(original.id, other.id)
+
+
+def test_artifact_preview_reads_local_text_but_not_binary_payload(services, tmp_path):
+    _, service = services
+    item = service.create(objective="预览文件")
+    text_path = tmp_path / "result.txt"
+    text_path.write_text("local result", encoding="utf-8")
+    binary_path = tmp_path / "result.bin"
+    binary_path.write_bytes(b"\x00private-binary")
+    text_artifact = service.add_artifact(
+        item.id,
+        name=text_path.name,
+        kind=ArtifactKind.FILE,
+        uri=str(text_path),
+    )
+    binary_artifact = service.add_artifact(
+        item.id,
+        name=binary_path.name,
+        kind=ArtifactKind.FILE,
+        uri=str(binary_path),
+    )
+
+    assert service.preview_artifact(text_artifact.id).content == "local result"
+    binary_preview = service.preview_artifact(binary_artifact.id)
+    assert "暂不支持内嵌预览" in binary_preview.content
+    assert "private-binary" not in binary_preview.content
+
+
 def test_eval_report_calculates_latest_artifact_acceptance_rate(services):
     _, service = services
     item = service.create(objective="生成报告")

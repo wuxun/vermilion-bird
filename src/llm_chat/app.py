@@ -851,6 +851,15 @@ class App:
     def list_artifact_versions(self, artifact_id: str):
         return self.work_items.list_artifact_versions(artifact_id)
 
+    def preview_artifact(self, artifact_id: str):
+        return self.work_items.preview_artifact(artifact_id)
+
+    def diff_artifact_versions(self, left_artifact_id: str, right_artifact_id: str):
+        return self.work_items.diff_artifact_versions(
+            left_artifact_id,
+            right_artifact_id,
+        )
+
     def reject_action(
         self,
         proposal_id: str,

@@ -165,8 +165,8 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] `ContextResource`：文件/目录来源、snapshot hash、敏感等级、状态和外发边界
 - [x] Composer 文件/目录选择与拖放、附件预览、上下文移除
 - [x] Artifact 不可变版本、自动 checksum 和反馈派生关系
-- [ ] Artifact 内嵌预览、版本 Diff、反馈和导出
-- [ ] 原 WorkItem 内修订并产生可追溯的新 Artifact 版本
+- [x] Artifact 应用内预览、版本 Diff、反馈和原子导出
+- [x] 原 WorkItem 内修订并产生可追溯的新 Artifact 版本
 - [x] 隐私友好的本地 Product Event Store（无 Prompt/正文/路径，默认不上传）
 - [ ] 从持久化事实计算完成率、采用率、Workflow 转化率和重复成功率
 
