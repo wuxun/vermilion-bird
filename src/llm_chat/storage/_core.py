@@ -31,7 +31,7 @@ class StorageCore:
     _instance: Optional["StorageCore"] = None
     DEFAULT_DB_PATH: str = os.path.expanduser("~/.vermilion-bird/vermilion_bird.db")
     _db_path: str = DEFAULT_DB_PATH
-    CURRENT_SCHEMA_VERSION = 8
+    CURRENT_SCHEMA_VERSION = 9
 
     def __new__(cls, db_path: Optional[str] = None):
         if cls._instance is None:
@@ -171,6 +171,7 @@ class StorageCore:
                 "automation_series_attention_policy",
                 self._migrate_automation_attention,
             ),
+            SchemaMigration(9, "local_product_events", self._create_product_events_table_in),
         ]
 
     def _migrate_base_schema(self, conn) -> None:
@@ -248,6 +249,7 @@ class StorageCore:
             "artifact_feedback": {"artifact_id", "work_item_id", "decision"},
             "workflow_definitions": {"latest_version", "status"},
             "workflow_versions": {"workflow_id", "version", "objective_template"},
+            "product_events": {"event_type", "subject_type", "subject_id", "occurred_at"},
         }
         with sqlite3.connect(self._db_path) as conn:
             for table, columns in required.items():
@@ -271,6 +273,7 @@ class StorageCore:
         self._create_planning_tables_in(conn)
         self._create_artifact_feedback_table_in(conn)
         self._create_workflow_tables_in(conn)
+        self._create_product_events_table_in(conn)
         self._migrate_run_control(conn)
 
     def _create_upgrade_backup(self, from_version: int) -> str:
@@ -1097,5 +1100,34 @@ class StorageCore:
             );
             CREATE INDEX IF NOT EXISTS idx_workflow_versions_definition
                 ON workflow_versions(workflow_id, version DESC);
+            """
+        )
+
+    @staticmethod
+    def _create_product_events_table_in(conn):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS product_events (
+                id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                work_item_id TEXT,
+                conversation_id TEXT,
+                properties_json TEXT NOT NULL DEFAULT '{}',
+                deduplication_key TEXT,
+                occurred_at TEXT NOT NULL,
+                FOREIGN KEY (work_item_id)
+                    REFERENCES work_items(id) ON DELETE SET NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_product_events_deduplication
+                ON product_events(deduplication_key)
+                WHERE deduplication_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_product_events_type_time
+                ON product_events(event_type, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_product_events_work_time
+                ON product_events(work_item_id, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_product_events_subject_time
+                ON product_events(subject_type, subject_id, occurred_at DESC);
             """
         )

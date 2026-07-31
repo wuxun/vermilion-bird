@@ -115,7 +115,10 @@ def test_v7_scheduler_items_gain_series_and_optional_review_policy(tmp_path):
         assert restored[0]["series_key"] == "scheduler:daily"
         assert restored[1]["series_key"] is None
         assert {row["artifact_review_policy"] for row in restored} == {"optional"}
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert (
+            conn.execute("PRAGMA user_version").fetchone()[0]
+            == Storage.CURRENT_SCHEMA_VERSION
+        )
     assert storage.get_work_item_by_series_key("scheduler:daily").id == "work_latest"
 
 

@@ -1531,6 +1531,9 @@ class TaskCenterDialog(QDialog):
         self._open_artifact_by_value(artifact)
 
     def _open_artifact_by_value(self, artifact) -> None:
+        record_view = getattr(self._app, "record_artifact_viewed", None)
+        if callable(record_view):
+            record_view(artifact.id, entrypoint="gui")
         if artifact.uri:
             url = (
                 QUrl(artifact.uri)

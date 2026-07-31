@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from llm_chat.runtime import RecoveryPolicy, Run, RunEvent, RunManager, RunStatus, RunType
+from llm_chat.product_events import ProductEventService, ProductEventType
 
 from .models import (
     Artifact,
@@ -147,9 +148,11 @@ class WorkItemService:
         *,
         repository: WorkItemRepository,
         runs: RunManager,
+        product_events: Optional[ProductEventService] = None,
     ):
         self.repository = repository
         self.runs = runs
+        self.product_events = product_events
         self._lock = threading.RLock()
         self._observers: List[WorkItemObserver] = []
         self._unsubscribe_run = self.runs.subscribe(self._on_run_event)
@@ -223,6 +226,19 @@ class WorkItemService:
                 return existing.model_copy(deep=True)
         if not created:
             raise ValueError(f"work item already exists: {item.id}")
+        self._record_product_event(
+            ProductEventType.WORK_ITEM_CREATED,
+            subject_type="work_item",
+            subject_id=item.id,
+            work_item_id=item.id,
+            conversation_id=item.conversation_id,
+            properties={
+                "kind": item.kind.value,
+                "review_policy": item.artifact_review_policy.value,
+                "source": self._event_source(item.metadata.get("source")),
+            },
+            deduplication_key=f"work-item:{item.id}:created",
+        )
         self._notify(item)
         return item.model_copy(deep=True)
 
@@ -259,6 +275,19 @@ class WorkItemService:
             self._apply_run_status(item, run)
             self.repository.save_work_item(item)
         self._notify(item)
+        self._record_product_event(
+            ProductEventType.WORK_ITEM_STARTED,
+            subject_type="work_item",
+            subject_id=item.id,
+            work_item_id=item.id,
+            conversation_id=item.conversation_id,
+            properties={
+                "kind": item.kind.value,
+                "run_type": run.type.value,
+                "source": self._event_source(item.metadata.get("source")),
+            },
+            deduplication_key=f"run:{run.id}:work-item-started",
+        )
         return run
 
     def attach_run(
@@ -337,6 +366,16 @@ class WorkItemService:
                 return existing
         if not created:
             raise ValueError(f"artifact already exists: {artifact.id}")
+        item = self._require(work_item_id)
+        self._record_product_event(
+            ProductEventType.ARTIFACT_CREATED,
+            subject_type="artifact",
+            subject_id=artifact.id,
+            work_item_id=work_item_id,
+            conversation_id=item.conversation_id,
+            properties={"artifact_kind": artifact.kind.value},
+            deduplication_key=f"artifact:{artifact.id}:created",
+        )
         return artifact.model_copy(deep=True)
 
     def bind_conversation(self, work_item_id: str, conversation_id: str) -> WorkItem:
@@ -398,7 +437,43 @@ class WorkItemService:
         )
         if not self.repository.create_artifact_feedback(feedback):
             raise ValueError(f"artifact feedback already exists: {feedback.id}")
+        item = self._require(work_item_id)
+        self._record_product_event(
+            ProductEventType.ARTIFACT_FEEDBACK,
+            subject_type="artifact",
+            subject_id=artifact_id,
+            work_item_id=work_item_id,
+            conversation_id=item.conversation_id,
+            properties={
+                "artifact_kind": artifact.kind.value,
+                "decision": feedback.decision.value,
+            },
+            deduplication_key=f"artifact-feedback:{feedback.id}",
+        )
         return feedback.model_copy(deep=True)
+
+    def record_artifact_viewed(
+        self,
+        artifact_id: str,
+        *,
+        entrypoint: str = "gui",
+    ) -> None:
+        artifact = self.repository.get_artifact(artifact_id)
+        if artifact is None:
+            raise KeyError(f"Unknown artifact: {artifact_id}")
+        item = self._require(artifact.work_item_id)
+        normalized_entrypoint = entrypoint if entrypoint in {"cli", "gui"} else "other"
+        self._record_product_event(
+            ProductEventType.ARTIFACT_VIEWED,
+            subject_type="artifact",
+            subject_id=artifact.id,
+            work_item_id=artifact.work_item_id,
+            conversation_id=item.conversation_id,
+            properties={
+                "artifact_kind": artifact.kind.value,
+                "entrypoint": normalized_entrypoint,
+            },
+        )
 
     def export_artifact(
         self,
@@ -450,6 +525,18 @@ class WorkItemService:
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
+        item = self._require(artifact.work_item_id)
+        self._record_product_event(
+            ProductEventType.ARTIFACT_EXPORTED,
+            subject_type="artifact",
+            subject_id=artifact.id,
+            work_item_id=artifact.work_item_id,
+            conversation_id=item.conversation_id,
+            properties={
+                "artifact_kind": artifact.kind.value,
+                "export_kind": self._export_kind(destination_path),
+            },
+        )
         return str(destination_path)
 
     def create_plan_revision(
@@ -643,6 +730,7 @@ class WorkItemService:
             if previous != current:
                 self.repository.save_work_item(item)
                 changed.append(item.model_copy(deep=True))
+                self._record_terminal_event(item, run)
         return changed
 
     def subscribe(self, observer: WorkItemObserver) -> Callable[[], None]:
@@ -687,7 +775,52 @@ class WorkItemService:
         if previous == current:
             return
         self.repository.save_work_item(item)
+        self._record_terminal_event(item, primary)
         self._notify(item)
+
+    def _record_terminal_event(self, item: WorkItem, run: Run) -> None:
+        if not item.status.terminal:
+            return
+        self._record_product_event(
+            ProductEventType.WORK_ITEM_TERMINAL,
+            subject_type="work_item",
+            subject_id=item.id,
+            work_item_id=item.id,
+            conversation_id=item.conversation_id,
+            properties={
+                "kind": item.kind.value,
+                "run_type": run.type.value,
+                "source": self._event_source(item.metadata.get("source")),
+                "status": item.status.value,
+            },
+            deduplication_key=f"work-item:{item.id}:run:{run.id}:terminal:{item.status.value}",
+        )
+
+    def _record_product_event(self, event_type: ProductEventType, **kwargs) -> None:
+        if self.product_events is not None:
+            self.product_events.safe_record(event_type, **kwargs)
+
+    @staticmethod
+    def _event_source(value: Any) -> str:
+        known = {"chat", "cli", "gui", "proactive", "scheduler", "webhook", "workflow"}
+        normalized = str(value or "unknown").strip().lower()
+        return normalized if normalized in known else "other"
+
+    @staticmethod
+    def _export_kind(path: Path) -> str:
+        known = {
+            ".csv",
+            ".docx",
+            ".html",
+            ".json",
+            ".md",
+            ".pdf",
+            ".pptx",
+            ".txt",
+            ".xlsx",
+        }
+        suffix = path.suffix.lower()
+        return suffix[1:] if suffix in known else "other"
 
     @staticmethod
     def _apply_run_status(item: WorkItem, run: Run) -> None:

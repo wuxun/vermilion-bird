@@ -51,6 +51,7 @@ from llm_chat.work import (
     WorkItemStatus,
 )
 from llm_chat.workflows import WorkflowParameter, WorkflowService
+from llm_chat.product_events import ProductEventService, ProductEventType
 
 if TYPE_CHECKING:
     from llm_chat.scheduler.scheduler import SchedulerService
@@ -111,14 +112,17 @@ class App:
         _t4 = time.time()
         logger.info(f"⏱ _init_conversation_manager: {_t4-_t3:.3f}s")
         self.run_manager = RunManager(repository=self.storage)
+        self.product_events = ProductEventService(self.storage)
         self.work_items = WorkItemService(
             repository=self.storage,
             runs=self.run_manager,
+            product_events=self.product_events,
         )
         self.resource_grants = ResourceGrantService(self.storage)
         self.workflows = WorkflowService(
             repository=self.storage,
             work_items=self.work_items,
+            product_events=self.product_events,
         )
         self.capability_policy = CapabilityPolicy()
         self.action_proposals = ActionProposalManager(repository=self.storage)
@@ -497,6 +501,19 @@ class App:
                 approve=True,
                 created_by="workflow",
             )
+        self.product_events.safe_record(
+            ProductEventType.WORKFLOW_RUN_STARTED,
+            subject_type="workflow",
+            subject_id=workflow_id,
+            work_item_id=item.id,
+            conversation_id=item.conversation_id,
+            properties={
+                "entrypoint": "app",
+                "source": "workflow",
+                "workflow_version": workflow_version.version,
+            },
+            deduplication_key=f"workflow:{workflow_id}:work-item:{item.id}:started",
+        )
         return self.execute_work_item(item.id)
 
     def list_work_item_actions(
@@ -543,6 +560,12 @@ class App:
             artifact_id,
             destination,
             overwrite=overwrite,
+        )
+
+    def record_artifact_viewed(self, artifact_id: str, *, entrypoint: str = "gui") -> None:
+        self.work_items.record_artifact_viewed(
+            artifact_id,
+            entrypoint=entrypoint,
         )
 
     def execute_work_item(self, work_item_id: str):

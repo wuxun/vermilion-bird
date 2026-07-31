@@ -17,6 +17,7 @@ from llm_chat.storage._feishu import StorageFeishuMixin
 from llm_chat.storage._runtime import StorageRuntimeMixin
 from llm_chat.storage._work import StorageWorkMixin
 from llm_chat.storage._workflow import StorageWorkflowMixin
+from llm_chat.storage._product_event import StorageProductEventMixin
 
 
 class Storage(
@@ -27,6 +28,7 @@ class Storage(
     StorageRuntimeMixin,
     StorageWorkMixin,
     StorageWorkflowMixin,
+    StorageProductEventMixin,
     StorageCore,
 ):
     """SQLite 持久化存储 (单例)
@@ -40,4 +42,5 @@ class Storage(
     - runs / run_events                  可审计运行与事件
     - action_proposals                   高风险动作审批
     - work_items / artifacts             用户任务和交付物
+    - product_events                     本地、无内容的产品交互事件
     """

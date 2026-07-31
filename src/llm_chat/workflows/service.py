@@ -13,6 +13,7 @@ from llm_chat.work import (
     PlanStatus,
     WorkItemStatus,
 )
+from llm_chat.product_events import ProductEventService, ProductEventType
 
 from .models import WorkflowDefinition, WorkflowParameter, WorkflowVersion
 
@@ -48,9 +49,16 @@ class WorkflowRepository(Protocol):
 
 
 class WorkflowService:
-    def __init__(self, *, repository: WorkflowRepository, work_items):
+    def __init__(
+        self,
+        *,
+        repository: WorkflowRepository,
+        work_items,
+        product_events: Optional[ProductEventService] = None,
+    ):
         self.repository = repository
         self.work_items = work_items
+        self.product_events = product_events
 
     def create_from_work_item(
         self,
@@ -114,6 +122,15 @@ class WorkflowService:
         self._validate_template(version)
         if not self.repository.create_workflow(definition, version):
             raise ValueError(f"workflow already exists: {definition.id}")
+        self._record_product_event(
+            ProductEventType.WORKFLOW_CREATED,
+            subject_type="workflow",
+            subject_id=definition.id,
+            work_item_id=work_item_id,
+            conversation_id=detail.work_item.conversation_id,
+            properties={"source": "workflow", "workflow_version": version.version},
+            deduplication_key=f"workflow:{definition.id}:created",
+        )
         return definition, version
 
     def render(
@@ -177,6 +194,14 @@ class WorkflowService:
             expected_latest_version=definition.latest_version,
         ):
             raise ValueError("workflow was revised concurrently; reload and retry")
+        self._record_product_event(
+            ProductEventType.WORKFLOW_REVISED,
+            subject_type="workflow",
+            subject_id=workflow_id,
+            work_item_id=revised.source_work_item_id,
+            properties={"source": "workflow", "workflow_version": revised.version},
+            deduplication_key=f"workflow:{workflow_id}:version:{revised.version}",
+        )
         return revised
 
     def list(self, *, limit: int = 100):
@@ -227,3 +252,7 @@ class WorkflowService:
             }
             for step in plan.steps
         ]
+
+    def _record_product_event(self, event_type: ProductEventType, **kwargs) -> None:
+        if self.product_events is not None:
+            self.product_events.safe_record(event_type, **kwargs)
