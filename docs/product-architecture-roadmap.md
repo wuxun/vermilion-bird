@@ -153,7 +153,7 @@ Run；Run 保留审计、租约、checkpoint、恢复与幂等语义。Artifact 
 - [x] Workflow 不可变版本与变更摘要
 - [x] 输入参数、产物定义、预算、审批和失败策略模型
 - [x] CLI 固定版本执行并记录版本来源
-- [ ] GUI、Scheduler 选择并运行同一 Workflow 版本
+- [x] GUI、CLI、Scheduler 选择并运行同一固定 Workflow 版本
 - [x] 资源级权限：目录、域名、消息目标和授权期限
 - [x] 自动化结果验收策略：required/optional/none
 - [x] 自动化任务编辑器可配置结果处理方式

@@ -53,6 +53,7 @@ from llm_chat.work import (
     TimelineKind,
     WorkItemKind,
     WorkItemStatus,
+    latest_artifact_versions,
 )
 
 
@@ -573,6 +574,8 @@ class TaskCenterDialog(QDialog):
         self._open_artifact_button.clicked.connect(self._open_selected_artifact)
         self._export_artifact_button = QPushButton("导出")
         self._export_artifact_button.clicked.connect(self._export_selected_artifact)
+        self._save_workflow_button = QPushButton("保存为工作流")
+        self._save_workflow_button.clicked.connect(self._save_selected_as_workflow)
         self._accept_artifact_button = QPushButton("接受")
         self._accept_artifact_button.clicked.connect(
             lambda: self._feedback_selected_artifact(ArtifactFeedbackDecision.ACCEPTED)
@@ -587,6 +590,7 @@ class TaskCenterDialog(QDialog):
         )
         artifact_actions.addWidget(self._open_artifact_button)
         artifact_actions.addWidget(self._export_artifact_button)
+        artifact_actions.addWidget(self._save_workflow_button)
         artifact_actions.addStretch()
         artifact_actions.addWidget(self._reject_artifact_button)
         artifact_actions.addWidget(self._revise_artifact_button)
@@ -1558,6 +1562,35 @@ class TaskCenterDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
 
+    def _save_selected_as_workflow(self) -> None:
+        detail = self._current_detail
+        if detail is None:
+            return
+        from llm_chat.frontends.workflow_library import SaveWorkflowDialog
+
+        dialog = SaveWorkflowDialog(
+            title=detail.work_item.title,
+            objective=detail.work_item.objective,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            definition, version = self._app.create_workflow_from_work_item(
+                detail.work_item.id,
+                name=dialog.workflow_name,
+                description=dialog.description,
+                objective_template=dialog.objective_template,
+                parameters=dialog.parameters,
+            )
+            QMessageBox.information(
+                self,
+                "已保存为工作流",
+                f"{definition.name} · v{version.version}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "保存工作流失败", str(exc))
+
     def _feedback_selected_artifact(
         self,
         decision: ArtifactFeedbackDecision,
@@ -1673,6 +1706,28 @@ class TaskCenterDialog(QDialog):
             self._follow_up_input.setPlaceholderText("任务结束后可在这里继续提出要求")
         self._open_artifact_button.setEnabled(has_artifacts)
         self._export_artifact_button.setEnabled(has_artifacts and not busy)
+        current_artifacts = (
+            latest_artifact_versions(self._current_detail.artifacts)
+            if self._current_detail is not None
+            else []
+        )
+        accepted_artifact_ids = {
+            artifact_id
+            for artifact_id, feedback in self._artifact_feedback_by_id.items()
+            if feedback.decision == ArtifactFeedbackDecision.ACCEPTED
+        }
+        has_accepted_current_artifact = any(
+            artifact.id in accepted_artifact_ids for artifact in current_artifacts
+        )
+        self._save_workflow_button.setEnabled(
+            bool(
+                item
+                and item.status == WorkItemStatus.COMPLETED
+                and has_accepted_current_artifact
+                and not busy
+                and hasattr(self._app, "create_workflow_from_work_item")
+            )
+        )
         self._accept_artifact_button.setEnabled(has_artifacts and not busy)
         self._revise_artifact_button.setEnabled(has_artifacts and not busy)
         self._reject_artifact_button.setEnabled(has_artifacts and not busy)

@@ -107,6 +107,24 @@ class StorageWorkflowMixin:
             ).fetchone()
         return self._row_to_workflow_version(row) if row else None
 
+    def list_workflow_versions(
+        self,
+        workflow_id: str,
+        *,
+        limit: int = 100,
+    ) -> List[WorkflowVersion]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM workflow_versions
+                WHERE workflow_id = ?
+                ORDER BY version DESC
+                LIMIT ?
+                """,
+                (workflow_id, max(1, limit)),
+            ).fetchall()
+        return [self._row_to_workflow_version(row) for row in rows]
+
     def create_workflow_version(
         self,
         version: WorkflowVersion,

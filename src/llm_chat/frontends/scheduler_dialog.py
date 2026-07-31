@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QSpinBox,
     QDoubleSpinBox,
+    QFormLayout,
 )
 from PyQt6.QtCore import Qt, QDateTime, pyqtSignal, QMetaObject, Q_ARG
 from PyQt6.QtGui import QColor
@@ -61,6 +62,7 @@ class TaskEditDialog(QDialog):
         super().__init__(parent)
         self._task = task
         self._scheduler = scheduler
+        self._app = getattr(scheduler, "_app", None) if scheduler else None
         self._storage = Storage() if scheduler else None
 
         self.setWindowTitle("编辑任务" if task else "添加任务")
@@ -86,7 +88,7 @@ class TaskEditDialog(QDialog):
         type_layout = QHBoxLayout()
         type_layout.addWidget(QLabel("任务类型:"))
         self._type_combo = QComboBox()
-        self._type_combo.addItems(["LLM 对话", "技能执行", "系统维护"])
+        self._type_combo.addItems(["LLM 对话", "工作流", "技能执行", "系统维护"])
         self._type_combo.currentTextChanged.connect(self._on_type_changed)
         type_layout.addWidget(self._type_combo)
         layout.addLayout(type_layout)
@@ -126,6 +128,28 @@ class TaskEditDialog(QDialog):
         llm_layout.addLayout(temp_layout)
 
         self._params_group.layout().addWidget(self._llm_group)
+
+        # 固定版本 Workflow 参数
+        self._workflow_group = QWidget()
+        workflow_layout = QVBoxLayout(self._workflow_group)
+        workflow_select = QHBoxLayout()
+        workflow_select.addWidget(QLabel("工作流:"))
+        self._workflow_combo = QComboBox()
+        self._workflow_combo.currentIndexChanged.connect(self._on_workflow_changed)
+        workflow_select.addWidget(self._workflow_combo, 1)
+        workflow_select.addWidget(QLabel("固定版本:"))
+        self._workflow_version_combo = QComboBox()
+        self._workflow_version_combo.currentIndexChanged.connect(
+            self._on_workflow_version_changed
+        )
+        workflow_select.addWidget(self._workflow_version_combo)
+        workflow_layout.addLayout(workflow_select)
+        self._workflow_parameters_form = QFormLayout()
+        self._workflow_parameter_inputs = {}
+        workflow_layout.addLayout(self._workflow_parameters_form)
+        self._params_group.layout().addWidget(self._workflow_group)
+        self._workflow_group.hide()
+        self._populate_workflows()
 
         # 技能执行参数
         self._skill_group = QWidget()
@@ -171,6 +195,7 @@ class TaskEditDialog(QDialog):
 
         self._params_group.layout().addWidget(self._maintenance_group)
         self._maintenance_group.hide()
+        self._workflow_group.hide()
 
         # 触发器配置
         trigger_group = QGroupBox("触发器配置")
@@ -299,14 +324,86 @@ class TaskEditDialog(QDialog):
         self._on_type_changed(self._type_combo.currentText())
         self._on_notify_enabled_changed(self._notify_enabled_check.isChecked())
 
+    def _populate_workflows(self):
+        self._workflow_combo.blockSignals(True)
+        self._workflow_combo.clear()
+        if self._app is None:
+            self._workflow_combo.blockSignals(False)
+            return
+        loader = getattr(self._app, "list_workflows", None)
+        if not callable(loader):
+            self._workflow_combo.blockSignals(False)
+            return
+        try:
+            workflows = loader(limit=200)
+        except Exception:
+            logger.warning("Failed to load workflows for scheduler", exc_info=True)
+            self._workflow_combo.blockSignals(False)
+            return
+        for workflow in workflows:
+            self._workflow_combo.addItem(workflow.name, workflow.id)
+        self._workflow_combo.blockSignals(False)
+        if self._workflow_combo.count():
+            self._workflow_combo.setCurrentIndex(0)
+            self._on_workflow_changed()
+
+    def _on_workflow_changed(self, *_args):
+        self._workflow_version_combo.blockSignals(True)
+        self._workflow_version_combo.clear()
+        workflow_id = self._workflow_combo.currentData()
+        loader = getattr(self._app, "list_workflow_versions", None)
+        if not workflow_id or not callable(loader):
+            self._workflow_version_combo.blockSignals(False)
+            self._on_workflow_version_changed()
+            return
+        try:
+            versions = loader(workflow_id, limit=100)
+        except Exception:
+            logger.warning("Failed to load workflow versions for scheduler", exc_info=True)
+            versions = []
+        for version in versions:
+            label = f"v{version.version}"
+            if version.change_summary:
+                label += f" · {version.change_summary}"
+            self._workflow_version_combo.addItem(label, version.version)
+        self._workflow_version_combo.blockSignals(False)
+        if self._workflow_version_combo.count():
+            self._workflow_version_combo.setCurrentIndex(0)
+        self._on_workflow_version_changed()
+
+    def _on_workflow_version_changed(self, *_args):
+        while self._workflow_parameters_form.rowCount():
+            self._workflow_parameters_form.removeRow(0)
+        self._workflow_parameter_inputs = {}
+        workflow_id = self._workflow_combo.currentData()
+        version_number = self._workflow_version_combo.currentData()
+        getter = getattr(self._app, "get_workflow", None)
+        if not workflow_id or version_number is None or not callable(getter):
+            return
+        try:
+            _, version = getter(workflow_id, version=version_number)
+        except Exception:
+            logger.warning("Failed to load workflow version for scheduler", exc_info=True)
+            return
+        for parameter in version.parameters:
+            field = QLineEdit()
+            field.setText(parameter.default or "")
+            field.setPlaceholderText(parameter.description)
+            label = parameter.name + (" *" if parameter.required else "")
+            self._workflow_parameters_form.addRow(label, field)
+            self._workflow_parameter_inputs[parameter.name] = field
+
     def _on_type_changed(self, task_type: str):
         """任务类型改变时更新参数配置区。"""
         self._llm_group.hide()
+        self._workflow_group.hide()
         self._skill_group.hide()
         self._maintenance_group.hide()
 
         if task_type == "LLM 对话":
             self._llm_group.show()
+        elif task_type == "工作流":
+            self._workflow_group.show()
         elif task_type == "技能执行":
             self._skill_group.show()
         elif task_type == "系统维护":
@@ -335,6 +432,8 @@ class TaskEditDialog(QDialog):
         # 设置任务类型
         if task.task_type == TaskType.LLM_CHAT:
             self._type_combo.setCurrentText("LLM 对话")
+        elif task.task_type == TaskType.WORKFLOW:
+            self._type_combo.setCurrentText("工作流")
         elif task.task_type == TaskType.PROACTIVE_CHAT:
             self._type_combo.setCurrentText("LLM 对话")
         elif task.task_type == TaskType.SKILL_EXECUTION:
@@ -348,6 +447,20 @@ class TaskEditDialog(QDialog):
             self._prompt_edit.setPlainText(params.get("message", "") or params.get("prompt", ""))
             self._model_edit.setText(params.get("model", ""))
             self._temp_spin.setValue(params.get("temperature", 0.7))
+        elif task.task_type == TaskType.WORKFLOW:
+            workflow_id = str(params.get("workflow_id") or "")
+            index = self._workflow_combo.findData(workflow_id)
+            if index >= 0:
+                self._workflow_combo.setCurrentIndex(index)
+            version_index = self._workflow_version_combo.findData(
+                params.get("workflow_version")
+            )
+            if version_index >= 0:
+                self._workflow_version_combo.setCurrentIndex(version_index)
+            for name, value in dict(params.get("workflow_inputs") or {}).items():
+                field = self._workflow_parameter_inputs.get(name)
+                if field is not None:
+                    field.setText(str(value))
         elif task.task_type == TaskType.SKILL_EXECUTION:
             self._skill_name_edit.setText(params.get("skill_name", ""))
             self._tool_name_edit.setText(params.get("tool_name", ""))
@@ -403,6 +516,8 @@ class TaskEditDialog(QDialog):
         task_type_str = self._type_combo.currentText()
         if task_type_str == "LLM 对话":
             task_type = TaskType.LLM_CHAT
+        elif task_type_str == "工作流":
+            task_type = TaskType.WORKFLOW
         elif task_type_str == "技能执行":
             task_type = TaskType.SKILL_EXECUTION
         elif task_type_str == "系统维护":
@@ -417,6 +532,29 @@ class TaskEditDialog(QDialog):
             params["message"] = self._prompt_edit.toPlainText().strip()
             params["model"] = self._model_edit.text().strip()
             params["temperature"] = self._temp_spin.value()
+        elif task_type == TaskType.WORKFLOW:
+            workflow_id = self._workflow_combo.currentData()
+            workflow_version = self._workflow_version_combo.currentData()
+            if not workflow_id or workflow_version is None:
+                QMessageBox.warning(self, "错误", "请选择工作流及固定版本")
+                return
+            workflow_inputs = {
+                name: field.text()
+                for name, field in self._workflow_parameter_inputs.items()
+                if field.text()
+            }
+            try:
+                self._app.workflows.render(
+                    workflow_id,
+                    version=workflow_version,
+                    inputs=workflow_inputs,
+                )
+            except Exception as exc:
+                QMessageBox.warning(self, "工作流参数无效", str(exc))
+                return
+            params["workflow_id"] = workflow_id
+            params["workflow_version"] = workflow_version
+            params["workflow_inputs"] = workflow_inputs
         elif task_type == TaskType.SKILL_EXECUTION:
             params["skill_name"] = self._skill_name_edit.text().strip()
             params["tool_name"] = self._tool_name_edit.text().strip()

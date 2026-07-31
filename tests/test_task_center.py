@@ -21,6 +21,8 @@ from llm_chat.runtime import (  # noqa: E402
 from llm_chat.work import (  # noqa: E402
     Artifact,
     ArtifactDiff,
+    ArtifactFeedback,
+    ArtifactFeedbackDecision,
     ArtifactKind,
     ArtifactPreview,
     ArtifactRelation,
@@ -105,6 +107,7 @@ def _fake_app(detail, *, actions=None, can_retry=None, can_resume=False):
         revoke_resource_grant=MagicMock(),
         export_artifact=MagicMock(),
         submit_artifact_feedback=MagicMock(),
+        create_workflow_from_work_item=MagicMock(),
         run_manager=MagicMock(),
         action_proposals=MagicMock(),
     )
@@ -132,6 +135,25 @@ def test_task_center_renders_product_task_runs_and_artifacts(qt_app):
     assert dialog._follow_up_input.isEnabled()
     dialog._follow_up_input.setPlainText("增加一份风险清单")
     assert dialog._continue_button.isEnabled()
+
+    dialog.close()
+    qt_app.processEvents()
+
+
+def test_accepted_current_artifact_can_be_saved_as_workflow(qt_app):
+    detail = _detail()
+    artifact = detail.artifacts[0]
+    detail.artifact_feedback = [
+        ArtifactFeedback(
+            artifact_id=artifact.id,
+            work_item_id=detail.work_item.id,
+            decision=ArtifactFeedbackDecision.ACCEPTED,
+        )
+    ]
+    dialog = TaskCenterDialog(_fake_app(detail))
+    qt_app.processEvents()
+
+    assert dialog._save_workflow_button.isEnabled()
 
     dialog.close()
     qt_app.processEvents()

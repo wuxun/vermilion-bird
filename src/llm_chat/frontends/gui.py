@@ -157,6 +157,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         self._execution_center_timer = None
         self._task_center_button: Optional[QPushButton] = None
         self._task_center_dialog = None
+        self._workflow_library_dialog = None
         self._task_workspace = None
         self._workspace_stack: Optional[QStackedWidget] = None
         self._chat_workspace: Optional[QWidget] = None
@@ -348,6 +349,7 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
         menu = QMenu(self._main_window)
         menu.addAction("添加文件…", self._choose_context_files)
         menu.addAction("添加文件夹…", self._choose_context_directory)
+        menu.addAction("运行工作流…", self._on_workflow_library)
         menu.addAction("搜索历史对话", self._focus_search)
         menu.addSeparator()
         menu.addAction("选择技能…", self._on_skills_config)
@@ -497,6 +499,26 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
 
     def _on_task_center_destroyed(self):
         self._task_center_dialog = None
+
+    def _on_workflow_library(self):
+        if self._app_instance is None:
+            return
+        if (
+            self._workflow_library_dialog is not None
+            and self._workflow_library_dialog.isVisible()
+        ):
+            self._workflow_library_dialog.raise_()
+            self._workflow_library_dialog.activateWindow()
+            return
+        from llm_chat.frontends.workflow_library import WorkflowLibraryDialog
+
+        dialog = WorkflowLibraryDialog(self._app_instance, self._main_window)
+        dialog.destroyed.connect(self._on_workflow_library_destroyed)
+        self._workflow_library_dialog = dialog
+        dialog.show()
+
+    def _on_workflow_library_destroyed(self):
+        self._workflow_library_dialog = None
 
     def _on_chat_workspace(self):
         """返回当前工作线程。"""
@@ -2135,6 +2157,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._task_workspace.close()
         if self._task_center_dialog is not None:
             self._task_center_dialog.close()
+        if self._workflow_library_dialog is not None:
+            self._workflow_library_dialog.close()
         if self._execution_center_dialog is not None:
             self._execution_center_dialog.close()
         self._handle_exit()
@@ -2166,6 +2190,8 @@ class GUIFrontend(ModelConfigMixin, BaseFrontend):
             self._task_workspace.close()
         if self._task_center_dialog is not None:
             self._task_center_dialog.close()
+        if self._workflow_library_dialog is not None:
+            self._workflow_library_dialog.close()
         if self._execution_center_dialog is not None:
             self._execution_center_dialog.close()
         if self._execution_center_timer is not None:

@@ -8,10 +8,12 @@ from llm_chat.runtime import RecoveryPolicy, RunManager, RunStatus, RunType
 from llm_chat.scheduler.models import Task, TaskExecution, TaskStatus, TaskType
 from llm_chat.work import (
     ArtifactKind,
+    ArtifactRelation,
     ArtifactReviewPolicy,
     WorkItemKind,
     WorkItemService,
 )
+from llm_chat.product_events import ProductEventType
 
 if TYPE_CHECKING:
     from llm_chat.app import App
@@ -51,12 +53,31 @@ class TaskExecutor:
         started_at = datetime.now()
         run = None
         work_item = None
+        workflow_version = None
         if self.work_items:
             review_policy = self._artifact_review_policy(task)
+            workflow_id = (
+                str((task.params or {}).get("workflow_id") or "").strip()
+                if task.task_type == TaskType.WORKFLOW
+                else None
+            )
+            try:
+                if task.task_type == TaskType.WORKFLOW:
+                    workflow_version, objective = self.app.workflows.render(
+                        workflow_id,
+                        version=(task.params or {}).get("workflow_version"),
+                        inputs=dict((task.params or {}).get("workflow_inputs") or {}),
+                    )
+                else:
+                    objective = self._work_objective(task)
+            except Exception as exc:
+                logger.warning("Scheduled task preflight failed: %s", exc)
+                objective = f"运行固定工作流 {workflow_id}" if workflow_id else task.name
             work_item = self.work_items.create(
                 title=task.name,
-                objective=self._work_objective(task),
+                objective=objective,
                 kind=WorkItemKind.AUTOMATION,
+                workflow_id=workflow_id,
                 conversation_id=(
                     f"scheduled:{task.id}"
                     if task.task_type
@@ -64,6 +85,7 @@ class TaskExecutor:
                         TaskType.LLM_CHAT,
                         TaskType.PROACTIVE_CHAT,
                         TaskType.WEBHOOK,
+                        TaskType.WORKFLOW,
                     }
                     else None
                 ),
@@ -73,8 +95,38 @@ class TaskExecutor:
                     "source": "scheduler",
                     "scheduled_task_id": task.id,
                     "scheduled_task_type": task.task_type.value,
+                    **(
+                        {
+                            "workflow_version": (task.params or {}).get(
+                                "workflow_version"
+                            )
+                        }
+                        if workflow_id
+                        else {}
+                    ),
                 },
             )
+            plan_summary = (
+                f"Workflow {workflow_id} v{workflow_version.version}"
+                if workflow_version is not None
+                else ""
+            )
+            existing_plans = self.work_items.list_plan_revisions(work_item.id)
+            if (
+                workflow_version is not None
+                and getattr(workflow_version, "plan_steps", None)
+                and (
+                    not existing_plans
+                    or existing_plans[0].summary != plan_summary
+                )
+            ):
+                self.work_items.create_plan_revision(
+                    work_item.id,
+                    summary=plan_summary,
+                    steps=workflow_version.plan_steps,
+                    approve=True,
+                    created_by="workflow",
+                )
         if self.run_manager:
             run_type = {
                 TaskType.WEBHOOK: RunType.WEBHOOK,
@@ -145,6 +197,11 @@ class TaskExecutor:
                     )
                 elif task.task_type == TaskType.WEBHOOK:
                     result = self._execute_webhook(
+                        task,
+                        parent_run_id=run_id,
+                    )
+                elif task.task_type == TaskType.WORKFLOW:
+                    result = self._execute_workflow(
                         task,
                         parent_run_id=run_id,
                     )
@@ -267,9 +324,15 @@ class TaskExecutor:
         if self._on_complete is not None:
             self._on_complete(task, value, success)
 
-    @staticmethod
-    def _work_objective(task: Task) -> str:
+    def _work_objective(self, task: Task) -> str:
         params = task.params or {}
+        if task.task_type == TaskType.WORKFLOW:
+            _, objective = self.app.workflows.render(
+                str(params.get("workflow_id") or ""),
+                version=params.get("workflow_version"),
+                inputs=dict(params.get("workflow_inputs") or {}),
+            )
+            return objective
         return str(
             params.get("message")
             or params.get("action")
@@ -302,6 +365,16 @@ class TaskExecutor:
         run = self.run_manager.get(run_id) if self.run_manager else None
         if run is None or not run.work_item_id:
             return
+        detail = self.work_items.detail(run.work_item_id)
+        parent = next(
+            (
+                artifact
+                for artifact in detail.artifacts
+                if artifact.metadata.get("role") == "scheduled_result"
+                and artifact.run_id != run.id
+            ),
+            None,
+        )
         self.work_items.add_artifact(
             run.work_item_id,
             run_id=run.id,
@@ -310,8 +383,55 @@ class TaskExecutor:
             content=str(result),
             content_preview=str(result)[:500],
             idempotency_key=f"{run.id}:scheduled-result",
+            parent_artifact_id=parent.id if parent else None,
+            relation=(ArtifactRelation.REVISION if parent else ArtifactRelation.ORIGINAL),
             metadata={"role": "scheduled_result"},
         )
+
+    def _execute_workflow(self, task: Task, parent_run_id: Optional[str] = None) -> str:
+        params = task.params or {}
+        workflow_id = str(params.get("workflow_id") or "").strip()
+        version_number = params.get("workflow_version")
+        if not workflow_id or version_number is None:
+            raise ValueError("WORKFLOW task requires workflow_id and workflow_version")
+        workflow_version, objective = self.app.workflows.render(
+            workflow_id,
+            version=int(version_number),
+            inputs=dict(params.get("workflow_inputs") or {}),
+        )
+        product_events = getattr(self.app, "product_events", None)
+        if product_events is not None:
+            run = (
+                self.run_manager.get(parent_run_id)
+                if self.run_manager and parent_run_id
+                else None
+            )
+            product_events.safe_record(
+                ProductEventType.WORKFLOW_RUN_STARTED,
+                subject_type="workflow",
+                subject_id=workflow_id,
+                work_item_id=run.work_item_id if run else None,
+                properties={
+                    "entrypoint": "scheduler",
+                    "source": "workflow",
+                    "workflow_version": workflow_version.version,
+                },
+                deduplication_key=(
+                    f"workflow:{workflow_id}:scheduled-run:{parent_run_id}"
+                    if parent_run_id
+                    else None
+                ),
+            )
+        chat_core = getattr(self.app, "chat_core", None)
+        if chat_core is not None:
+            kwargs = {
+                "conversation_id": f"scheduled:{task.id}",
+                "message": objective,
+            }
+            if parent_run_id:
+                kwargs["parent_run_id"] = parent_run_id
+            return chat_core.send_message(**kwargs)
+        return self.app.client.chat(message=objective, history=[])
 
     def _execute_llm_chat(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """通过 ChatCore 完整管道执行 LLM 对话 — 包含记忆注入、工具调用、决策卡片。

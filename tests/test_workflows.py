@@ -2,7 +2,7 @@ import pytest
 
 from llm_chat.runtime import RunManager
 from llm_chat.storage import Storage
-from llm_chat.work import ArtifactKind, WorkItemService
+from llm_chat.work import ArtifactFeedbackDecision, ArtifactKind, WorkItemService
 from llm_chat.workflows import WorkflowParameter, WorkflowService
 
 
@@ -39,7 +39,7 @@ def _completed_source(work_items):
         approve=True,
     )
     run = work_items.start(item.id)
-    work_items.add_artifact(
+    artifact = work_items.add_artifact(
         item.id,
         run_id=run.id,
         name="report.md",
@@ -47,6 +47,11 @@ def _completed_source(work_items):
         content="# report",
     )
     work_items.runs.complete(run.id, "done")
+    work_items.submit_artifact_feedback(
+        item.id,
+        artifact.id,
+        decision=ArtifactFeedbackDecision.ACCEPTED,
+    )
     return item, plan
 
 
@@ -95,6 +100,8 @@ def test_workflow_render_validates_inputs_and_pins_version(services):
     assert objective == "调研 LangGraph，读者为 架构师"
     with pytest.raises(ValueError, match="missing workflow input"):
         workflows.render(definition.id, version=1)
+    with pytest.raises(ValueError, match="missing workflow input"):
+        workflows.render(definition.id, version=1, inputs={"topic": ""})
     with pytest.raises(ValueError, match="unknown workflow inputs"):
         workflows.render(
             definition.id,
@@ -136,6 +143,7 @@ def test_workflow_revision_preserves_v1_and_advances_latest_pointer(services):
     assert storage.get_workflow(definition.id).latest_version == 2
     assert storage.get_workflow_version(definition.id, 1) == first
     assert storage.get_workflow_version(definition.id, 2) == second
+    assert [item.version for item in workflows.list_versions(definition.id)] == [2, 1]
 
 
 def test_incomplete_or_artifactless_task_cannot_be_reused(services):
@@ -149,3 +157,14 @@ def test_incomplete_or_artifactless_task_cannot_be_reused(services):
     work_items.runs.complete(run.id, "done")
     with pytest.raises(ValueError, match="at least one artifact"):
         workflows.create_from_work_item(incomplete.id)
+
+
+def test_unreviewed_workflow_source_must_be_accepted(services):
+    _, work_items, workflows = services
+    item = work_items.create(objective="生成报告")
+    run = work_items.start(item.id)
+    work_items.add_artifact(item.id, run_id=run.id, name="report.md", content="draft")
+    work_items.runs.complete(run.id, "done")
+
+    with pytest.raises(ValueError, match="accepted current artifact"):
+        workflows.create_from_work_item(item.id)

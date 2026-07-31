@@ -181,6 +181,7 @@ def run_workflow(
             version=version,
             inputs=inputs,
             workspace=workspace,
+            entrypoint="cli",
         )
         if json_output:
             click.echo(detail.model_dump_json(indent=2))

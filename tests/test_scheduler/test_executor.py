@@ -206,6 +206,75 @@ class TestTaskExecutorInit:
         work_items.close()
         Storage.set_instance(None)
 
+    def test_scheduled_workflow_pins_version_and_revises_series_artifact(self, tmp_path):
+        Storage.set_instance(None)
+        storage = Storage(str(tmp_path / "scheduled-workflow.db"))
+        runs = RunManager(repository=storage)
+        work_items = WorkItemService(repository=storage, runs=runs)
+        workflows = MagicMock()
+        workflows.render.return_value = (
+            SimpleNamespace(
+                version=2,
+                plan_steps=[{"id": "1", "title": "研究"}],
+            ),
+            "rendered workflow objective",
+        )
+        chat_core = MagicMock()
+        chat_core.send_message.side_effect = ["result one", "result two"]
+        app = SimpleNamespace(
+            run_manager=runs,
+            work_items=work_items,
+            workflows=workflows,
+            chat_core=chat_core,
+            client=MagicMock(),
+            product_events=MagicMock(),
+        )
+        executor = TaskExecutor(app=app, task_storage=storage)
+        task = Task(
+            id="scheduled-workflow",
+            name="每周研究报告",
+            task_type=TaskType.WORKFLOW,
+            trigger_config={"cron": "0 9 * * 1"},
+            params={
+                "workflow_id": "workflow_research",
+                "workflow_version": 2,
+                "workflow_inputs": {"topic": "AI"},
+            },
+            enabled=True,
+            max_retries=0,
+            created_at=datetime(2026, 7, 31),
+            updated_at=datetime(2026, 7, 31),
+        )
+        storage.save_task(task)
+
+        first = executor.execute(task)
+        second = executor.execute(task)
+        item = work_items.list(limit=1)[0]
+        detail = work_items.detail(item.id)
+
+        assert first.status == TaskStatus.COMPLETED
+        assert second.status == TaskStatus.COMPLETED
+        assert item.workflow_id == "workflow_research"
+        assert item.metadata["workflow_version"] == 2
+        assert item.conversation_id == f"scheduled:{task.id}"
+        assert detail.plan.summary == "Workflow workflow_research v2"
+        assert [artifact.version for artifact in detail.artifacts] == [2, 1]
+        assert len({artifact.lineage_id for artifact in detail.artifacts}) == 1
+        assert chat_core.send_message.call_args_list[0].kwargs["message"] == (
+            "rendered workflow objective"
+        )
+        assert all(
+            call.kwargs["parent_run_id"] for call in chat_core.send_message.call_args_list
+        )
+        workflows.render.assert_any_call(
+            "workflow_research",
+            version=2,
+            inputs={"topic": "AI"},
+        )
+
+        work_items.close()
+        Storage.set_instance(None)
+
 
 class TestExecuteLLMChat:
     """Tests for LLM chat task execution."""

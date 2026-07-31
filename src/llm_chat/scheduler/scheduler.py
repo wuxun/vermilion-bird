@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Optional, List, Any, Dict
 from .models import Task, TaskType
 from .task_executor import TaskExecutor
 from llm_chat.runtime import RunHandlerRegistry
+from llm_chat.product_events import ProductEventType
 
 if TYPE_CHECKING:
     from llm_chat.config import SchedulerConfig
@@ -540,8 +541,53 @@ class SchedulerService:
             return self._run_maintenance_task(task)
         elif task.task_type == TaskType.WEBHOOK:
             return self._run_webhook_task(task, parent_run_id=parent_run_id)
+        elif task.task_type == TaskType.WORKFLOW:
+            return self._run_workflow_task(task, parent_run_id=parent_run_id)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
+
+    def _run_workflow_task(
+        self,
+        task: Task,
+        parent_run_id: Optional[str] = None,
+    ) -> str:
+        params = task.params or {}
+        workflow_id = str(params.get("workflow_id") or "").strip()
+        version_number = params.get("workflow_version")
+        if not workflow_id or version_number is None:
+            raise ValueError("WORKFLOW task requires workflow_id and workflow_version")
+        workflow_version, objective = self._app.workflows.render(
+            workflow_id,
+            version=int(version_number),
+            inputs=dict(params.get("workflow_inputs") or {}),
+        )
+        product_events = getattr(self._app, "product_events", None)
+        if product_events is not None:
+            run_manager = getattr(self._app, "run_manager", None)
+            run = run_manager.get(parent_run_id) if run_manager and parent_run_id else None
+            product_events.safe_record(
+                ProductEventType.WORKFLOW_RUN_STARTED,
+                subject_type="workflow",
+                subject_id=workflow_id,
+                work_item_id=run.work_item_id if run else None,
+                properties={
+                    "entrypoint": "scheduler",
+                    "source": "workflow",
+                    "workflow_version": workflow_version.version,
+                },
+                deduplication_key=(
+                    f"workflow:{workflow_id}:scheduled-run:{parent_run_id}"
+                    if parent_run_id
+                    else None
+                ),
+            )
+        delegated = task.model_copy(
+            update={
+                "task_type": TaskType.LLM_CHAT,
+                "params": {**params, "message": objective},
+            }
+        )
+        return self._run_llm_chat_task(delegated, parent_run_id=parent_run_id)
 
     def _run_webhook_task(self, task: Task, parent_run_id: Optional[str] = None) -> str:
         """Execute a webhook-triggered chat while preserving its payload."""

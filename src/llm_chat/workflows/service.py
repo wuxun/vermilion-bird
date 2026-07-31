@@ -12,6 +12,7 @@ from llm_chat.work import (
     GrantStatus,
     PlanStatus,
     WorkItemStatus,
+    latest_artifact_versions,
 )
 from llm_chat.product_events import ProductEventService, ProductEventType
 
@@ -37,6 +38,14 @@ class WorkflowRepository(Protocol):
         workflow_id: str,
         version: Optional[int] = None,
     ) -> Optional[WorkflowVersion]:
+        ...
+
+    def list_workflow_versions(
+        self,
+        workflow_id: str,
+        *,
+        limit: int = 100,
+    ) -> List[WorkflowVersion]:
         ...
 
     def create_workflow_version(
@@ -74,13 +83,19 @@ class WorkflowService:
             raise ValueError("only a completed work item can become a workflow")
         if not detail.artifacts:
             raise ValueError("workflow source must contain at least one artifact")
+        current_artifacts = latest_artifact_versions(detail.artifacts)
+        current_artifact_ids = {artifact.id for artifact in current_artifacts}
         latest_feedback = {}
         for feedback in detail.artifact_feedback:
-            latest_feedback.setdefault(feedback.artifact_id, feedback)
-        if latest_feedback and not any(
+            if feedback.artifact_id not in current_artifact_ids:
+                continue
+            previous = latest_feedback.get(feedback.artifact_id)
+            if previous is None or feedback.created_at > previous.created_at:
+                latest_feedback[feedback.artifact_id] = feedback
+        if not any(
             item.decision == ArtifactFeedbackDecision.ACCEPTED for item in latest_feedback.values()
         ):
-            raise ValueError("reviewed workflow source must have an accepted artifact")
+            raise ValueError("workflow source must have an accepted current artifact")
 
         definition = WorkflowDefinition(
             name=(name or detail.work_item.title).strip(),
@@ -102,7 +117,7 @@ class WorkflowService:
             parameters=parameters or [],
             plan_steps=plan_steps,
             expected_artifact_kinds=list(
-                dict.fromkeys(artifact.kind for artifact in detail.artifacts)
+                dict.fromkeys(artifact.kind for artifact in current_artifacts)
             ),
             required_resources=[
                 {
@@ -157,7 +172,9 @@ class WorkflowService:
         for parameter in workflow_version.parameters:
             if parameter.name not in values and parameter.default is not None:
                 values[parameter.name] = parameter.default
-            if parameter.required and parameter.name not in values:
+            if parameter.required and (
+                parameter.name not in values or not str(values[parameter.name]).strip()
+            ):
                 raise ValueError(f"missing workflow input: {parameter.name}")
         return workflow_version, workflow_version.objective_template.format_map(values)
 
@@ -218,6 +235,11 @@ class WorkflowService:
         if workflow_version is None:
             raise KeyError(f"Unknown workflow version: {workflow_id}@{version}")
         return definition, workflow_version
+
+    def list_versions(self, workflow_id: str, *, limit: int = 100):
+        if self.repository.get_workflow(workflow_id) is None:
+            raise KeyError(f"Unknown workflow: {workflow_id}")
+        return self.repository.list_workflow_versions(workflow_id, limit=limit)
 
     @staticmethod
     def _validate_template(version: WorkflowVersion) -> None:

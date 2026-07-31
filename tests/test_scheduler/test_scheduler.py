@@ -117,7 +117,6 @@ class TestSchedulerServiceLifecycle:
 
         service = SchedulerService(scheduler_config, mock_storage, mock_app)
         service.start()
-
         mock_scheduler_instance.start.assert_called_once()
 
     @patch("llm_chat.scheduler.scheduler.BackgroundScheduler")
@@ -147,6 +146,51 @@ class TestSchedulerServiceLifecycle:
         service.shutdown()
 
         # 不应该抛出异常
+
+
+class TestSchedulerWorkflowExecution:
+    @patch("llm_chat.scheduler.scheduler.BackgroundScheduler")
+    def test_fixed_workflow_version_is_rendered_before_chat_execution(
+        self,
+        mock_bg_scheduler,
+        scheduler_config,
+        mock_storage,
+        mock_app,
+    ):
+        mock_bg_scheduler.return_value = MagicMock()
+        mock_app.workflows.render.return_value = (
+            MagicMock(version=3),
+            "rendered scheduled workflow",
+        )
+        service = SchedulerService(scheduler_config, mock_storage, mock_app)
+        service._run_llm_chat_task = MagicMock(return_value="done")
+        task = Task(
+            id="workflow-schedule",
+            name="每周报告",
+            task_type=TaskType.WORKFLOW,
+            trigger_config={"cron": "0 9 * * 1"},
+            params={
+                "workflow_id": "workflow_research",
+                "workflow_version": 3,
+                "workflow_inputs": {"topic": "AI"},
+            },
+            enabled=True,
+            created_at=datetime(2026, 7, 31),
+            updated_at=datetime(2026, 7, 31),
+        )
+
+        result = service._run_task(task, parent_run_id="run_parent")
+
+        assert result == "done"
+        mock_app.workflows.render.assert_called_once_with(
+            "workflow_research",
+            version=3,
+            inputs={"topic": "AI"},
+        )
+        delegated = service._run_llm_chat_task.call_args.args[0]
+        assert delegated.task_type == TaskType.LLM_CHAT
+        assert delegated.params["message"] == "rendered scheduled workflow"
+        assert service._run_llm_chat_task.call_args.kwargs["parent_run_id"] == "run_parent"
 
 
 class TestSchedulerServiceTaskManagement:

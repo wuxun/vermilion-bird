@@ -130,6 +130,8 @@ GUI 必须围绕用户目标和交付结果组织信息。`WorkItem` 是用户�
 - [x] Composer 文件/目录选择与拖放、附件预览和移除
 - [x] 附件通过 ContextResource 注入并在设为目标后关联 WorkItem
 - [x] Artifact 应用内预览、版本切换和统一 Diff
+- [x] Workflow Library、固定版本选择、版本差异和参数表单
+- [x] 已接受的当前 Artifact 可直接保存为参数化 Workflow
 - [x] 目标 Run、审批和 Artifact 继续归属同一 WorkItem
 - [x] 任务中心降级为跨对话工作概览
 
@@ -139,7 +141,6 @@ GUI 必须围绕用户目标和交付结果组织信息。`WorkItem` 是用户�
 
 - 键盘驱动的全局命令面板，统一新建、搜索、切换任务和打开设置。
 - 对话列表的日期分组、收藏与归档，避免最近列表无限增长。
-- Workflow 库、版本选择、参数表单和“从任务保存为 Workflow”。
 - 计划 GUI 修订与版本差异。
 - 审批卡片直接创建“仅此次/本任务/Workflow”资源授权。
 - 任务列表增加可折叠状态分组和键盘选择。

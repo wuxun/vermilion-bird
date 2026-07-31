@@ -485,6 +485,9 @@ class App:
     def get_workflow(self, workflow_id: str, *, version: Optional[int] = None):
         return self.workflows.get(workflow_id, version=version)
 
+    def list_workflow_versions(self, workflow_id: str, *, limit: int = 100):
+        return self.workflows.list_versions(workflow_id, limit=limit)
+
     def revise_workflow(
         self,
         workflow_id: str,
@@ -507,6 +510,7 @@ class App:
         version: Optional[int] = None,
         inputs: Optional[Dict[str, str]] = None,
         workspace: Optional[str] = None,
+        entrypoint: str = "app",
     ):
         workflow_version, objective = self.workflows.render(
             workflow_id,
@@ -543,7 +547,9 @@ class App:
             work_item_id=item.id,
             conversation_id=item.conversation_id,
             properties={
-                "entrypoint": "app",
+                "entrypoint": (
+                    entrypoint if entrypoint in {"app", "cli", "gui"} else "other"
+                ),
                 "source": "workflow",
                 "workflow_version": workflow_version.version,
             },
